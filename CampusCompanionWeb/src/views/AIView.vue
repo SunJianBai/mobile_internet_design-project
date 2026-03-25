@@ -1,165 +1,324 @@
 <template>
   <div class="ai-view">
-      <header class="ai-header">
-        <h2>AI 问询</h2>
-      </header>
+    <div class="ai-layout">
+      <!-- 左侧：会话列表 -->
+      <aside class="sidebar" :class="{ collapsed: sidebarCollapsed }">
+        <div class="sidebar-header">
+          <h3>对话记录</h3>
+          <button class="btn-icon" @click="handleNewConversation" title="新建对话">
+            <svg viewBox="0 0 24 24" width="18" height="18"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor"/></svg>
+          </button>
+        </div>
+        <div class="conversation-list">
+          <div
+            v-for="conv in conversations"
+            :key="conv.cid"
+            :class="['conv-item', { active: currentConvId === conv.cid }]"
+            @click="switchConversation(conv.cid)"
+          >
+            <span class="conv-title">{{ conv.title }}</span>
+            <button class="btn-delete" @click.stop="handleDeleteConversation(conv.cid)" title="删除">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path d="M19 6.41L17.59 5 12 10.59 6.41 5 5 6.41 10.59 12 5 17.59 6.41 19 12 13.41 17.59 19 19 17.59 13.41 12z" fill="currentColor"/></svg>
+            </button>
+          </div>
+          <div v-if="conversations.length === 0" class="empty-hint">暂无对话，点击上方 + 新建</div>
+        </div>
 
-      <section class="ai-chat-card">
-        <div class="chat-messages" ref="chatContainer">
-          <div v-for="message in messages" :key="message.id" :class="['message-row', message.role]">
-            <div class="avatar">
-              <el-avatar :src="message.role === 'user' ? userAvatar : aiAvatar" :size="32" />
-            </div>
-            <div class="bubble">
-              <div class="bubble-content">
-                <div v-if="message.role === 'assistant' && message.loading" class="loading-indicator">
-                  <div class="three-body" aria-hidden="true" title="AI 正在生成回复">
-                    <div class="three-body__dot"></div>
-                    <div class="three-body__dot"></div>
-                    <div class="three-body__dot"></div>
+        <!-- 记忆管理入口 -->
+        <div class="sidebar-footer">
+          <button class="btn-memory" @click="showMemoryPanel = !showMemoryPanel">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm-2 15l-5-5 1.41-1.41L10 14.17l7.59-7.59L19 8l-9 9z" fill="currentColor"/></svg>
+            AI 记忆
+          </button>
+          <button class="btn-toggle" @click="sidebarCollapsed = !sidebarCollapsed" title="收起">
+            <svg viewBox="0 0 24 24" width="16" height="16"><path d="M15.41 16.59L10.83 12l4.58-4.59L14 6l-6 6 6 6z" fill="currentColor"/></svg>
+          </button>
+        </div>
+      </aside>
+
+      <!-- 移动端：展开侧边栏按钮 -->
+      <button v-if="sidebarCollapsed" class="btn-expand" @click="sidebarCollapsed = false">
+        <svg viewBox="0 0 24 24" width="20" height="20"><path d="M3 18h18v-2H3v2zm0-5h18v-2H3v2zm0-7v2h18V6H3z" fill="currentColor"/></svg>
+      </button>
+
+      <!-- 右侧：聊天主区域 -->
+      <main class="chat-main">
+        <section v-if="!currentConvId" class="empty-state">
+          <div class="empty-icon">
+            <svg viewBox="0 0 24 24" width="64" height="64"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H6l-2 2V4h16v12z" fill="#ddd"/></svg>
+          </div>
+          <p>选择一个对话或新建对话开始</p>
+          <el-button type="primary" @click="handleNewConversation">
+            <svg viewBox="0 0 24 24" width="16" height="16" style="margin-right:6px"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor"/></svg>
+            新建对话
+          </el-button>
+        </section>
+
+        <section v-else class="ai-chat-card">
+          <div class="chat-messages" ref="chatContainer">
+            <div v-for="message in messages" :key="message.mid" :class="['message-row', message.role]">
+              <!-- 隐藏 tool 类型消息 -->
+              <template v-if="message.role !== 'tool'">
+                <div class="avatar">
+                  <el-avatar :src="message.role === 'user' ? userAvatar : aiAvatar" :size="32" />
+                </div>
+                <div class="bubble">
+                  <div class="bubble-content">
+                    <div v-if="message.role === 'assistant' && message.loading" class="loading-indicator">
+                      <div class="three-body" aria-hidden="true" title="AI 正在生成回复">
+                        <div class="three-body__dot"></div>
+                        <div class="three-body__dot"></div>
+                        <div class="three-body__dot"></div>
+                      </div>
+                    </div>
+                    <div v-else v-html="formatContent(message.content)"></div>
                   </div>
                 </div>
-                <div v-else>
-                  <template v-if="message.type === 'order-draft-suggestion'">
-                    <p>我可以为你预填写如下订单信息：</p>
-                    <ul>
-                      <li>活动类型：{{ activityTypeLabel(message.draft?.activityType) }}</li>
-                      <li>校区：{{ campusLabel(message.draft?.campus) }}</li>
-                      <li>地点：{{ message.draft?.location || '未指定' }}</li>
-                      <li>时间：{{ message.draft?.startTime || '未指定' }}</li>
-                      <li>性别要求：{{ genderLabel(message.draft?.genderRequire) }}</li>
-                      <li>人数上限：{{ message.draft?.maxPeople || 2 }}</li>
-                    </ul>
-                    <el-button type="primary" text @click="handleApplyOrderDraft(message)">
-                      点击跳转并预填写订单
-                    </el-button>
-                  </template>
-                  <template v-else>
-                    <div v-html="formatContent(message.content)"></div>
-                  </template>
-                </div>
+              </template>
+            </div>
+          </div>
+
+          <div class="chat-input-area">
+            <div class="input-box">
+              <el-input
+                ref="inputRef"
+                v-model="inputMessage"
+                type="textarea"
+                :autosize="{ minRows: 3, maxRows: 10 }"
+                placeholder="请输入你的问题，Shift+Enter 换行，Enter 发送"
+                @input="saveDraft"
+                maxlength="4000"
+              />
+            </div>
+            <div class="controls">
+              <div class="meta">
+                <span class="char-count">{{ inputLength }} / 4000</span>
+              </div>
+              <div class="actions">
+                <button class="btn clear" @click="handleClear" title="清空对话">清空</button>
+                <button
+                  class="btn send"
+                  :class="{ sending: sending }"
+                  @click="handleSendMessage"
+                  :disabled="sending || !inputMessage.trim()"
+                  title="发送 (Enter)"
+                >
+                  <svg viewBox="0 0 24 24" width="18" height="18" class="send-icon">
+                    <path d="M12 2L3 21h7l2-6 2 6h7L12 2z" fill="currentColor" />
+                  </svg>
+                </button>
               </div>
             </div>
           </div>
-        </div>
+        </section>
+      </main>
+    </div>
 
-        <div class="chat-input-area">
-          <div class="input-box">
-            <el-input
-              ref="inputRef"
-              v-model="inputMessage"
-              type="textarea"
-              :autosize="{ minRows: 3, maxRows: 10 }"
-              placeholder="请输入你的问题，Shift+Enter 换行，Enter 发送"
-              @input="saveDraft"
-              maxlength="4000"
-            />
-          </div>
-
-          <div class="controls">
-            <div class="meta">
-              <span class="char-count">{{ inputLength }} / 4000</span>
-            </div>
-            <div class="actions">
-              <button class="btn clear" @click="handleClear" title="清空对话">清空</button>
-              <button
-                class="btn send"
-                :class="{ sending: sending }"
-                @click="handleSendMessage"
-                :disabled="sending || !inputMessage.trim()"
-                title="发送 (Enter)"
-              >
-                <svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" focusable="false" class="send-icon">
-                  <path d="M12 2L3 21h7l2-6 2 6h7L12 2z" fill="currentColor" />
-                </svg>
-              </button>
-            </div>
-          </div>
+    <!-- 记忆管理面板 -->
+    <el-drawer v-model="showMemoryPanel" title="AI 对你的了解" direction="rtl" size="380px">
+      <div class="memory-panel">
+        <div v-if="memories.length === 0" class="memory-empty">AI 还没有记住关于你的任何信息</div>
+        <div v-for="mem in memories" :key="mem.memId" class="memory-item">
+          <div class="memory-tag">{{ mem.category }}</div>
+          <div class="memory-content">{{ mem.content }}</div>
+          <button class="memory-delete" @click="handleDeleteMemory(mem.memId)" title="删除此记忆">
+            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+          </button>
         </div>
-      </section>
+      </div>
+    </el-drawer>
   </div>
 </template>
 
 <script setup>
-import { ref, onMounted, onBeforeUnmount, nextTick, computed } from 'vue'
-import { useRouter } from 'vue-router'
-import aiService from '../services/ai'
-import { orderAssistantService } from '../mcp/orderAssistant'
+import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
+import { ElMessage, ElMessageBox } from 'element-plus'
+import agentService from '../services/agent'
 
 const chatContainer = ref(null)
-const router = useRouter()
-const messages = ref([
-  { id: 1, role: 'assistant', content: '你好！我是校园约伴系统的AI助手，有什么可以帮助你的吗？', loading: false }
-])
-
-const inputMessage = ref('')
-try { inputMessage.value = localStorage.getItem('ai_draft') || '' } catch (e) {}
-const sending = ref(false)
 const inputRef = ref(null)
-const userAvatar = ref('https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png')
-const aiAvatar = ref('https://cube.elemecdn.com/9/c2/f0ee8a3c7c9638a54940382568c9dpng.png')
 
+const conversations = ref([])
+const currentConvId = ref(null)
+const messages = ref([])
+const inputMessage = ref('')
+const sending = ref(false)
+const sidebarCollapsed = ref(false)
+const showMemoryPanel = ref(false)
+const memories = ref([])
+
+try { inputMessage.value = localStorage.getItem('ai_draft') || '' } catch (e) { /* ignore */ }
+
+const userAvatar = 'https://cube.elemecdn.com/3/7c/3ea6beec64369c2642b92c6726f1epng.png'
+const aiAvatar = 'https://cube.elemecdn.com/9/c2/f0ee8a3c7c9638a54940382568c9dpng.png'
 const inputLength = computed(() => inputMessage.value.length)
 
-// 活动/校区/性别的文案映射，用于预填写预览
-const activityTypeLabel = (type) => {
-  if (!type) return '未指定'
-  const map = {
-    BASKETBALL: '篮球',
-    BADMINTON: '羽毛球',
-    MEAL: '吃饭',
-    STUDY: '自习',
-    MOVIE: '看电影',
-    RUNNING: '跑步',
-    GAME: '游戏',
-    OTHER: '其他'
+// ==================== 会话管理 ====================
+
+async function loadConversations() {
+  try {
+    const resp = await agentService.listConversations()
+    conversations.value = resp.data?.data || []
+  } catch (e) {
+    console.error('加载会话列表失败', e)
   }
-  return map[type] || '其他'
 }
 
-const campusLabel = (campus) => {
-  if (!campus) return '未指定'
-  const map = {
-    LIANGXIANG: '良乡校区',
-    ZHONGGUANCUN: '中关村校区',
-    ZHUHAI: '珠海校区',
-    XISHAN: '西山校区',
-    OTHER_CAMPUS: '其他校区'
+async function handleNewConversation() {
+  try {
+    const resp = await agentService.createConversation()
+    const conv = resp.data?.data
+    if (conv) {
+      conversations.value.unshift(conv)
+      await switchConversation(conv.cid)
+    }
+  } catch (e) {
+    ElMessage.error('创建会话失败')
   }
-  return map[campus] || '未指定'
 }
 
-const genderLabel = (g) => {
-  if (!g) return '不限'
-  const map = {
-    ANY: '不限',
-    MALE: '仅限男生',
-    FEMALE: '仅限女生'
+async function switchConversation(cid) {
+  currentConvId.value = cid
+  messages.value = []
+  try {
+    const resp = await agentService.getMessages(cid)
+    const rawMessages = resp.data?.data || []
+    messages.value = rawMessages.map(m => ({ ...m, loading: false }))
+    scrollToBottom()
+  } catch (e) {
+    ElMessage.error('加载消息失败')
   }
-  return map[g] || '不限'
 }
 
-// 判断一条用户输入是否在“请求生成/预填订单”
-const shouldTriggerOrderMcpFromText = (text) => {
-  if (!text) return false
-  const t = text.toLowerCase()
-  return (
-    t.includes('帮我约') ||
-    t.includes('帮我生成订单') ||
-    t.includes('帮我下一个订单') ||
-    t.includes('帮我预填订单') ||
-    t.includes('帮我预填写订单') ||
-    t.includes('生成一个订单') ||
-    t.includes('创建一个订单')
-  )
+async function handleDeleteConversation(cid) {
+  try {
+    await ElMessageBox.confirm('确定删除这个对话吗？', '提示', { type: 'warning' })
+    await agentService.deleteConversation(cid)
+    conversations.value = conversations.value.filter(c => c.cid !== cid)
+    if (currentConvId.value === cid) {
+      currentConvId.value = null
+      messages.value = []
+    }
+  } catch (e) {
+    if (e !== 'cancel') ElMessage.error('删除失败')
+  }
 }
 
-const scrollToBottom = () => {
+// ==================== 消息发送 ====================
+
+async function handleSendMessage() {
+  if (!inputMessage.value.trim() || sending.value) return
+
+  // 如果没有选择会话，自动创建
+  if (!currentConvId.value) {
+    await handleNewConversation()
+    if (!currentConvId.value) return
+  }
+
+  const userMsg = {
+    mid: Date.now(),
+    role: 'user',
+    content: inputMessage.value,
+    loading: false
+  }
+  messages.value.push(userMsg)
+  const msgText = inputMessage.value
+  inputMessage.value = ''
+  try { localStorage.removeItem('ai_draft') } catch (e) { /* ignore */ }
+  scrollToBottom()
+
+  // placeholder
+  const aiMsg = { mid: Date.now() + 1, role: 'assistant', content: '', loading: true }
+  messages.value.push(aiMsg)
+  scrollToBottom()
+
+  sending.value = true
+  let doneReceived = false
+
+  agentService.streamMessage(currentConvId.value, msgText, {
+    onDelta(text) {
+      if (aiMsg.loading) aiMsg.loading = false
+      aiMsg.content += text
+      scrollToBottom()
+    },
+    onStatus(statusText) {
+      if (aiMsg.loading) {
+        aiMsg.content = statusText
+        aiMsg.loading = false
+      }
+      scrollToBottom()
+    },
+    async onDone() {
+      if (doneReceived) return
+      doneReceived = true
+      aiMsg.loading = false
+      if (!aiMsg.content) aiMsg.content = '抱歉，AI 未返回有效内容。'
+      sending.value = false
+      scrollToBottom()
+      await loadConversations()
+    },
+    onError(errMsg) {
+      aiMsg.loading = false
+      aiMsg.content = `错误：${errMsg}`
+      sending.value = false
+      scrollToBottom()
+    }
+  })
+}
+
+function handleClear() {
+  if (!currentConvId.value) return
+  handleDeleteConversation(currentConvId.value)
+}
+
+// ==================== 记忆管理 ====================
+
+async function loadMemories() {
+  try {
+    const resp = await agentService.getMemories()
+    memories.value = resp.data?.data || []
+  } catch (e) {
+    console.error('加载记忆失败', e)
+  }
+}
+
+async function handleDeleteMemory(memId) {
+  try {
+    await agentService.deleteMemory(memId)
+    memories.value = memories.value.filter(m => m.memId !== memId)
+    ElMessage.success('已删除')
+  } catch (e) {
+    ElMessage.error('删除失败')
+  }
+}
+
+watch(showMemoryPanel, (val) => {
+  if (val) loadMemories()
+})
+
+// ==================== 工具函数 ====================
+
+function scrollToBottom() {
   nextTick(() => {
     if (chatContainer.value) {
       chatContainer.value.scrollTop = chatContainer.value.scrollHeight
     }
   })
+}
+
+function saveDraft() {
+  try { localStorage.setItem('ai_draft', inputMessage.value) } catch (e) { /* ignore */ }
+}
+
+function handleKeydown(e) {
+  if (e.key === 'Enter') {
+    if (e.shiftKey || e.ctrlKey || e.metaKey) {
+      // Shift/Ctrl/Cmd+Enter → 换行（浏览器默认行为）
+      return
+    }
+    e.preventDefault()
+    handleSendMessage()
+  }
 }
 
 const escapeHtml = (unsafe) => {
@@ -173,161 +332,52 @@ const escapeHtml = (unsafe) => {
 
 const renderMarkdown = (md) => {
   if (!md) return ''
-  // handle fenced code blocks first
   const codeBlocks = []
   md = md.replace(/```([\s\S]*?)```/g, (m, code) => {
     const idx = codeBlocks.length
     codeBlocks.push(code)
     return `@@CODE_BLOCK_${idx}@@`
   })
-
-  // escape remaining text
   md = escapeHtml(md)
-
-  // headings
   md = md.replace(/^######\s*(.*)$/gm, '<h6>$1</h6>')
   md = md.replace(/^#####\s*(.*)$/gm, '<h5>$1</h5>')
   md = md.replace(/^####\s*(.*)$/gm, '<h4>$1</h4>')
   md = md.replace(/^###\s*(.*)$/gm, '<h3>$1</h3>')
   md = md.replace(/^##\s*(.*)$/gm, '<h2>$1</h2>')
   md = md.replace(/^#\s*(.*)$/gm, '<h1>$1</h1>')
-
-  // links
   md = md.replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
-
-  // bold and italic (basic)
   md = md.replace(/\*\*(.+?)\*\*/g, '<strong>$1</strong>')
   md = md.replace(/\*(.+?)\*/g, '<em>$1</em>')
-
-  // inline code
   md = md.replace(/`([^`]+)`/g, '<code>$1</code>')
-
-  // unordered lists: convert lines starting with - or * into ul
   md = md.replace(/(^|\n)([ \t]*[-\*]\s+.+)(?=\n|$)/g, (m) => {
-    // collect consecutive list items
     const items = m.split(/\n/).filter(Boolean).map(l => l.replace(/^[ \t]*[-\*]\s+/, ''))
     return '\n<ul>' + items.map(i => '<li>' + i + '</li>').join('') + '</ul>'
   })
-
-  // paragraphs: split by blank lines
   const parts = md.split(/\n\s*\n/)
   md = parts.map(p => {
-    // restore any inline newlines to <br>
     const s = p.replace(/\n/g, '<br/>')
     return /^<(h\d|ul|pre|blockquote)/.test(s) ? s : ('<p>' + s + '</p>')
   }).join('\n')
-
-  // restore code blocks
   md = md.replace(/@@CODE_BLOCK_(\d+)@@/g, (m, idx) => {
     const code = codeBlocks[Number(idx)] || ''
     return '<pre><code>' + escapeHtml(code) + '</code></pre>'
   })
-
   return md
 }
 
 const formatContent = (text) => renderMarkdown(text)
 
-const saveDraft = () => {
-  try { localStorage.setItem('ai_draft', inputMessage.value) } catch (e) {}
-}
+// ==================== 生命周期 ====================
 
-const handleKeydown = (e) => {
-  if (e.key === 'Enter' && !e.shiftKey) {
-    e.preventDefault()
-    handleSendMessage()
+onMounted(async () => {
+  await loadConversations()
+  // 自动选中最近一个会话
+  if (conversations.value.length > 0) {
+    await switchConversation(conversations.value[0].cid)
   }
-}
-
-const handleSendMessage = async () => {
-  if (!inputMessage.value.trim() || sending.value) return
-
-  const userMessage = { id: messages.value.length + 1, role: 'user', content: inputMessage.value, loading: false }
-  messages.value.push(userMessage)
-  saveDraft()
-  inputMessage.value = ''
-  try { localStorage.removeItem('ai_draft') } catch (e) {}
   scrollToBottom()
+})
 
-  sending.value = true
-  const history = messages.value.map((m) => ({ role: m.role === 'assistant' ? 'assistant' : 'user', content: m.content }))
-
-  // add placeholder assistant message which will be filled incrementally
-  const aiMsg = { id: messages.value.length + 1, role: 'assistant', content: '', loading: true }
-  messages.value.push(aiMsg)
-  scrollToBottom()
-
-  try {
-    const payload = { messages: history, stream: false }
-    // 发起非流式请求，显示等待动画（通过 aiMsg.loading）直到收到完整回复
-    const resp = await aiService.fullChat(payload)
-    const body = resp.data || {}
-    let reply = null
-    if (body.choices && body.choices.length > 0 && body.choices[0].message) {
-      reply = body.choices[0].message.content
-    } else if (body.data && body.data.choices && body.data.choices.length > 0) {
-      reply = body.data.choices[0].message?.content
-    } else if (body.reply) {
-      reply = body.reply
-    }
-
-    aiMsg.content = reply || '抱歉，AI 未返回有效内容。'
-    aiMsg.loading = false
-  } catch (e) {
-    console.error('AI 请求失败', e)
-    const errMsg = (e.response?.data?.message) || e.message || 'AI 请求失败'
-    aiMsg.content = `错误：${errMsg}`
-    aiMsg.loading = false
-  } finally {
-    sending.value = false
-    scrollToBottom()
-
-    // 如果本轮用户输入中明确请求“帮我生成/预填订单”，在 AI 回复后追加一条“预填写预览”消息，供用户点击跳转
-    if (shouldTriggerOrderMcpFromText(userMessage.content)) {
-      try {
-        const result = await orderAssistantService({
-          messages: messages.value,
-          inputText: userMessage.content,
-          router: null
-        })
-
-        const draft = result?.draft || {}
-        const query = result?.query || {}
-
-        const suggestionMsg = {
-          id: messages.value.length + 1,
-          role: 'assistant',
-          type: 'order-draft-suggestion',
-          content: '',
-          draft,
-          query
-        }
-        messages.value.push(suggestionMsg)
-        scrollToBottom()
-      } catch (err) {
-        console.error('生成订单预填写预览失败', err)
-      }
-    }
-  }
-}
-
-const handleApplyOrderDraft = async (message) => {
-  if (!message || !message.query) return
-  try {
-    await router.push({ path: '/orders/create', query: message.query })
-  } catch (err) {
-    console.error('跳转创建订单页面失败', err)
-  }
-}
-const handleClear = () => {
-  messages.value = [ { id: 1, role: 'assistant', content: '已清空对话，欢迎继续提问。', loading: false } ]
-  try { localStorage.removeItem('ai_draft') } catch (e) {}
-}
-
-onMounted(() => { scrollToBottom() })
-
-// attach native keydown listener to the underlying textarea because
-// Element Plus' el-input (type=textarea) doesn't forward native keydown to the component in Vue 3
 onMounted(() => {
   nextTick(() => {
     const ta = inputRef.value?.$el?.querySelector('textarea')
@@ -342,17 +392,42 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ai-view { width: 100%; max-width: min(1600px, 95%); margin: 0 auto; padding: 24px 16px; box-sizing: border-box; }
-.ai-header { display: flex; flex-direction: column; gap: 6px; margin-bottom: 12px; }
-.ai-header h2 { margin: 0; font-size: 20px; }
-.ai-sub { color: #666; margin: 0; }
-.ai-chat-card { background: #fff; border-radius: 12px; box-shadow: 0 6px 18px rgba(29,31,33,0.04); padding: 16px; display: flex; flex-direction: column; height: 72vh; min-height: 560px; }
-.chat-messages { flex: 1 1 auto; overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.ai-view { width: 100%; height: calc(100vh - 60px); overflow: hidden; }
+.ai-layout { display: flex; height: 100%; }
+
+/* ==================== 侧边栏 ==================== */
+.sidebar { width: 280px; min-width: 280px; background: #f8f9fb; border-right: 1px solid #e8ecf0; display: flex; flex-direction: column; transition: all 0.2s; }
+.sidebar.collapsed { width: 0; min-width: 0; overflow: hidden; border-right: none; }
+.sidebar-header { display: flex; align-items: center; justify-content: space-between; padding: 16px; border-bottom: 1px solid #e8ecf0; }
+.sidebar-header h3 { margin: 0; font-size: 15px; font-weight: 600; }
+.btn-icon { border: none; background: #409eff; color: #fff; width: 30px; height: 30px; border-radius: 8px; cursor: pointer; display: flex; align-items: center; justify-content: center; }
+.btn-icon:hover { background: #337ecc; }
+.conversation-list { flex: 1; overflow-y: auto; padding: 8px; }
+.conv-item { display: flex; align-items: center; justify-content: space-between; padding: 10px 12px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; transition: background 0.15s; }
+.conv-item:hover { background: #eef2f7; }
+.conv-item.active { background: #e1ecff; }
+.conv-title { flex: 1; font-size: 13px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.btn-delete { border: none; background: transparent; color: #999; cursor: pointer; padding: 2px; border-radius: 4px; display: flex; opacity: 0; transition: opacity 0.15s; }
+.conv-item:hover .btn-delete { opacity: 1; }
+.btn-delete:hover { color: #f56c6c; background: rgba(245,108,108,0.1); }
+.empty-hint { text-align: center; color: #999; font-size: 13px; padding: 24px 0; }
+.sidebar-footer { padding: 12px; border-top: 1px solid #e8ecf0; display: flex; gap: 8px; align-items: center; }
+.btn-memory { border: none; background: transparent; color: #606266; cursor: pointer; font-size: 13px; display: flex; align-items: center; gap: 4px; padding: 6px 10px; border-radius: 6px; flex: 1; }
+.btn-memory:hover { background: #eef2f7; }
+.btn-toggle { border: none; background: transparent; color: #999; cursor: pointer; padding: 4px; border-radius: 4px; display: flex; }
+.btn-toggle:hover { background: #eef2f7; }
+.btn-expand { position: fixed; top: 80px; left: 8px; z-index: 10; border: 1px solid #e0e0e0; background: #fff; padding: 8px; border-radius: 8px; cursor: pointer; box-shadow: 0 2px 8px rgba(0,0,0,0.08); }
+
+/* ==================== 聊天主区域 ==================== */
+.chat-main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+.empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 16px; color: #999; }
+.ai-chat-card { flex: 1; display: flex; flex-direction: column; padding: 16px; overflow: hidden; }
+.chat-messages { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
 .message-row { display: flex; gap: 12px; align-items: flex-start; }
 .message-row.user { flex-direction: row-reverse; }
 .avatar { flex: 0 0 36px; }
-.bubble { max-width: clamp(480px, 60%, 900px); }
-.bubble-content { padding: 12px 14px; border-radius: 12px; line-height: 1.6; }
+.bubble { max-width: clamp(300px, 65%, 800px); }
+.bubble-content { padding: 12px 14px; border-radius: 12px; line-height: 1.6; word-break: break-word; }
 .message-row.user .bubble-content { background: #409eff; color: #fff; border-bottom-right-radius: 6px; }
 .message-row.assistant .bubble-content { background: #f5f7fa; color: #333; border-bottom-left-radius: 6px; }
 .chat-input-area { margin-top: 12px; border-top: 1px solid #eef2f6; padding-top: 12px; }
@@ -367,122 +442,35 @@ onBeforeUnmount(() => {
 .btn.send:hover { transform: translateY(-2px); box-shadow: 0 6px 16px rgba(64,158,255,0.18); }
 .btn.send.sending { opacity: 0.8; pointer-events: none; }
 .send-icon { display: block; }
-/* loading spinner */
+
+/* ==================== 记忆面板 ==================== */
+.memory-panel { padding: 0 4px; }
+.memory-empty { text-align: center; color: #999; padding: 32px 0; }
+.memory-item { display: flex; align-items: flex-start; gap: 8px; padding: 12px; border-bottom: 1px solid #f0f0f0; }
+.memory-tag { background: #ecf5ff; color: #409eff; font-size: 11px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
+.memory-content { flex: 1; font-size: 13px; color: #333; line-height: 1.5; }
+.memory-delete { border: none; background: transparent; color: #ccc; cursor: pointer; padding: 2px; flex-shrink: 0; }
+.memory-delete:hover { color: #f56c6c; }
+
+/* ==================== Loading ==================== */
 .loading-indicator { display: flex; align-items: center; gap: 12px; justify-content: center; }
+.three-body { --uib-size: 35px; --uib-speed: 0.8s; --uib-color: #5D3FD3; position: relative; display: inline-block; height: var(--uib-size); width: var(--uib-size); animation: spin78236 calc(var(--uib-speed) * 2.5) infinite linear; }
+.three-body__dot { position: absolute; height: 100%; width: 30%; }
+.three-body__dot:after { content: ''; position: absolute; height: 0%; width: 100%; padding-bottom: 100%; background-color: var(--uib-color); border-radius: 50%; }
+.three-body__dot:nth-child(1) { bottom: 5%; left: 0; transform: rotate(60deg); transform-origin: 50% 85%; }
+.three-body__dot:nth-child(1)::after { bottom: 0; left: 0; animation: wobble1 var(--uib-speed) infinite ease-in-out; animation-delay: calc(var(--uib-speed) * -0.3); }
+.three-body__dot:nth-child(2) { bottom: 5%; right: 0; transform: rotate(-60deg); transform-origin: 50% 85%; }
+.three-body__dot:nth-child(2)::after { bottom: 0; left: 0; animation: wobble1 var(--uib-speed) infinite calc(var(--uib-speed) * -0.15) ease-in-out; }
+.three-body__dot:nth-child(3) { bottom: -5%; left: 0; transform: translateX(116.666%); }
+.three-body__dot:nth-child(3)::after { top: 0; left: 0; animation: wobble2 var(--uib-speed) infinite ease-in-out; }
+@keyframes spin78236 { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+@keyframes wobble1 { 0%, 100% { transform: translateY(0%) scale(1); opacity: 1; } 50% { transform: translateY(-66%) scale(0.65); opacity: 0.8; } }
+@keyframes wobble2 { 0%, 100% { transform: translateY(0%) scale(1); opacity: 1; } 50% { transform: translateY(66%) scale(0.65); opacity: 0.8; } }
 
-/* From Uiverse.io by dovatgabriel - three-body animation */
-.three-body {
- --uib-size: 35px;
- --uib-speed: 0.8s;
- --uib-color: #5D3FD3;
- position: relative;
- display: inline-block;
- height: var(--uib-size);
- width: var(--uib-size);
- animation: spin78236 calc(var(--uib-speed) * 2.5) infinite linear;
-}
-
-.three-body__dot {
- position: absolute;
- height: 100%;
- width: 30%;
-}
-
-.three-body__dot:after {
- content: '';
- position: absolute;
- height: 0%;
- width: 100%;
- padding-bottom: 100%;
- background-color: var(--uib-color);
- border-radius: 50%;
-}
-
-.three-body__dot:nth-child(1) {
- bottom: 5%;
- left: 0;
- transform: rotate(60deg);
- transform-origin: 50% 85%;
-}
-
-.three-body__dot:nth-child(1)::after {
- bottom: 0;
- left: 0;
- animation: wobble1 var(--uib-speed) infinite ease-in-out;
- animation-delay: calc(var(--uib-speed) * -0.3);
-}
-
-.three-body__dot:nth-child(2) {
- bottom: 5%;
- right: 0;
- transform: rotate(-60deg);
- transform-origin: 50% 85%;
-}
-
-.three-body__dot:nth-child(2)::after {
- bottom: 0;
- left: 0;
- animation: wobble1 var(--uib-speed) infinite
-  calc(var(--uib-speed) * -0.15) ease-in-out;
-}
-
-.three-body__dot:nth-child(3) {
- bottom: -5%;
- left: 0;
- transform: translateX(116.666%);
-}
-
-.three-body__dot:nth-child(3)::after {
- top: 0;
- left: 0;
- animation: wobble2 var(--uib-speed) infinite ease-in-out;
-}
-
-@keyframes spin78236 {
- 0% {
-  transform: rotate(0deg);
- }
-
- 100% {
-  transform: rotate(360deg);
- }
-}
-
-@keyframes wobble1 {
- 0%,
-  100% {
-  transform: translateY(0%) scale(1);
-  opacity: 1;
- }
-
- 50% {
-  transform: translateY(-66%) scale(0.65);
-  opacity: 0.8;
- }
-}
-
-@keyframes wobble2 {
- 0%,
-  100% {
-  transform: translateY(0%) scale(1);
-  opacity: 1;
- }
-
- 50% {
-  transform: translateY(66%) scale(0.65);
-  opacity: 0.8;
- }
-}
-@media (max-width: 1200px) {
-  .ai-view { max-width: 95%; padding: 16px; }
-  .ai-chat-card { height: 78vh; min-height: 480px; }
-  .bubble { max-width: 82%; }
-}
-
-@media (max-width: 600px) {
-  .ai-view { padding: 10px; }
-  .ai-chat-card { height: 72vh; min-height: 420px; }
-  .bubble { max-width: 92%; }
-  .btn.send { width: 40px; height: 40px; }
+/* ==================== 响应式 ==================== */
+@media (max-width: 768px) {
+  .sidebar { position: fixed; left: 0; top: 60px; bottom: 0; z-index: 20; box-shadow: 2px 0 12px rgba(0,0,0,0.1); }
+  .sidebar.collapsed { width: 0; }
+  .bubble { max-width: 90%; }
 }
 </style>
