@@ -177,26 +177,20 @@ async def stream_chat(
     main_agent = create_react_agent(llm, MAIN_AGENT_TOOLS)
 
     try:
-        async for event in main_agent.astream_events(
-            {"messages": [SystemMessage(content=system_prompt)] + messages},
-            version="v2",
-        ):
-            kind = event["event"]
+        # 用非流式调用获取完整结果，然后模拟流式输出
+        # 这样避免子 Agent 的中间 LLM 输出混入主 Agent 的 delta
+        yield {"event": "tool_call", "data": "正在思考..."}
 
-            if kind == "on_chat_model_stream":
-                chunk = event["data"]["chunk"]
-                if chunk.content:
-                    yield {"event": "delta", "data": chunk.content}
+        result = await chat(user_info, memories, history, user_message)
+        reply = result.get("reply", "")
 
-            elif kind == "on_tool_start":
-                tool_name = event.get("name", "")
-                label_map = {
-                    "call_order_agent": "📋 订单专家处理中...",
-                    "call_social_agent": "📝 社交专家处理中...",
-                    "call_map_agent": "🗺️ 地图专家处理中...",
-                }
-                label = label_map.get(tool_name, f"调用: {tool_name}")
-                yield {"event": "tool_call", "data": label}
+        if not reply:
+            reply = "抱歉，AI 未返回有效内容。"
+
+        # 将完整回复按 chunk 发送（模拟流式效果）
+        chunk_size = 4
+        for i in range(0, len(reply), chunk_size):
+            yield {"event": "delta", "data": reply[i:i + chunk_size]}
 
         yield {"event": "done", "data": ""}
 

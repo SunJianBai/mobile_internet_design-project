@@ -75,7 +75,10 @@
                       <div v-if="message.loading" class="loading-dots">
                         <span></span><span></span><span></span>
                       </div>
-                      <div v-else class="markdown-body" v-html="formatContent(message.content)"></div>
+                      <template v-else>
+                        <div v-if="message.status && !message.content" class="status-text">{{ message.status }}</div>
+                        <div class="markdown-body" v-html="formatContent(message.content)"></div>
+                      </template>
                     </div>
                   </div>
                 </template>
@@ -227,14 +230,13 @@ async function handleSendMessage() {
   agentService.streamMessage(currentConvId.value, msgText, {
     onDelta(text) {
       if (aiMsg.loading) aiMsg.loading = false
+      if (aiMsg.status) aiMsg.status = ''  // 收到实际内容后清除 status
       aiMsg.content += text
       scrollToBottom()
     },
     onStatus(statusText) {
-      if (aiMsg.loading) {
-        aiMsg.content = statusText
-        aiMsg.loading = false
-      }
+      if (aiMsg.loading) aiMsg.loading = false
+      aiMsg.status = statusText  // 用独立字段显示状态，不污染 content
       scrollToBottom()
     },
     async onDone() {
@@ -383,16 +385,33 @@ const renderMarkdown = (md) => {
   md = md.replace(/@@MAP_BLOCK_(\d+)@@/g, (m, idx) => {
     const p = mapBlocks[Number(idx)]
     if (!p || !p.lng || !p.lat) return ''
-    const zoom = p.zoom || 15
     const title = p.title || '位置'
-    const mapUrl = `https://staticmap.openstreetmap.de/staticmap.php?center=${p.lat},${p.lng}&zoom=${zoom}&size=560x280&markers=${p.lat},${p.lng},red-pushpin`
-    return `<div class="map-embed"><div class="map-title">\ud83d\udccd ${escapeHtml(title)}</div><img src="${mapUrl}" alt="${escapeHtml(title)}" loading="lazy" /></div>`
+    const amapLink = `https://uri.amap.com/marker?position=${p.lng},${p.lat}&name=${encodeURIComponent(title)}`
+    return `<div class="map-card">` +
+      `<a href="${amapLink}" target="_blank" rel="noopener noreferrer" class="map-card-inner">` +
+        `<div class="map-card-icon"><svg viewBox="0 0 24 24" width="32" height="32"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="#2563eb"/></svg></div>` +
+        `<div class="map-card-info">` +
+          `<div class="map-card-title">${escapeHtml(title)}</div>` +
+          `<div class="map-card-coords">${p.lng}, ${p.lat}</div>` +
+          `<div class="map-card-action">点击在高德地图中查看</div>` +
+        `</div>` +
+        `<div class="map-card-arrow"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#9ca3af"/></svg></div>` +
+      `</a>` +
+    `</div>`
   })
 
   return md
 }
 
-const formatContent = (text) => renderMarkdown(text)
+const formatContent = (text) => {
+  if (!text) return ''
+  let cleaned = text
+  // 清除可能混入的 status 前缀（历史数据兼容）
+  cleaned = cleaned.replace(/^正在思考\.{0,3}/g, '')
+  // 如果文本中有不完整的 :::map{ 语法（流式拼接中），显示加载提示
+  cleaned = cleaned.replace(/:::map\{[^}]*$/g, '<p style="color:#9ca3af">正在加载地图...</p>')
+  return renderMarkdown(cleaned.trim())
+}
 
 function handleChatClick(e) {
   const link = e.target.closest('.app-link')
@@ -558,9 +577,23 @@ onMounted(async () => {
 .markdown-body :deep(.app-link:hover) { text-decoration: underline; }
 
 /* 地图 */
-.markdown-body :deep(.map-embed) { margin: 12px 0; border-radius: 12px; overflow: hidden; border: 1px solid #e5e7eb; }
-.markdown-body :deep(.map-embed .map-title) { padding: 8px 14px; background: #f9fafb; font-size: 13px; font-weight: 500; color: #374151; }
-.markdown-body :deep(.map-embed img) { display: block; width: 100%; max-width: 560px; height: auto; }
+/* 状态文字 */
+.status-text { font-size: 13px; color: #9ca3af; padding: 4px 0; }
+
+/* 地图卡片 */
+.markdown-body :deep(.map-card) { margin: 12px 0; max-width: 420px; }
+.markdown-body :deep(.map-card-inner) {
+  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
+  border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb;
+  text-decoration: none; color: inherit; transition: all 0.15s;
+}
+.markdown-body :deep(.map-card-inner:hover) { background: #eff6ff; border-color: #bfdbfe; }
+.markdown-body :deep(.map-card-icon) { flex-shrink: 0; }
+.markdown-body :deep(.map-card-info) { flex: 1; min-width: 0; }
+.markdown-body :deep(.map-card-title) { font-size: 14px; font-weight: 600; color: #111827; margin-bottom: 2px; }
+.markdown-body :deep(.map-card-coords) { font-size: 12px; color: #9ca3af; font-family: monospace; }
+.markdown-body :deep(.map-card-action) { font-size: 12px; color: #2563eb; margin-top: 4px; }
+.markdown-body :deep(.map-card-arrow) { flex-shrink: 0; color: #9ca3af; }
 
 /* ==================== 输入区域 ==================== */
 .input-area {
