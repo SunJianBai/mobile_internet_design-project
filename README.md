@@ -3,310 +3,305 @@
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.0-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen.svg)](https://vuejs.org/)
-[![uni-app](https://img.shields.io/badge/uni--app-latest-blue.svg)](https://uniapp.dcloud.io/)
+[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
+[![LangChain](https://img.shields.io/badge/LangChain-0.3-orange.svg)](https://www.langchain.com/)
 
 > 本项目为北京理工大学2023级计算机学院本科生**谷奕辰、孙健柏、伍奕涛、张元宏**四位同学的专业限选课《移动互联分析与设计》的结课作业项目
 
-## 📋 项目概述
+## 项目概述
 
-校园约伴系统（Campus Companion）是一款面向校园用户的综合性社交平台，旨在解决校园内学生之间约伴进行各类活动（如运动、聚餐、学习、娱乐等）的需求。系统采用前后端分离架构，提供**移动端App**、**Web前端**和**后端服务**三端支持，为用户提供便捷的约伴服务和丰富的社交体验。
+校园约伴系统（Campus Companion）是一款面向校园用户的综合性社交平台，旨在解决校园内学生之间约伴进行各类活动（如运动、聚餐、学习、娱乐等）的需求。系统采用前后端分离架构，提供**移动端 App**、**Web 前端**、**Java 后端**和**Python AI 智能体**四端支持。
 
 ### 核心功能
 
-- 🎯 **活动约伴**：发布和参与各类校园活动（运动、聚餐、学习、娱乐等）
-- 📱 **动态社区**：发布动态、评论互动、点赞分享
-- 🤖 **AI助手**：智能对话助手，提供个性化建议
-- 👤 **用户系统**：完整的用户认证、信息管理功能
-- 💬 **实时聊天**：活动参与者之间的实时消息交流
-- 📊 **活动管理**：活动申请、状态管理、历史记录
+- **活动约伴**：发布和参与各类校园活动（运动、聚餐、学习、娱乐等）
+- **动态社区**：发布动态、评论互动、点赞分享
+- **AI 智能体**：多智能体架构的校园助手，支持约伴管理、地图搜索、天气查询、动态互动等
+- **用户系统**：完整的用户认证、信息管理功能
+- **实时聊天**：活动参与者之间的消息交流
+- **活动管理**：活动申请、审批、状态管理、历史记录
 
-## 🏗️ 项目架构
-
-本项目采用前后端分离架构，包含以下三个部分：
+## 系统架构
 
 ```
-mobile_internet_design-project/
-├── CampusCompanionApp/          # 移动端App（uni-app）
-├── CampusCompanionBackend/      # 后端服务（Spring Boot）
-├── frontend/                    # Web前端（Vue 3）
-│   └── Web_vue/
-└── docs/                        # 项目文档
-    ├── DemandAnalysis/          # 需求分析文档
-    └── SystemAnalysis/          # 系统分析文档
+┌─────────────┐   ┌─────────────┐
+│  移动端 App   │   │  Web 前端    │
+│  (uni-app)   │   │  (Vue 3)    │
+└──────┬───────┘   └──────┬──────┘
+       │                  │
+       └────────┬─────────┘
+                │ HTTP / SSE
+                ▼
+       ┌─────────────────┐         ┌──────────────────────┐
+       │  Java 后端        │  HTTP   │  Python AI Agent     │
+       │  (Spring Boot)   │ ◄─────► │  (LangChain/LangGraph)│
+       │  :8080           │         │  :5001               │
+       └────────┬─────────┘         └──────┬───────────────┘
+                │                          │
+                ▼                          ▼
+         ┌───────────┐            ┌──────────────────┐
+         │  MySQL     │            │  高德地图 MCP     │
+         │  :3306     │            │  (天气/地图/路线) │
+         └───────────┘            └──────────────────┘
 ```
 
 ### 技术栈
 
-#### 移动端App
-- **框架**：uni-app (Vue 3)
-- **状态管理**：Vuex 4
-- **时间处理**：dayjs
-- **开发工具**：HBuilderX
-- **支持平台**：Android、iOS、H5
+| 层级 | 技术 |
+|------|------|
+| **移动端** | uni-app (Vue 3) + Vuex 4 |
+| **Web 前端** | Vue 3 + Vite + Element Plus + Pinia |
+| **Java 后端** | Spring Boot 4.0 + JDK 21 + Spring Data JPA + MySQL |
+| **AI 智能体** | Python 3.9 + LangChain + LangGraph + FastAPI |
+| **LLM** | Qwen3-32B (硅基流动 SiliconFlow API) |
+| **地图服务** | 高德地图 MCP Server (ModelScope) |
 
-#### Web前端
-- **框架**：Vue 3
-- **构建工具**：Vite
-- **UI组件库**：Element Plus
-- **状态管理**：Pinia
-- **路由**：Vue Router 4
-- **HTTP客户端**：Axios
+## AI 智能体架构
 
-#### 后端服务
-- **框架**：Spring Boot 4.0.0
-- **Java版本**：21
-- **数据库**：MySQL
-- **ORM**：Spring Data JPA / Hibernate
-- **安全认证**：Spring Security + JWT
-- **邮件服务**：Spring Mail
-- **API文档**：RESTful API
+系统采用**多智能体协作架构**（子 Agent 作为工具模式）：
 
-## 🚀 快速开始
+```
+用户消息
+  │
+  ▼
+┌──────────────────────────────────────┐
+│  主 Agent (ReAct 循环)                │
+│  职责：理解用户意图，调度子 Agent，     │
+│       整合结果生成最终回复              │
+│                                      │
+│  工具：                               │
+│  - call_order_agent(task)            │
+│  - call_social_agent(task)           │
+│  - call_map_agent(task)              │
+└──────────┬──────────┬───────────┘
+           │          │           │
+     ┌─────▼──┐ ┌─────▼──┐ ┌─────▼────┐
+     │ 订单    │ │ 社交    │ │ 地图天气  │
+     │ Agent  │ │ Agent  │ │ Agent    │
+     │ 8 工具 │ │ 6 工具 │ │ 7 工具   │
+     └────────┘ └────────┘ └──────────┘
+```
+![1774500438688](image/README/1774500438688.png)
+
+### 子 Agent 工具清单
+
+**订单 Agent** — 约伴活动管理
+- `search_orders` / `create_order` / `get_my_orders` / `get_order_detail`
+- `apply_to_order` / `get_order_applications` / `accept_applicant` / `complete_order`
+
+**社交 Agent** — 校园动态与用户
+- `search_contents` / `get_content_detail` / `create_comment` / `like_content`
+- `get_user_profile` / `search_users`
+
+**地图天气 Agent** — 位置与环境信息（通过高德 MCP Server）
+- `maps_text_search` / `maps_around_search` / `maps_geo`
+- `maps_weather` / `maps_direction_walking` / `maps_direction_driving`
+- `get_current_datetime`
+
+### 智能体特性
+
+- **行为约束**：只读操作直接执行，写操作（创建订单、发评论等）必须用户确认后才执行
+- **跨域协作**：主 Agent 可同时调多个子 Agent，如"查天气 + 搜活动"一次完成
+- **地图展示**：搜索到地点后在对话中内嵌静态地图
+- **前端导航**：回复中的链接可直接跳转到对应的前端页面
+- **用户记忆**：自动从对话中提取用户偏好，跨会话保持
+
+## 快速开始
 
 ### 环境要求
 
-- **Java**：JDK 21+
-- **Node.js**：v16+
-- **MySQL**：8.0+
-- **Maven**：3.6+
-- **HBuilderX**（仅移动端开发需要）
+- **JDK** 21+
+- **Python** 3.9+
+- **Node.js** 16+
+- **MySQL** 8.0+
+- **Maven** 3.6+（或使用项目自带的 `mvnw`）
 
-### 数据库配置
+### 1. 数据库配置
 
-1. 创建MySQL数据库：
 ```sql
 CREATE DATABASE campus_companion CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-2. 配置数据库连接信息（`CampusCompanionBackend/src/main/resources/application.properties`）：
+修改 `CampusCompanionBackend/src/main/resources/application.properties`：
+
 ```properties
-spring.datasource.url=jdbc:mysql://localhost:3306/campus_companion?useUnicode=true&characterEncoding=utf-8
 spring.datasource.username=your_username
 spring.datasource.password=your_password
 ```
 
-3. 数据库初始化：
-   - 后端使用JPA自动建表（`spring.jpa.hibernate.ddl-auto=update`）
-   - 或使用 `docs/SystemAnalysis/create.sql` 手动导入
+后端使用 JPA 自动建表（`spring.jpa.hibernate.ddl-auto=update`）。
 
-### 后端启动
+### 2. AI 智能体配置
+
+创建 `CampusCompanionAgent/.env`：
+
+```env
+# 硅基流动 API
+SILICONFLOW_API_KEY=your_siliconflow_api_key
+SILICONFLOW_MODEL=Qwen/Qwen3-32B
+
+# Java 后端地址
+JAVA_BACKEND_URL=http://localhost:8080
+
+# 高德地图 MCP Server
+AMAP_MCP_URL=https://mcp.api-inference.modelscope.net/your_mcp_id/sse
+```
+
+安装 Python 依赖：
 
 ```bash
-cd CampusCompanionBackend
+cd CampusCompanionAgent
+python3 -m venv venv
+source venv/bin/activate
+pip install -r requirements.txt
+```
 
-# 使用Maven运行
+### 3. 一键启动
+
+```bash
+# 启动后端（MySQL + Python Agent + Java Backend）
+bash start-backend.sh
+
+# 启动前端
+bash start-frontend.sh
+```
+
+停止服务：
+
+```bash
+bash stop-backend.sh
+bash stop-frontend.sh
+```
+
+### 手动启动
+
+```bash
+# 1. Python AI Agent
+cd CampusCompanionAgent
+source venv/bin/activate
+python -m uvicorn app.main:app --host 0.0.0.0 --port 5001
+
+# 2. Java 后端
+cd CampusCompanionBackend
 ./mvnw spring-boot:run
 
-# 或使用IDE直接运行 CampusCompanionBackendApplication.java
+# 3. Web 前端
+cd CampusCompanionWeb
+npm install && npm run dev
 ```
 
-后端服务默认运行在：`http://localhost:8080`
+服务地址：
+- Java 后端：`http://localhost:8080`
+- Python Agent：`http://localhost:5001`
+- Web 前端：`http://localhost:5173`
 
-### 移动端App启动
+## 项目结构
 
-```bash
-cd CampusCompanionApp
-
-# 安装依赖
-npm install
+```
+mobile_internet_design-project/
+├── CampusCompanionBackend/         # Java 后端 (Spring Boot)
+│   └── src/main/java/.../
+│       ├── controller/             # REST 控制器
+│       ├── service/                # 业务逻辑层
+│       ├── repository/             # 数据访问层
+│       ├── entity/                 # JPA 实体
+│       ├── dto/                    # 请求/响应 DTO
+│       ├── enums/                  # 枚举（活动类型、校区等）
+│       ├── config/                 # 安全、CORS 等配置
+│       └── exception/              # 全局异常处理
+│
+├── CampusCompanionAgent/           # Python AI 智能体
+│   ├── app/
+│   │   ├── main.py                 # FastAPI 入口
+│   │   ├── agent.py                # 多智能体架构（主 Agent + 子 Agent）
+│   │   ├── prompts.py              # 各 Agent 的 System Prompt
+│   │   ├── tools.py                # 订单基础工具
+│   │   ├── tools_order.py          # 订单扩展工具
+│   │   ├── tools_content.py        # 动态/社交工具
+│   │   ├── tools_user.py           # 用户工具
+│   │   ├── tools_utils.py          # 时间查询等工具
+│   │   ├── mcp_tools.py            # 高德地图 MCP 集成
+│   │   ├── backend_client.py       # Java 后端 HTTP 客户端
+│   │   └── config.py               # 环境配置
+│   ├── .env                        # 敏感配置（已 gitignore）
+│   └── requirements.txt
+│
+├── CampusCompanionWeb/             # Vue 3 Web 前端
+│   └── src/
+│       ├── views/                  # 页面（AI、订单、动态、用户等）
+│       ├── services/               # API 服务层
+│       ├── stores/                 # Pinia 状态管理
+│       ├── router/                 # 路由配置
+│       └── components/             # 通用组件
+│
+├── CampusCompanionApp/             # uni-app 移动端
+├── docs/                           # 项目文档
+├── start-backend.sh                # 后端一键启动脚本
+├── stop-backend.sh                 # 后端停止脚本
+├── start-frontend.sh               # 前端启动脚本
+└── stop-frontend.sh                # 前端停止脚本
 ```
 
-在HBuilderX中：
-1. 文件 → 打开目录 → 选择 `CampusCompanionApp`
-2. 运行 → 运行到手机或模拟器 → 运行到Android App基座（或浏览器）
+## API 接口
 
-**API地址配置**：
-- 夜神模拟器：`http://10.0.2.2:8080/api/v1`
-- 浏览器：`http://localhost:8080/api/v1`
-- 真机：`http://你的电脑IP:8080/api/v1`
+基础 URL：`http://localhost:8080/api/v1`
 
-### Web前端启动
+| 模块 | 路径 | 说明 |
+|------|------|------|
+| 认证 | `/auth` | 登录、注册、密码重置 |
+| 用户 | `/users` | 用户资料、搜索、头像上传 |
+| 订单 | `/orders` | 活动发布、申请、审批、消息 |
+| 动态 | `/contents` | 动态发布、评论、点赞 |
+| AI 智能体 | `/agent` | 会话管理、消息发送（SSE 流式）、记忆管理 |
+| 文件 | `/upload` | 图片/视频上传 |
+| 管理 | `/admin` | 用户管理、系统统计（管理员） |
 
-```bash
-cd frontend/Web_vue
+Python Agent 接口（`http://localhost:5001`）：
 
-# 安装依赖
-npm install
+| 路径 | 说明 |
+|------|------|
+| `POST /chat` | 非流式对话 |
+| `POST /stream` | SSE 流式对话 |
+| `POST /extract-memory` | 记忆提取 |
+| `GET /health` | 健康检查 |
 
-# 启动开发服务器
-npm run dev
-```
-
-Web前端默认运行在：`http://localhost:5173`
-
-## 📁 项目结构
-
-### 后端结构
-```
-CampusCompanionBackend/
-├── src/main/java/dev/campuscompanionbackend/
-│   ├── config/              # 配置类（安全、跨域等）
-│   ├── controller/          # REST控制器
-│   ├── service/             # 业务逻辑层
-│   ├── repository/          # 数据访问层
-│   ├── entity/              # 实体类
-│   ├── dto/                 # 数据传输对象
-│   ├── enums/               # 枚举类
-│   ├── exception/           # 异常处理
-│   └── utils/               # 工具类
-└── src/main/resources/
-    └── application.properties  # 应用配置
-```
-
-### 移动端结构
-```
-CampusCompanionApp/
-├── api/                     # API接口层
-├── pages/                   # 页面目录
-│   ├── index/              # 首页
-│   ├── auth/               # 认证页面
-│   ├── order/              # 活动相关页面
-│   ├── content/            # 动态相关页面
-│   ├── user/               # 用户相关页面
-│   └── ai/                 # AI助手页面
-├── store/                   # 状态管理
-├── utils/                   # 工具函数
-├── App.vue                  # 应用入口
-├── main.js                  # 主入口文件
-├── manifest.json            # 应用配置
-└── pages.json               # 页面路由配置
-```
-
-### Web前端结构
-```
-frontend/Web_vue/
-├── src/
-│   ├── components/          # 组件
-│   ├── views/              # 页面视图
-│   ├── stores/             # Pinia状态管理
-│   ├── services/           # API服务
-│   ├── utils/              # 工具函数
-│   ├── router/             # 路由配置
-│   └── App.vue             # 根组件
-├── public/                  # 静态资源
-└── vite.config.js          # Vite配置
-```
-
-## 🔌 API接口
-
-### 基础信息
-
-- **基础URL**：`http://localhost:8080/api/v1`
-- **认证方式**：JWT Token（请求头：`Authorization: Bearer {token}`）
-- **数据格式**：JSON
-
-### 主要接口模块
-
-- **认证模块** (`/api/v1/auth`)：登录、注册、忘记密码
-- **用户模块** (`/api/v1/users`)：用户信息管理
-- **活动模块** (`/api/v1/orders`)：活动发布、申请、管理
-- **动态模块** (`/api/v1/contents`)：动态发布、评论、点赞
-- **AI模块** (`/api/v1/ai`)：AI对话
-- **文件模块** (`/api/v1/files`)：文件上传
-- **验证码模块** (`/api/v1/verify`)：验证码发送
-
-详细的API文档请参考：`docs/SystemAnalysis/接口文档.md`
-
-## 📚 项目文档
-
-- [需求分析文档](docs/DemandAnalysis/系统需求文档.md)
-- [系统分析文档](docs/SystemAnalysis/README.md)
-- [数据库设计文档](docs/SystemAnalysis/数据库模型设计.md)
-- [接口文档](docs/SystemAnalysis/接口文档.md)
-- [移动端项目介绍](CampusCompanionApp/项目介绍.md)
-
-## 🌟 功能特性
+## 功能特性
 
 ### 用户系统
-- ✅ 邮箱/学号登录
-- ✅ 邮箱验证码注册
-- ✅ 忘记密码（三步流程）
-- ✅ 用户信息管理
-- ✅ 头像上传
+- 邮箱验证码注册与登录
+- 忘记密码（三步验证流程）
+- 用户资料管理与头像上传
 
 ### 活动约伴
-- ✅ 活动发布与管理
-- ✅ 活动列表浏览（支持筛选）
-- ✅ 活动详情查看
-- ✅ 活动申请与审批
-- ✅ 活动状态管理
-- ✅ 活动参与者聊天
+- 活动发布（篮球、羽毛球、约饭、自习、电影、跑步、游戏等）
+- 按校区/活动类型/状态筛选浏览
+- 申请加入与审批机制
+- 活动参与者消息交流
 
 ### 动态社区
-- ✅ 动态发布（文字、图片、视频）
-- ✅ 动态列表浏览
-- ✅ 动态详情查看
-- ✅ 评论功能
-- ✅ 点赞功能
+- 图文/视频动态发布
+- 评论（支持嵌套回复）与点赞
+- 关键词搜索
 
-### AI助手
-- ✅ 智能对话
-- ✅ 系统提示对话
+### AI 智能体
+- 多智能体协作架构（主 Agent + 3 个专精子 Agent）
+- 通过对话完成约伴搜索、创建、管理等操作
+- 高德地图集成（地点搜索、天气查询、路线规划）
+- 对话中内嵌地图展示
+- 回复中的链接可跳转前端页面
+- 用户记忆自动提取与跨会话保持
+- SSE 流式输出
 
-### 其他功能
-- ✅ 多端支持（Android、iOS、H5、Web）
-- ✅ 响应式设计
-- ✅ 完善的错误处理
-- ✅ 统一的网络请求封装
-
-## 🔧 配置说明
-
-### 后端配置
-
-主要配置项（`application.properties`）：
-- **数据库连接**：URL、用户名、密码
-- **JWT配置**：密钥、过期时间
-- **邮件服务**：SMTP服务器配置
-- **文件上传**：大小限制
-- **智谱AI**：API Key配置（AI功能需要）
-
-### 前端配置
-
-- **API地址**：在 `utils/config.js`（移动端）或 `src/utils/axios.js`（Web端）中配置
-- **环境变量**：根据开发/生产环境切换
-
-## ⚠️ 注意事项
-
-1. **数据库**：确保MySQL服务已启动，数据库已创建
-2. **端口占用**：确保8080端口未被占用（后端），5173端口未被占用（Web前端）
-3. **网络配置**：
-   - 移动端在模拟器中访问后端：使用 `10.0.2.2` 代替 `localhost`
-   - 真机调试：需要使用电脑的实际局域网IP地址
-4. **邮件服务**：忘记密码功能需要配置SMTP邮件服务器
-5. **AI功能**：需要配置智谱AI的API Key（在 `application.properties` 中）
-
-## 🛠️ 开发建议
-
-1. **首次运行**：建议先运行后端，确保数据库连接正常
-2. **调试顺序**：后端 → Web前端 → 移动端
-3. **数据测试**：可以通过后端接口或直接在数据库中插入测试数据
-4. **功能测试**：按照用户流程：注册 → 登录 → 发布活动 → 发布动态
-5. **代码规范**：遵循各框架的代码规范，保持代码整洁
-
-## 📊 项目状态
-
-- ✅ 后端服务：已完成，所有接口正常运行
-- ✅ 移动端App：已完成，与后端API完全对接
-- ✅ Web前端：已完成，功能完整
-- ✅ 数据库设计：已完成，支持所有功能
-- ✅ API文档：已完成，接口文档完善
-- ✅ 项目文档：已完成，文档齐全
-
-## 👥 开发团队
+## 开发团队
 
 - **谷奕辰**
 - **孙健柏**
 - **伍奕涛**
 - **张元宏**
 
-**所属院校**：北京理工大学 计算机学院  
-**课程**：移动互联分析与设计  
-**项目版本**：1.0.0
+**所属院校**：北京理工大学 计算机学院
+**课程**：移动互联分析与设计
 
-## 📄 许可证
+## 许可证
 
 本项目为课程作业项目，仅供学习交流使用。
-
----
-
-**如有问题或建议，欢迎提出Issue或Pull Request！**
