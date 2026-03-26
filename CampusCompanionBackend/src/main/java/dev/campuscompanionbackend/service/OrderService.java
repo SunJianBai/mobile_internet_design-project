@@ -31,6 +31,11 @@ public interface OrderService {
      * @return Object 分页订单列表
      */
     Object getOrders(Integer page, Integer size, OrderStatus status, ActivityType activityType, Campus campus);
+
+    /**
+     * 获取指定用户发布的订单
+     */
+    Object getMyOrders(Long userId, Integer page, Integer size);
     
     /**
      * 获取订单详情

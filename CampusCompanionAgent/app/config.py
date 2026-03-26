@@ -3,16 +3,16 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# LLM
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 SILICONFLOW_MODEL = os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen3-32B")
 
-DB_HOST = os.getenv("DB_HOST", "localhost")
-DB_PORT = int(os.getenv("DB_PORT", "3306"))
-DB_NAME = os.getenv("DB_NAME", "campus_companion")
-DB_USER = os.getenv("DB_USER", "root")
-DB_PASSWORD = os.getenv("DB_PASSWORD", "879879")
+# Java 后端
+JAVA_BACKEND_URL = os.getenv("JAVA_BACKEND_URL", "http://localhost:8080")
 
-DATABASE_URL = f"mysql+pymysql://{DB_USER}:{DB_PASSWORD}@{DB_HOST}:{DB_PORT}/{DB_NAME}?charset=utf8mb4"
+# 高德 MCP Server
+AMAP_MCP_URL = os.getenv("AMAP_MCP_URL", "https://mcp.api-inference.modelscope.net/06e5f888e0a64b/sse")
 
+# Service
 AGENT_PORT = int(os.getenv("AGENT_PORT", "5001"))

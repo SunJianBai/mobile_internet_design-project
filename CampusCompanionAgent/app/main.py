@@ -2,6 +2,7 @@
 
 import json
 import logging
+from typing import List
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,8 +31,8 @@ app.add_middleware(
 
 class ChatRequest(BaseModel):
     user_info: dict  # {"uid": int, "nickname": str}
-    memories: list[dict] = []  # [{"category": str, "content": str}]
-    history: list[dict] = []  # [{"role": str, "content": str}]
+    memories: List[dict] = []  # [{"category": str, "content": str}]
+    history: List[dict] = []  # [{"role": str, "content": str}]
     message: str
 
 

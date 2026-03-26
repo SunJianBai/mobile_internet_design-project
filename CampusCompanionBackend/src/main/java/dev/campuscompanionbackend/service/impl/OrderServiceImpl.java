@@ -162,6 +162,21 @@ public class OrderServiceImpl implements OrderService {
     }
 
     @Override
+    public Object getMyOrders(Long userId, Integer page, Integer size) {
+        User user = getUserById(userId);
+        List<Order> orders = orderRepository.findByUser(user);
+        orders.forEach(this::checkOrder);
+
+        int start = (page - 1) * size;
+        int end = Math.min(start + size, orders.size());
+        List<Map<String, Object>> orderList = (start < orders.size())
+                ? orders.subList(start, end).stream().map(this::convertToOrderVO).collect(Collectors.toList())
+                : List.of();
+
+        return new PageResponse<>(orderList, (long) orders.size(), page, size);
+    }
+
+    @Override
     @Transactional
     public Object getOrderDetail(Long orderId) {
         log.info("获取订单详情: orderId={}", orderId);

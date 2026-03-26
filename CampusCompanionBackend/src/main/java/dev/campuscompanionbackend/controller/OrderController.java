@@ -60,6 +60,18 @@ public class OrderController extends BaseController {
     }
     
     /**
+     * 获取当前用户发布的订单
+     */
+    @GetMapping("/my")
+    public ApiResponse<Object> getMyOrders(
+            @RequestHeader(value = "X-User-Id") Long userId,
+            @RequestParam(defaultValue = "1") Integer page,
+            @RequestParam(defaultValue = "20") Integer size) {
+        Object result = orderService.getMyOrders(userId, page, size);
+        return success(result);
+    }
+
+    /**
      * 获取订单详情
      * @param orderId 订单ID
      * @return ApiResponse<Object>

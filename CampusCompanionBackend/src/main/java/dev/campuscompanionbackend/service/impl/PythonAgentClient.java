@@ -35,6 +35,7 @@ public class PythonAgentClient {
     private String pythonBaseUrl;
 
     private final HttpClient httpClient = HttpClient.newBuilder()
+            .version(HttpClient.Version.HTTP_1_1)
             .connectTimeout(java.time.Duration.ofSeconds(10))
             .build();
 
