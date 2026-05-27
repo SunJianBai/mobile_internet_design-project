@@ -1,0 +1,257 @@
+@startuml
+title CampusCompanionBackend Core Domain Class Diagram
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam linetype ortho
+hide empty members
+
+left to right direction
+
+package "entity" {
+  class User <<Entity>> {
+    - uid: Long
+    - email: String
+    - password: String
+    - nickname: String
+    - avatarUrl: String
+    - signature: String
+    - userType: UserType
+    - userStatus: UserStatus
+    - createdAt: LocalDateTime
+    - lastLoginAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class Order <<Entity>> {
+    - oid: Long
+    - user: User
+    - activityType: ActivityType
+    - genderRequire: GenderRequire
+    - campus: Campus
+    - location: String
+    - startTime: LocalDateTime
+    - note: String
+    - maxPeople: Byte
+    - currentPeople: Byte
+    - status: OrderStatus
+    - createdAt: LocalDateTime
+    - updatedAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class OrderApply <<Entity>> {
+    - apid: Long
+    - order: Order
+    - user: User
+    - status: ApplyStatus
+    - createdAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class OrderAccept <<Entity>> {
+    - acid: Long
+    - order: Order
+    - accepter: User
+    - acceptedAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class OrderMessage <<Entity>> {
+    - mid: Long
+    - order: Order
+    - sender: User
+    - receiver: User
+    - referenceMessage: OrderMessage
+    - content: String
+    - createdAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class Post <<Entity>> {
+    - pid: Long
+    - user: User
+    - parentPost: Post
+    - order: Order
+    - type: PostType
+    - content: String
+    - hasMedia: MediaType
+    - status: ContentStatus
+    - createdAt: LocalDateTime
+    - updatedAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class PostMedia <<Entity>> {
+    - pmid: Long
+    - post: Post
+    - mediaType: MediaType
+    - url: String
+    - createdAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class PostLike <<Entity>> {
+    - plid: Long
+    - post: Post
+    - user: User
+    - createdAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class AiConversation <<Entity>> {
+    - cid: Long
+    - user: User
+    - title: String
+    - createdAt: LocalDateTime
+    - updatedAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class AiMessage <<Entity>> {
+    - mid: Long
+    - conversation: AiConversation
+    - role: String
+    - content: String
+    - toolName: String
+    - tokenCount: Integer
+    - createdAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class AiMemory <<Entity>> {
+    - memId: Long
+    - user: User
+    - category: String
+    - content: String
+    - source: String
+    - createdAt: LocalDateTime
+    - updatedAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+
+  class VerifyCodeRecord <<Entity>> {
+    - vid: Long
+    - email: String
+    - code: String
+    - type: VerifyCodeRecordType
+    - status: VerifyCodeRecordStatus
+    - createdAt: LocalDateTime
+    - expiredAt: LocalDateTime
+    --
+    + getters/setters()
+    + equals()
+    + hashCode()
+    + toString()
+  }
+}
+
+package "enums" {
+  enum UserType
+  enum UserStatus
+  enum ActivityType
+  enum GenderRequire
+  enum Campus
+  enum OrderStatus
+  enum ApplyStatus
+  enum PostType
+  enum MediaType
+  enum ContentStatus
+  enum VerifyCodeRecordType
+  enum VerifyCodeRecordStatus
+}
+
+User "1" <-- "0..*" Order : creates
+User "1" <-- "0..*" OrderApply : submits
+Order "1" <-- "0..*" OrderApply : receives
+Order "1" *-- "0..1" OrderAccept : acceptedBy
+User "1" <-- "0..*" OrderAccept : accepts
+Order "1" <-- "0..*" OrderMessage : contains
+User "1" <-- "0..*" OrderMessage : sender
+User "1" <-- "0..*" OrderMessage : receiver
+OrderMessage "1" <-- "0..*" OrderMessage : repliesTo
+
+User "1" <-- "0..*" Post : publishes
+Post "1" <-- "0..*" Post : parentPost
+Order "0..1" <-- "0..*" Post : relatedOrder
+Post "1" <-- "0..*" PostMedia : media
+Post "1" <-- "0..*" PostLike : likes
+User "1" <-- "0..*" PostLike : likedBy
+
+User "1" <-- "0..*" AiConversation : owns
+AiConversation "1" <-- "0..*" AiMessage : contains
+User "1" <-- "0..*" AiMemory : stores
+
+User ..> UserType
+User ..> UserStatus
+Order ..> ActivityType
+Order ..> GenderRequire
+Order ..> Campus
+Order ..> OrderStatus
+OrderApply ..> ApplyStatus
+Post ..> PostType
+Post ..> MediaType
+Post ..> ContentStatus
+PostMedia ..> MediaType
+VerifyCodeRecord ..> VerifyCodeRecordType
+VerifyCodeRecord ..> VerifyCodeRecordStatus
+
+note right of User
+  Lombok @Data is used in source code,
+  so common accessors and object methods
+  are generated automatically.
+end note
+
+note bottom of OrderAccept
+  Source code models OrderAccept.order
+  as @OneToOne, meaning one order can
+  be accepted at most once.
+end note
+
+@enduml

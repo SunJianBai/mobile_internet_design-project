@@ -1,0 +1,554 @@
+@startuml
+title CampusCompanionBackend Layered Class Diagram
+
+skinparam backgroundColor white
+skinparam shadowing false
+skinparam classAttributeIconSize 0
+skinparam packageStyle rectangle
+skinparam linetype ortho
+hide empty members
+
+left to right direction
+
+package "controller" {
+  class BaseController {
+    + success(data): ApiResponse
+    + success(message, data): ApiResponse
+    + error(code, message): ApiResponse
+    + error(message): ApiResponse
+  }
+
+  class AuthController {
+    - authService: AuthService
+    - verifyService: VerifyService
+    --
+    + login(request): ApiResponse<LoginResponse>
+    + register(request): ApiResponse<Long>
+    + refreshToken(request): ApiResponse<String>
+    + logout(userId): ApiResponse<Void>
+    + sendResetCode(request): ApiResponse<Void>
+    + verifyResetCode(request): ApiResponse<Void>
+    + resetPassword(request): ApiResponse<Void>
+  }
+
+  class UserController {
+    - userService: UserService
+    --
+    + getUserInfo(userId): ApiResponse<UserInfoResponse>
+    + updateUserInfo(userId, request): ApiResponse<UserInfoResponse>
+    + changePassword(userId, request): ApiResponse<Void>
+    + uploadAvatar(userId, avatar): ApiResponse<String>
+    + searchUsers(keyword, page, size): ApiResponse<Object>
+  }
+
+  class OrderController {
+    - orderService: OrderService
+    --
+    + createOrder(request): ApiResponse<Long>
+    + getOrders(page, size, status, activityType, campus): ApiResponse<Object>
+    + getMyOrders(userId, page, size): ApiResponse<Object>
+    + getOrderDetail(orderId): ApiResponse<Object>
+    + updateOrder(orderId, request): ApiResponse<Long>
+    + applyOrder(orderId, request): ApiResponse<Long>
+    + auditApply(applyId, request): ApiResponse<Void>
+    + acceptOrder(orderId, request): ApiResponse<Void>
+    + sendOrderMessage(orderId, request): ApiResponse<Long>
+  }
+
+  class ContentController {
+    - contentService: ContentService
+    --
+    + createContent(request): ApiResponse<Long>
+    + getContents(page, size, type): ApiResponse<Object>
+    + getContentDetail(contentId): ApiResponse<Object>
+    + updateContent(contentId, request): ApiResponse<Long>
+    + uploadMedia(contentId, media): ApiResponse<String>
+    + createComment(contentId, request): ApiResponse<Long>
+    + likeContent(contentId): ApiResponse<Object>
+    + searchByKeyword(keyword, page, size, type): ApiResponse<Object>
+  }
+
+  class AgentController {
+    - agentService: AgentService
+    - agentStreamService: AgentStreamService
+    --
+    + createConversation(userId): ApiResponse<Map>
+    + listConversations(userId): ApiResponse<List>
+    + getMessages(userId, cid): ApiResponse<List>
+    + deleteConversation(userId, cid): ApiResponse<Void>
+    + sendMessage(userId, cid, body): ApiResponse<Map>
+    + streamMessage(userId, cid, body): SseEmitter
+    + getMemories(userId): ApiResponse<List>
+    + deleteMemory(userId, memId): ApiResponse<Void>
+  }
+
+  class AdminController {
+    - adminService: AdminService
+    --
+    + getUsers(page, size, userType): ApiResponse<Object>
+    + updateUserType(userId, userType): ApiResponse<Void>
+    + manageOrder(orderId, status): ApiResponse<Void>
+    + deleteContent(contentId): ApiResponse<Void>
+    + getStatistics(): ApiResponse<Object>
+  }
+
+  class FileController {
+    - fileService: FileService
+    --
+    + uploadImage(image): ApiResponse<String>
+    + uploadVideo(video): ApiResponse<String>
+    + deleteFile(fileUrl): ApiResponse<Boolean>
+    + deleteFile(pmid): ApiResponse<Boolean>
+  }
+
+  class VerifyController {
+    - verifyService: VerifyService
+    --
+    + verifyEmail(email): ApiResponse<Void>
+  }
+}
+
+package "service" {
+  interface AuthService {
+    + login(request): LoginResponse
+    + register(request): Long
+    + refreshToken(refreshToken): String
+    + logout(userId): void
+    + verifyEmailForReset(request): ForgotPasswordVerifyEmailResponse
+    + verifyResetCode(request): void
+    + resetPassword(request): void
+  }
+
+  interface UserService {
+    + getUserInfo(userId): UserInfoResponse
+    + updateUserInfo(userId, request): UserInfoResponse
+    + changePassword(userId, request): void
+    + uploadAvatar(userId, avatar): String
+    + searchUsers(keyword, page, size): Object
+    + resetPassword(): void
+  }
+
+  interface OrderService {
+    + createOrder(request): Long
+    + getOrders(page, size, status, activityType, campus): Object
+    + getMyOrders(userId, page, size): Object
+    + getOrderDetail(orderId): Object
+    + updateOrder(orderId, request): Long
+    + deleteOrder(orderId): void
+    + completeOrder(orderId): void
+    + applyOrder(orderId, request): Long
+    + cancelApply(orderId): void
+    + getApplications(orderId): Object
+    + auditApply(applyId, status): void
+    + acceptOrder(orderId, accepterId): void
+    + sendOrderMessage(orderId, content): Long
+    + getOrderMessages(orderId, page, size): Object
+  }
+
+  interface ContentService {
+    + createContent(request): Long
+    + getContents(page, size, type): Object
+    + getContentDetail(contentId): Object
+    + updateContent(contentId, request): Long
+    + deleteContent(contentId): void
+    + uploadMedia(contentId, media): String
+    + getMedias(contentId): List<PostMedia>
+    + createComment(contentId, request): Long
+    + getComments(contentId, page, size): Object
+    + deleteComment(commentId): void
+    + likeContent(contentId): Map<String,Object>
+    + getLikes(contentId): Object
+    + searchByKeyword(keyword, page, size, type): Object
+  }
+
+  interface AgentService {
+    + createConversation(userId): AiConversation
+    + listConversations(userId): List<AiConversation>
+    + getMessages(userId, conversationId): List<AiMessage>
+    + deleteConversation(userId, conversationId): void
+    + sendMessage(userId, conversationId, userMessage): AiMessage
+    + getMemories(userId): List<AiMemory>
+    + deleteMemory(userId, memoryId): void
+  }
+
+  interface AdminService {
+    + getUsers(page, size, userType): Object
+    + updateUserType(userId, userType): void
+    + manageOrder(orderId, status): void
+    + deleteContent(contentId): void
+    + getStatistics(): Object
+  }
+
+  interface FileService {
+    + uploadImage(image): String
+    + uploadVideo(video): String
+    + deleteFile(fileUrl): boolean
+    + deleteFile(pmid): boolean
+  }
+
+  interface VerifyService {
+    + verifyEmail(email, type): void
+  }
+}
+
+package "service.impl" {
+  class AuthServiceImpl {
+    - userRepository: UserRepository
+    - verifyCodeRecordRepository: VerifyCodeRecordRepository
+    - passwordEncoder: PasswordEncoder
+  }
+
+  class UserServiceImpl {
+    - userRepository: UserRepository
+    - passwordEncoder: PasswordEncoder
+  }
+
+  class OrderServiceImpl {
+    - orderRepository: OrderRepository
+    - userRepository: UserRepository
+    - orderApplyRepository: OrderApplyRepository
+    - orderMessageRepository: OrderMessageRepository
+    - orderAcceptRepository: OrderAcceptRepository
+  }
+
+  class ContentServiceImpl {
+    - postRepository: PostRepository
+    - postLikeRepository: PostLikeRepository
+    - userRepository: UserRepository
+    - orderRepository: OrderRepository
+    - postMediaRepository: PostMediaRepository
+    - fileService: FileService
+  }
+
+  class AgentServiceImpl {
+    - conversationRepository: AiConversationRepository
+    - messageRepository: AiMessageRepository
+    - memoryRepository: AiMemoryRepository
+    - userRepository: UserRepository
+    - pythonAgentClient: PythonAgentClient
+    --
+    + extractMemoryAsync(user, userMessage, assistantReply): void
+  }
+
+  class AgentStreamService {
+    - conversationRepository: AiConversationRepository
+    - messageRepository: AiMessageRepository
+    - userRepository: UserRepository
+    - agentService: AgentServiceImpl
+    - pythonAgentClient: PythonAgentClient
+    --
+    + streamMessage(userId, conversationId, userMessage): SseEmitter
+  }
+
+  class AdminServiceImpl {
+    - userRepository: UserRepository
+    - orderRepository: OrderRepository
+    - postRepository: PostRepository
+  }
+
+  class FileServiceImpl {
+    - postMediaRepository: PostMediaRepository
+    - baseUploadDir: String
+  }
+
+  class VerifyServiceImpl {
+    - mailSender: JavaMailSender
+    - verifyCodeRecordRepository: VerifyCodeRecordRepository
+    - passwordEncoder: PasswordEncoder
+    - fromEmail: String
+  }
+
+  class PythonAgentClient {
+    - memoryRepository: AiMemoryRepository
+    - objectMapper: ObjectMapper
+    - pythonBaseUrl: String
+    --
+    + chat(user, history, message): Map<String,Object>
+    + streamChat(user, history, message, emitter, hooks): void
+    + extractMemory(userMessage, assistantReply): List<Map<String,String>>
+  }
+}
+
+package "repository" {
+  interface UserRepository {
+    + findByEmail(email): Optional<User>
+    + findByUserType(userType): Iterable<User>
+    + findByNicknameContaining(rule): Iterable<User>
+    + existsByEmail(email): boolean
+  }
+
+  interface OrderRepository {
+    + findByUser(user): List<Order>
+    + findByStatus(status): List<Order>
+    + findByCampusAndActivityTypeAndStatus(campus, type, status): List<Order>
+    + findExpiredOrders(status, expiredTime): List<Order>
+  }
+
+  interface OrderApplyRepository {
+    + findByOrderAndUser(order, user): Optional<OrderApply>
+    + findByOrder(order): List<OrderApply>
+    + findByUser(user): List<OrderApply>
+    + existsByOrderAndUser(order, user): boolean
+  }
+
+  interface OrderAcceptRepository {
+    + findByOrder(order): List<OrderAccept>
+    + findByAccepter(accepter): List<OrderAccept>
+    + existsByOrder(order): boolean
+  }
+
+  interface OrderMessageRepository {
+    + findByOrderOrderByCreatedAtAsc(order): List<OrderMessage>
+    + findByReferenceMessage(message): List<OrderMessage>
+  }
+
+  interface PostRepository {
+    + findByUserAndTypeAndStatus(user, type, status): List<Post>
+    + findByOrderAndStatus(order, status): List<Post>
+    + findByTypeAndStatusOrderByCreatedAtDesc(type, status): List<Post>
+    + findByContentContainingAndTypeAndStatusOrderByCreatedAtDesc(keyword, type, status): List<Post>
+  }
+
+  interface PostLikeRepository {
+    + findByPost(post): List<PostLike>
+    + existsByPostAndUser(post, user): boolean
+    + findByPostAndUser(post, user): Optional<PostLike>
+  }
+
+  interface PostMediaRepository {
+    + findByPost(post): List<PostMedia>
+    + findByPmid(pmid): PostMedia
+  }
+
+  interface AiConversationRepository {
+    + findByUserOrderByUpdatedAtDesc(user): List<AiConversation>
+    + findByCidAndUser(cid, user): Optional<AiConversation>
+    + deleteByUserAndCid(user, cid): void
+  }
+
+  interface AiMessageRepository {
+    + findByConversationOrderByCreatedAtAsc(conversation): List<AiMessage>
+    + deleteByConversation(conversation): void
+  }
+
+  interface AiMemoryRepository {
+    + findByUserOrderByUpdatedAtDesc(user): List<AiMemory>
+    + findByUserAndCategory(user, category): List<AiMemory>
+  }
+
+  interface VerifyCodeRecordRepository {
+  }
+}
+
+package "dto.request" {
+  class LoginRequest {
+    - identifier: String
+    - password: String
+    --
+    + getters/setters()
+  }
+
+  class RegisterRequest {
+    - email: String
+    - verifycode: String
+    - password: String
+    - nickname: String
+    - studentId: String
+    --
+    + getters/setters()
+  }
+
+  class CreateOrderRequest {
+    - activityType: ActivityType
+    - genderRequire: GenderRequire
+    - campus: Campus
+    - location: String
+    - startTime: String
+    - note: String
+    - maxPeople: Integer
+    --
+    + getters/setters()
+  }
+
+  class ApplyOrderRequest {
+    - message: String
+    --
+    + getters/setters()
+  }
+
+  class CreateContentRequest {
+    - content: String
+    - mediaType: MediaType
+    - orderId: Long
+    --
+    + getters/setters()
+  }
+
+  class CreateCommentRequest {
+    - content: String
+    - parentId: Long
+    --
+    + getters/setters()
+  }
+
+  class UpdateUserRequest {
+    - nickname: String
+    - avatarUrl: String
+    - signature: String
+    --
+    + getters/setters()
+  }
+}
+
+package "dto.response" {
+  class ApiResponse~T~ {
+    - code: Integer
+    - message: String
+    - data: T
+    - timestamp: Long
+    --
+    + success(data): ApiResponse<T>
+    + success(message, data): ApiResponse<T>
+    + error(code, message): ApiResponse<T>
+    + error(message): ApiResponse<T>
+  }
+
+  class UserInfoResponse {
+    - id: Long
+    - email: String
+    - nickname: String
+    - avatarUrl: String
+    - userType: Integer
+    - signature: String
+    - createdAt: String
+    --
+    + getters/setters()
+  }
+
+  class LoginResponse {
+    - token: String
+    - userInfo: UserInfoResponse
+    --
+    + getters/setters()
+  }
+
+  class ForgotPasswordVerifyEmailResponse {
+    - emailMasked: String
+    --
+    + getters/setters()
+  }
+}
+
+package "entity refs" {
+  class User
+  class Order
+  class OrderApply
+  class OrderAccept
+  class OrderMessage
+  class Post
+  class PostLike
+  class PostMedia
+  class AiConversation
+  class AiMessage
+  class AiMemory
+  class VerifyCodeRecord
+}
+
+BaseController <|-- AuthController
+BaseController <|-- UserController
+BaseController <|-- OrderController
+BaseController <|-- ContentController
+BaseController <|-- AgentController
+BaseController <|-- AdminController
+BaseController <|-- FileController
+BaseController <|-- VerifyController
+
+AuthController --> AuthService
+AuthController --> VerifyService
+AuthController ..> LoginRequest
+AuthController ..> RegisterRequest
+AuthController ..> LoginResponse
+AuthController ..> ForgotPasswordVerifyEmailResponse
+
+UserController --> UserService
+UserController ..> UpdateUserRequest
+UserController ..> UserInfoResponse
+
+OrderController --> OrderService
+OrderController ..> CreateOrderRequest
+OrderController ..> ApplyOrderRequest
+
+ContentController --> ContentService
+ContentController ..> CreateContentRequest
+ContentController ..> CreateCommentRequest
+
+AgentController --> AgentService
+AgentController --> AgentStreamService
+AdminController --> AdminService
+FileController --> FileService
+VerifyController --> VerifyService
+
+BaseController ..> ApiResponse
+LoginResponse --> UserInfoResponse
+
+AuthServiceImpl ..|> AuthService
+UserServiceImpl ..|> UserService
+OrderServiceImpl ..|> OrderService
+ContentServiceImpl ..|> ContentService
+AgentServiceImpl ..|> AgentService
+AdminServiceImpl ..|> AdminService
+FileServiceImpl ..|> FileService
+VerifyServiceImpl ..|> VerifyService
+
+ContentServiceImpl --> FileService
+AgentServiceImpl --> PythonAgentClient
+AgentStreamService --> PythonAgentClient
+AgentStreamService --> AgentServiceImpl
+
+AuthServiceImpl --> UserRepository
+AuthServiceImpl --> VerifyCodeRecordRepository
+UserServiceImpl --> UserRepository
+OrderServiceImpl --> OrderRepository
+OrderServiceImpl --> UserRepository
+OrderServiceImpl --> OrderApplyRepository
+OrderServiceImpl --> OrderMessageRepository
+OrderServiceImpl --> OrderAcceptRepository
+ContentServiceImpl --> PostRepository
+ContentServiceImpl --> PostLikeRepository
+ContentServiceImpl --> UserRepository
+ContentServiceImpl --> OrderRepository
+ContentServiceImpl --> PostMediaRepository
+AgentServiceImpl --> AiConversationRepository
+AgentServiceImpl --> AiMessageRepository
+AgentServiceImpl --> AiMemoryRepository
+AgentServiceImpl --> UserRepository
+AgentStreamService --> AiConversationRepository
+AgentStreamService --> AiMessageRepository
+AgentStreamService --> UserRepository
+AdminServiceImpl --> UserRepository
+AdminServiceImpl --> OrderRepository
+AdminServiceImpl --> PostRepository
+FileServiceImpl --> PostMediaRepository
+VerifyServiceImpl --> VerifyCodeRecordRepository
+PythonAgentClient --> AiMemoryRepository
+
+UserRepository ..> User
+OrderRepository ..> Order
+OrderApplyRepository ..> OrderApply
+OrderAcceptRepository ..> OrderAccept
+OrderMessageRepository ..> OrderMessage
+PostRepository ..> Post
+PostLikeRepository ..> PostLike
+PostMediaRepository ..> PostMedia
+AiConversationRepository ..> AiConversation
+AiMessageRepository ..> AiMessage
+AiMemoryRepository ..> AiMemory
+VerifyCodeRecordRepository ..> VerifyCodeRecord
+
+note bottom of AgentStreamService
+  This class is not an interface implementation.
+  It coordinates SSE streaming with the Python agent
+  and persists conversation history incrementally.
+end note
+
+@enduml
