@@ -1,5 +1,5 @@
 <?xml version="1.0" ?>
-<mxfile host="app.diagrams.net" agent="CampusCompanion-UML-Generator" version="22.1.0" type="device">
+<mxfile host="app.diagrams.net" agent="CampusHub-UML-Generator" version="22.1.0" type="device">
   <diagram id="领域类图" name="领域类图">
     <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1800" pageHeight="1300" math="0" shadow="0">
       <root>
@@ -80,7 +80,7 @@
         <mxCell id="26" value="可选关联" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;dashed=1;" edge="1" parent="1" source="8" target="4">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="27" value="实体包路径：&#10;dev.campuscompanionbackend.entity.*&#10;JPA @ManyToOne / @OneToOne 映射外键" style="rounded=1;whiteSpace=wrap;html=1;shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;" vertex="1" parent="1">
+        <mxCell id="27" value="实体包路径：&#10;dev.campushubbackend.entity.*&#10;JPA @ManyToOne / @OneToOne 映射外键" style="rounded=1;whiteSpace=wrap;html=1;shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;" vertex="1" parent="1">
           <mxGeometry x="1200" y="400" width="520" height="180" as="geometry"/>
         </mxCell>
       </root>

@@ -5,7 +5,7 @@ set -e
 ROOT_DIR="$(cd "$(dirname "$0")" && pwd)"
 
 echo "========== 启动前端 (Vite Dev Server) =========="
-cd "$ROOT_DIR/CampusCompanionWeb"
+cd "$ROOT_DIR/CampusHubWeb"
 
 # 安装依赖（如果 node_modules 不存在）
 if [ ! -d "node_modules" ]; then

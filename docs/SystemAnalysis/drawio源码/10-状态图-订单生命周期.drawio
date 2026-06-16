@@ -1,5 +1,5 @@
 <?xml version="1.0" ?>
-<mxfile host="app.diagrams.net" agent="CampusCompanion-UML-Generator" version="22.1.0" type="device">
+<mxfile host="app.diagrams.net" agent="CampusHub-UML-Generator" version="22.1.0" type="device">
   <diagram id="状态图-订单" name="状态图-订单">
     <mxGraphModel dx="1200" dy="800" grid="1" gridSize="10" guides="1" tooltips="1" connect="1" arrows="1" fold="1" page="1" pageScale="1" pageWidth="1200" pageHeight="700" math="0" shadow="0">
       <root>
@@ -62,7 +62,7 @@
         <mxCell id="20" value="" style="edgeStyle=orthogonalEdgeStyle;rounded=0;orthogonalLoop=1;jettySize=auto;html=1;" edge="1" parent="1" source="9" target="10">
           <mxGeometry relative="1" as="geometry"/>
         </mxCell>
-        <mxCell id="21" value="对应枚举：dev.campuscompanionbackend.enums.OrderStatus&#10;实体字段：Order.status" style="rounded=1;whiteSpace=wrap;html=1;shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;" vertex="1" parent="1">
+        <mxCell id="21" value="对应枚举：dev.campushubbackend.enums.OrderStatus&#10;实体字段：Order.status" style="rounded=1;whiteSpace=wrap;html=1;shape=note;whiteSpace=wrap;html=1;backgroundOutline=1;darkOpacity=0.05;" vertex="1" parent="1">
           <mxGeometry x="40" y="420" width="700" height="100" as="geometry"/>
         </mxCell>
       </root>

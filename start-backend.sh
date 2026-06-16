@@ -12,7 +12,7 @@ brew services start mysql 2>/dev/null || true
 sleep 1
 
 echo "========== 启动 Python Agent (port 5001) =========="
-cd "$ROOT_DIR/CampusCompanionAgent"
+cd "$ROOT_DIR/CampusHubAgent"
 source venv/bin/activate
 nohup python -m uvicorn app.main:app --host 0.0.0.0 --port 5001 > /tmp/campus-agent.log 2>&1 &
 AGENT_PID=$!
@@ -20,7 +20,7 @@ echo "$AGENT_PID" > /tmp/campus-agent.pid
 echo "Python Agent PID: $AGENT_PID (log: /tmp/campus-agent.log)"
 
 echo "========== 启动 Java Backend (port 8080) =========="
-cd "$ROOT_DIR/CampusCompanionBackend"
+cd "$ROOT_DIR/CampusHubBackend"
 chmod +x mvnw
 nohup ./mvnw spring-boot:run -q > /tmp/campus-backend.log 2>&1 &
 BACKEND_PID=$!

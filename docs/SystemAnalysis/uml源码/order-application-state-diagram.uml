@@ -1,0 +1,21 @@
+@startuml
+title Order Application State Diagram
+hide empty description
+skinparam shadowing false
+
+[*] --> PENDING_REVIEW : submit application
+
+PENDING_REVIEW --> APPROVED : publisher approves
+PENDING_REVIEW --> REJECTED : publisher rejects
+PENDING_REVIEW --> WITHDRAWN : applicant withdraws
+
+APPROVED --> [*]
+REJECTED --> [*]
+WITHDRAWN --> [*]
+
+note right of PENDING_REVIEW
+  Backed by OrderApply.status
+  using enum ApplyStatus.
+end note
+
+@enduml

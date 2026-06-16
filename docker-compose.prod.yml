@@ -1,0 +1,87 @@
+services:
+  db:
+    image: mysql:8.0
+    container_name: campushub_db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: ${MYSQL_ROOT_PASSWORD:?MYSQL_ROOT_PASSWORD is required}
+      MYSQL_DATABASE: ${MYSQL_DATABASE:-campus_companion}
+    command:
+      - mysqld
+      - --character-set-server=utf8mb4
+      - --collation-server=utf8mb4_unicode_ci
+    volumes:
+      - db_data:/var/lib/mysql
+    ports:
+      - "127.0.0.1:33306:3306"
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -uroot -p$${MYSQL_ROOT_PASSWORD} --silent"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+
+  agent:
+    build:
+      context: ./CampusHubAgent
+    image: campushub-agent:${CAMPUSHUB_IMAGE_TAG:-latest}
+    container_name: campushub_agent
+    restart: unless-stopped
+    environment:
+      JAVA_BACKEND_URL: http://backend:8080
+      AGENT_PORT: 5001
+      SILICONFLOW_API_KEY: ${SILICONFLOW_API_KEY:-}
+      SILICONFLOW_BASE_URL: ${SILICONFLOW_BASE_URL:-https://api.siliconflow.cn/v1}
+      SILICONFLOW_MODEL: ${SILICONFLOW_MODEL:-Qwen/Qwen3-32B}
+      AMAP_MCP_URL: ${AMAP_MCP_URL:-}
+    expose:
+      - "5001"
+    healthcheck:
+      test: ["CMD-SHELL", "python -c \"import urllib.request; urllib.request.urlopen('http://127.0.0.1:5001/health', timeout=5)\""]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  backend:
+    build:
+      context: ./CampusHubBackend
+    image: campushub-backend:${CAMPUSHUB_IMAGE_TAG:-latest}
+    container_name: campushub_backend
+    restart: unless-stopped
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:mysql://db:3306/${MYSQL_DATABASE:-campus_companion}?useUnicode=true&characterEncoding=utf-8&allowPublicKeyRetrieval=true&useSSL=false
+      SPRING_DATASOURCE_USERNAME: ${SPRING_DATASOURCE_USERNAME:-root}
+      SPRING_DATASOURCE_PASSWORD: ${SPRING_DATASOURCE_PASSWORD:?SPRING_DATASOURCE_PASSWORD is required}
+      SPRING_JPA_HIBERNATE_DDL_AUTO: ${SPRING_JPA_HIBERNATE_DDL_AUTO:-update}
+      JWT_SECRET: ${JWT_SECRET:?JWT_SECRET is required}
+      SPRING_MAIL_HOST: ${SPRING_MAIL_HOST:-smtp.163.com}
+      SPRING_MAIL_PORT: ${SPRING_MAIL_PORT:-465}
+      SPRING_MAIL_USERNAME: ${SPRING_MAIL_USERNAME:-}
+      SPRING_MAIL_PASSWORD: ${SPRING_MAIL_PASSWORD:-}
+      AGENT_PYTHON_BASE_URL: http://agent:5001
+      FILE_UPLOAD_DIR: /app/uploads
+    depends_on:
+      db:
+        condition: service_healthy
+      agent:
+        condition: service_healthy
+    volumes:
+      - backend_uploads:/app/uploads
+    ports:
+      - "127.0.0.1:8080:8080"
+
+  frontend:
+    build:
+      context: ./CampusHubWeb
+    image: campushub-web:${CAMPUSHUB_IMAGE_TAG:-latest}
+    container_name: campushub_frontend
+    restart: unless-stopped
+    depends_on:
+      - backend
+    ports:
+      - "${FRONTEND_HTTP_PORT:-80}:80"
+
+volumes:
+  db_data:
+  backend_uploads:

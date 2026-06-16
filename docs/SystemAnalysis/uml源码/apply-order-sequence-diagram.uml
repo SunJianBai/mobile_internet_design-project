@@ -1,0 +1,70 @@
+@startuml
+title Apply Order Sequence Diagram
+skinparam shadowing false
+
+actor Applicant as A
+actor Publisher as P
+participant Client as C
+participant OrderController as OC
+participant OrderServiceImpl as OS
+database MySQL as DB
+
+A -> C : browse order detail
+activate C
+C -> OC : POST /orders/{id}/apply
+activate OC
+OC -> OS : applyOrder(orderId, request)
+activate OS
+OS -> DB : INSERT order_apply(PENDING_REVIEW)
+activate DB
+DB --> OS : OK
+deactivate DB
+OS --> OC : applyId
+deactivate OS
+OC --> C : apply success
+deactivate OC
+
+P -> C : open application list
+C -> OC : GET /orders/{id}/applications
+activate OC
+OC -> OS : getApplications(orderId)
+activate OS
+OS -> DB : SELECT order_apply
+activate DB
+DB --> OS : applications
+deactivate DB
+OS --> OC : applications
+deactivate OS
+OC --> C : return applications
+deactivate OC
+
+P -> C : approve one application
+C -> OC : PUT /orders/applications/{applyId}
+activate OC
+OC -> OS : auditApply(applyId, APPROVED)
+activate OS
+OS -> DB : UPDATE apply and current_people
+activate DB
+DB --> OS : OK
+deactivate DB
+OS --> OC : approved
+deactivate OS
+OC --> C : approval success
+deactivate OC
+
+A -> C : send chat message
+C -> OC : POST /orders/{id}/messages
+activate OC
+OC -> OS : sendOrderMessage(orderId, content)
+activate OS
+OS -> DB : INSERT order_messages
+activate DB
+DB --> OS : messageId
+deactivate DB
+OS --> OC : messageId
+deactivate OS
+OC --> C : send success
+deactivate OC
+deactivate C
+
+@enduml

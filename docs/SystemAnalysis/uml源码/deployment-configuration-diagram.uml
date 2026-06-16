@@ -1,0 +1,37 @@
+@startuml
+title CampusCompanion Deployment Configuration Diagram
+top to bottom direction
+skinparam shadowing false
+
+node "Client Devices" {
+  node "Mobile / Emulator\nAndroid / iOS / H5" as PHONE
+  node "Browser\nWeb Frontend" as BROWSER
+}
+
+node "Application Servers" {
+  node "Spring Boot JAR\nJDK 21 :8080" as JVM
+  node "Python Agent\nUvicorn :5001" as PY
+}
+
+cloud "Cloud and External Services" {
+  database "MySQL 8.0 :3306" as MYSQL
+  cloud "SiliconFlow LLM API" as SF
+  cloud "AMap MCP Server" as AMAP
+  cloud "SMTP Mail Service" as SMTP
+}
+
+PHONE --> JVM : REST + SSE
+BROWSER --> JVM : REST + SSE
+JVM --> MYSQL
+JVM --> PY : internal HTTP
+JVM --> SMTP
+PY --> JVM : business callback
+PY --> SF
+PY --> AMAP
+
+note bottom of JVM
+  This diagram acts as the deployment
+  and runtime configuration view.
+end note
+
+@enduml

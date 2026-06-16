@@ -1,0 +1,42 @@
+@startuml
+title Apply Order Collaboration Diagram
+left to right direction
+skinparam shadowing false
+
+actor Applicant as A
+actor Publisher as P
+rectangle Client as C
+rectangle OrderController as OC
+rectangle OrderServiceImpl as OS
+database MySQL as DB
+
+A --> C : 1 browseOrder()
+C --> OC : 2 apply(orderId)
+OC --> OS : 3 applyOrder(request)
+OS --> DB : 4 insertApplication()
+DB --> OS : 5 applyId
+OS --> OC : 6 result
+OC --> C : 7 applySuccess
+
+P --> C : 8 openApplicationList()
+C --> OC : 9 getApplications()
+OC --> OS : 10 loadApplications()
+OS --> DB : 11 selectApplications()
+DB --> OS : 12 applications
+OS --> OC : 13 applications
+OC --> C : 14 showList
+
+P --> C : 15 approve()
+C --> OC : 16 auditApply(applyId)
+OC --> OS : 17 updateStatus(APPROVED)
+OS --> DB : 18 updateApplication()
+DB --> OS : 19 ok
+OS --> OC : 20 approved
+OC --> C : 21 notifySuccess
+
+note bottom of OS
+  Collaboration diagrams emphasize
+  cooperating objects and numbered messages.
+end note
+
+@enduml

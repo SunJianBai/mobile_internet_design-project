@@ -1,0 +1,35 @@
+@startuml
+title CampusCompanionBackend Package Diagram
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+
+package "dev.campuscompanionbackend" {
+  package "controller" as controller
+  package "service" as service
+  package "service.impl" as serviceimpl
+  package "repository" as repository
+  package "entity" as entity
+  package "dto" as dto
+  package "enums" as enums
+  package "config" as config
+  package "exception" as exception
+  package "utils" as utils
+}
+
+controller --> service
+controller ..> dto
+controller ..> exception
+controller ..> config
+service --> serviceimpl
+serviceimpl --> repository
+serviceimpl ..> dto
+serviceimpl ..> entity
+serviceimpl ..> enums
+serviceimpl ..> exception
+repository ..> entity
+entity ..> enums
+config ..> controller
+utils ..> serviceimpl
+
+@enduml

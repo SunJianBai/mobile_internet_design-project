@@ -1,0 +1,65 @@
+@startuml
+title CampusCompanion Use Case Diagram
+left to right direction
+skinparam shadowing false
+
+actor User
+actor Admin
+actor "AI Assistant" as AI
+
+rectangle "CampusCompanion Platform" {
+  usecase "Register / Login" as UC1
+  usecase "Reset Password" as UC2
+  usecase "Edit Profile" as UC3
+
+  usecase "Create Activity" as UC4
+  usecase "Browse Activities" as UC5
+  usecase "Apply to Activity" as UC6
+  usecase "Review Applications" as UC7
+  usecase "Activity Group Chat" as UC8
+  usecase "Complete / Cancel Activity" as UC9
+
+  usecase "Create Post" as UC10
+  usecase "Comment / Like" as UC11
+  usecase "Search Posts" as UC12
+
+  usecase "AI Chat" as UC13
+  usecase "Booking / Map / Weather Query" as UC14
+
+  usecase "User Management" as UC15
+  usecase "Content / Order Moderation" as UC16
+  usecase "Statistics" as UC17
+}
+
+User --> UC1
+User --> UC2
+User --> UC3
+User --> UC4
+User --> UC5
+User --> UC6
+User --> UC7
+User --> UC8
+User --> UC9
+User --> UC10
+User --> UC11
+User --> UC12
+User --> UC13
+User --> UC14
+
+Admin --> UC15
+Admin --> UC16
+Admin --> UC17
+
+AI ..> UC4 : delegated write
+AI ..> UC5 : delegated read
+AI ..> UC6 : delegated write
+AI ..> UC10 : delegated write
+AI ..> UC11 : delegated write
+AI ..> UC14 : delegated read
+
+note bottom of AI
+  Read operations can be handled directly.
+  Write operations require user confirmation.
+end note
+
+@enduml

@@ -85,8 +85,8 @@ flowchart LR
 
 ```mermaid
 flowchart TB
-    APP[CampusCompanionApp] --> API[Spring Boot API :8080]
-    WEB[CampusCompanionWeb] --> API
+    APP[CampusHubApp] --> API[Spring Boot API :8080]
+    WEB[CampusHubWeb] --> API
     API --> SEC[Security JWT] --> CTRL[Controller] --> SVC[Service] --> REPO[Repository] --> DB[(MySQL)]
     API --> AGENT[Python Agent :5001]
     AGENT --> MAIN[主Agent] --> SUB1[订单Agent] & SUB2[社交Agent] & SUB3[地图Agent]
@@ -122,7 +122,7 @@ flowchart TB
 
 **说明**：JPA 实体及关联 cardinality。`User` 为中心：`Order`、`Post`、`OrderApply`、`AiConversation`、`AiMemory` 等；`Post` 自关联实现评论树，可选关联 `Order`；`Order` 与 `OrderApply`、`OrderAccept`、`OrderMessage` 构成活动域。
 
-**对应代码包**：`CampusCompanionBackend/.../entity/`
+**对应代码包**：`CampusHubBackend/.../entity/`
 
 **Mermaid 源码**（节选）：
 
@@ -163,7 +163,7 @@ classDiagram
 
 **文件**：`06-AI智能体类图.drawio`
 
-**说明**：`CampusCompanionAgent/app/agent.py` 中的多智能体结构。主 Agent ReAct 循环调用 `call_order_agent`、`call_social_agent`、`call_map_agent` 三个 LangChain Tool，子 Agent 内部再调用原子工具与 LLM。
+**说明**：`CampusHubAgent/app/agent.py` 中的多智能体结构。主 Agent ReAct 循环调用 `call_order_agent`、`call_social_agent`、`call_map_agent` 三个 LangChain Tool，子 Agent 内部再调用原子工具与 LLM。
 
 **Mermaid 源码**：
 
@@ -259,7 +259,7 @@ sequenceDiagram
 
 **说明**：`Order.status` 字段状态机。从 `PENDING` 可转入 `MATCHED`、`EXPIRED`、`CANCELLED`；匹配后进入 `IN_PROGRESS`，最终 `COMPLETED` 或取消。
 
-**枚举**：`dev.campuscompanionbackend.enums.OrderStatus`
+**枚举**：`dev.campushubbackend.enums.OrderStatus`
 
 **Mermaid 源码**：
 
@@ -298,7 +298,7 @@ stateDiagram-v2
 
 **文件**：`12-包图.drawio`
 
-**说明**：`dev.campuscompanionbackend` 包依赖：`controller → service → repository → entity`；`dto`、`enums`、`exception`、`config` 为横切支撑。
+**说明**：`dev.campushubbackend` 包依赖：`controller → service → repository → entity`；`dto`、`enums`、`exception`、`config` 为横切支撑。
 
 **Mermaid 源码**：
 

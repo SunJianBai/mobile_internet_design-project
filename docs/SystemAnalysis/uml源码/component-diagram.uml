@@ -1,0 +1,62 @@
+@startuml
+title CampusCompanion Component Diagram
+top to bottom direction
+skinparam shadowing false
+skinparam componentStyle rectangle
+
+package "Presentation Layer" {
+  [CampusCompanionApp\nuni-app + Vuex] as APP
+  [CampusCompanionWeb\nVue3 + Pinia + Element Plus] as WEB
+}
+
+package "Backend Layer" {
+  [Spring Boot REST API\n:8080 /api/v1] as API
+  [Security + JWT] as SEC
+  [Controller Layer] as CTRL
+  [Service Layer] as SVC
+  [Repository Layer] as REPO
+}
+
+package "AI Layer" {
+  [CampusCompanionAgent\nFastAPI + LangGraph :5001] as AGENT
+  [Main Agent\nReAct] as MAIN
+  [Order Agent] as SUB1
+  [Social Agent] as SUB2
+  [Map Weather Agent] as SUB3
+  [AMap MCP] as MCP
+  [Qwen API] as LLM
+}
+
+package "Data and External Services" {
+  database "MySQL" as DB
+  [File Storage\nImage and Video] as FS
+  [Mail Verification Service] as MAIL
+}
+
+APP --> API : HTTP/HTTPS
+WEB --> API : HTTP/HTTPS
+APP --> API : SSE
+WEB --> API : SSE
+
+API --> SEC
+SEC --> CTRL
+CTRL --> SVC
+SVC --> REPO
+REPO --> DB
+SVC --> FS
+SVC --> MAIL
+
+API --> AGENT : HTTP proxy
+AGENT --> MAIN
+MAIN --> SUB1
+MAIN --> SUB2
+MAIN --> SUB3
+SUB1 --> API : backend_client
+SUB2 --> API : backend_client
+SUB3 --> MCP
+MAIN --> LLM
+SUB1 --> LLM
+SUB2 --> LLM
+SUB3 --> LLM
+
+@enduml

@@ -1,0 +1,26 @@
+@startuml
+title Publish Content Activity Diagram
+skinparam shadowing false
+
+start
+if (Logged in?) then (no)
+  :Redirect to login;
+  stop
+else (yes)
+  :Edit text content;
+endif
+
+if (Contains image or video?) then (yes)
+  :POST /upload/image|video;
+endif
+
+:POST /api/v1/contents;
+
+if (Has media to attach?) then (yes)
+  :POST /contents/{id}/media;
+endif
+
+:Refresh content list;
+stop
+
+@enduml

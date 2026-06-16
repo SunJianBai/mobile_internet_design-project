@@ -1,7 +1,7 @@
 # 校园约伴平台 — UML 设计
 
-> 校内活动预约与分享平台（Campus Companion）  
-> 基于代码库 `CampusCompanionBackend` / `CampusCompanionApp` / `CampusCompanionWeb` / `CampusCompanionAgent` 绘制  
+> 校内活动预约与分享平台（CampusHub）  
+> 基于代码库 `CampusHubBackend` / `CampusHubApp` / `CampusHubWeb` / `CampusHubAgent` 绘制  
 > 可使用 [Mermaid Live Editor](https://mermaid.live) 或 VS Code Mermaid 插件预览与导出 PNG/SVG
 
 **Draw.io 可视化源文件**：见 [`drawio/`](./drawio/) 目录，内含 12 张 `.drawio` 图、每张图的说明与 Mermaid 源码，可用 [diagrams.net](https://app.diagrams.net) 直接打开并导出 PNG/PDF。
@@ -68,8 +68,8 @@ flowchart LR
 ```mermaid
 flowchart TB
     subgraph 表现层
-        APP[CampusCompanionApp<br/>uni-app + Vuex]
-        WEB[CampusCompanionWeb<br/>Vue3 + Pinia + Element Plus]
+        APP[CampusHubApp<br/>uni-app + Vuex]
+        WEB[CampusHubWeb<br/>Vue3 + Pinia + Element Plus]
     end
 
     subgraph 应用层
@@ -81,7 +81,7 @@ flowchart TB
     end
 
     subgraph AI 层
-        AGENT[CampusCompanionAgent<br/>FastAPI + LangGraph :5001]
+        AGENT[CampusHubAgent<br/>FastAPI + LangGraph :5001]
         MAIN[主 Agent ReAct]
         SUB1[订单子 Agent]
         SUB2[社交子 Agent]
@@ -537,7 +537,7 @@ flowchart TD
 
 ```mermaid
 flowchart TB
-    subgraph dev.campuscompanionbackend
+    subgraph dev.campushubbackend
         controller[controller<br/>REST 入口]
         service[service + impl<br/>业务逻辑]
         repository[repository<br/>JPA 数据访问]
@@ -573,4 +573,4 @@ flowchart TB
 | 时序图 | 关键业务流程交互 |
 | 状态/活动图 | 订单/申请状态与操作流程 |
 
-**文档版本**：v1.0 | **对应代码分支**：Campus Companion 主仓库
+**文档版本**：v1.0 | **对应代码分支**：CampusHub 主仓库

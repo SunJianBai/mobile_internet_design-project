@@ -12,6 +12,7 @@ left to right direction
 
 package "controller" {
   class BaseController {
+    --
     + success(data): ApiResponse
     + success(message, data): ApiResponse
     + error(code, message): ApiResponse
@@ -26,6 +27,7 @@ package "controller" {
     + register(request): ApiResponse<Long>
     + refreshToken(request): ApiResponse<String>
     + logout(userId): ApiResponse<Void>
+    + verifyEmailForReset(request): ApiResponse<ForgotPasswordVerifyEmailResponse>
     + sendResetCode(request): ApiResponse<Void>
     + verifyResetCode(request): ApiResponse<Void>
     + resetPassword(request): ApiResponse<Void>
@@ -39,6 +41,7 @@ package "controller" {
     + changePassword(userId, request): ApiResponse<Void>
     + uploadAvatar(userId, avatar): ApiResponse<String>
     + searchUsers(keyword, page, size): ApiResponse<Object>
+    + resetPasswordByCode(code, password): ApiResponse<Void>
   }
 
   class OrderController {
@@ -49,10 +52,15 @@ package "controller" {
     + getMyOrders(userId, page, size): ApiResponse<Object>
     + getOrderDetail(orderId): ApiResponse<Object>
     + updateOrder(orderId, request): ApiResponse<Long>
+    + deleteOrder(orderId): ApiResponse<Void>
+    + completeOrder(orderId): ApiResponse<Void>
     + applyOrder(orderId, request): ApiResponse<Long>
+    + cancelApply(orderId): ApiResponse<Void>
+    + getApplications(orderId): ApiResponse<Object>
     + auditApply(applyId, request): ApiResponse<Void>
     + acceptOrder(orderId, request): ApiResponse<Void>
     + sendOrderMessage(orderId, request): ApiResponse<Long>
+    + getOrderMessages(orderId, page, size): ApiResponse<Object>
   }
 
   class ContentController {
@@ -62,9 +70,14 @@ package "controller" {
     + getContents(page, size, type): ApiResponse<Object>
     + getContentDetail(contentId): ApiResponse<Object>
     + updateContent(contentId, request): ApiResponse<Long>
+    + deleteContent(contentId): ApiResponse<Void>
     + uploadMedia(contentId, media): ApiResponse<String>
+    + getMedias(contentId): ApiResponse<Object>
     + createComment(contentId, request): ApiResponse<Long>
+    + getComments(contentId, page, size): ApiResponse<Object>
+    + deleteComment(commentId): ApiResponse<Void>
     + likeContent(contentId): ApiResponse<Object>
+    + getLikes(contentId): ApiResponse<Object>
     + searchByKeyword(keyword, page, size, type): ApiResponse<Object>
   }
 
@@ -72,14 +85,17 @@ package "controller" {
     - agentService: AgentService
     - agentStreamService: AgentStreamService
     --
-    + createConversation(userId): ApiResponse<Map>
-    + listConversations(userId): ApiResponse<List>
-    + getMessages(userId, cid): ApiResponse<List>
+    + createConversation(userId): ApiResponse<Map<String,Object>>
+    + listConversations(userId): ApiResponse<List<Map<String,Object>>>
+    + getMessages(userId, cid): ApiResponse<List<Map<String,Object>>>
     + deleteConversation(userId, cid): ApiResponse<Void>
-    + sendMessage(userId, cid, body): ApiResponse<Map>
+    + sendMessage(userId, cid, body): ApiResponse<Map<String,Object>>
     + streamMessage(userId, cid, body): SseEmitter
-    + getMemories(userId): ApiResponse<List>
+    + getMemories(userId): ApiResponse<List<Map<String,Object>>>
     + deleteMemory(userId, memId): ApiResponse<Void>
+    - toConversationMap(conv): Map<String,Object>
+    - toMessageMap(msg): Map<String,Object>
+    - toMemoryMap(mem): Map<String,Object>
   }
 
   class AdminController {
@@ -110,6 +126,7 @@ package "controller" {
 
 package "service" {
   interface AuthService {
+    --
     + login(request): LoginResponse
     + register(request): Long
     + refreshToken(refreshToken): String
@@ -120,6 +137,7 @@ package "service" {
   }
 
   interface UserService {
+    --
     + getUserInfo(userId): UserInfoResponse
     + updateUserInfo(userId, request): UserInfoResponse
     + changePassword(userId, request): void
@@ -129,6 +147,7 @@ package "service" {
   }
 
   interface OrderService {
+    --
     + createOrder(request): Long
     + getOrders(page, size, status, activityType, campus): Object
     + getMyOrders(userId, page, size): Object
@@ -146,6 +165,7 @@ package "service" {
   }
 
   interface ContentService {
+    --
     + createContent(request): Long
     + getContents(page, size, type): Object
     + getContentDetail(contentId): Object
@@ -162,6 +182,7 @@ package "service" {
   }
 
   interface AgentService {
+    --
     + createConversation(userId): AiConversation
     + listConversations(userId): List<AiConversation>
     + getMessages(userId, conversationId): List<AiMessage>
@@ -172,6 +193,7 @@ package "service" {
   }
 
   interface AdminService {
+    --
     + getUsers(page, size, userType): Object
     + updateUserType(userId, userType): void
     + manageOrder(orderId, status): void
@@ -180,6 +202,7 @@ package "service" {
   }
 
   interface FileService {
+    --
     + uploadImage(image): String
     + uploadVideo(video): String
     + deleteFile(fileUrl): boolean
@@ -187,6 +210,7 @@ package "service" {
   }
 
   interface VerifyService {
+    --
     + verifyEmail(email, type): void
   }
 }
@@ -196,11 +220,29 @@ package "service.impl" {
     - userRepository: UserRepository
     - verifyCodeRecordRepository: VerifyCodeRecordRepository
     - passwordEncoder: PasswordEncoder
+    --
+    + login(request): LoginResponse
+    + register(request): Long
+    + refreshToken(refreshToken): String
+    + logout(userId): void
+    + verifyEmailForReset(request): ForgotPasswordVerifyEmailResponse
+    + verifyResetCode(request): void
+    + resetPassword(request): void
   }
 
   class UserServiceImpl {
     - userRepository: UserRepository
     - passwordEncoder: PasswordEncoder
+    --
+    + getUserInfo(userId): UserInfoResponse
+    + updateUserInfo(userId, request): UserInfoResponse
+    + changePassword(userId, request): void
+    + uploadAvatar(userId, avatar): String
+    + searchUsers(keyword, page, size): Object
+    + resetPassword(): void
+    - getUserById(userId): User
+    - convertToUserInfoResponse(user): UserInfoResponse
+    - getCurrentUserIdOrThrow(): Long
   }
 
   class OrderServiceImpl {
@@ -209,6 +251,28 @@ package "service.impl" {
     - orderApplyRepository: OrderApplyRepository
     - orderMessageRepository: OrderMessageRepository
     - orderAcceptRepository: OrderAcceptRepository
+    - formatter: DateTimeFormatter
+    --
+    + createOrder(request): Long
+    + getOrders(page, size, status, activityType, campus): Object
+    + getMyOrders(userId, page, size): Object
+    + getOrderDetail(orderId): Object
+    + updateOrder(orderId, request): Long
+    + deleteOrder(orderId): void
+    + completeOrder(orderId): void
+    + applyOrder(orderId, request): Long
+    + cancelApply(orderId): void
+    + getApplications(orderId): Object
+    + auditApply(applyId, status): void
+    + acceptOrder(orderId, accepterId): void
+    + sendOrderMessage(orderId, content): Long
+    + getOrderMessages(orderId, page, size): Object
+    - getCurrentUserIdOrThrow(): Long
+    - manualPagination(orders, page, size): Object
+    - isOrderPendingOrInProcess(orderId, order): void
+    - convertToOrderVO(order): Map<String,Object>
+    - convertToOrderApplyVO(orderApply): Map<String,Object>
+    - convertToOrderMessageVO(message): Map<String,Object>
   }
 
   class ContentServiceImpl {
@@ -218,6 +282,29 @@ package "service.impl" {
     - orderRepository: OrderRepository
     - postMediaRepository: PostMediaRepository
     - fileService: FileService
+    --
+    + createContent(request): Long
+    + getContents(page, size, type): Object
+    + getContentDetail(contentId): Object
+    + updateContent(contentId, request): Long
+    + deleteContent(contentId): void
+    + uploadMedia(contentId, media): String
+    + getMedias(contentId): List<PostMedia>
+    + createComment(contentId, request): Long
+    + getComments(contentId, page, size): Object
+    + deleteComment(commentId): void
+    + likeContent(contentId): Map<String,Object>
+    + getLikes(contentId): Object
+    + searchByKeyword(keyword, page, size, type): Object
+    - getCurrentUserIdOrThrow(): Long
+    - getCurrentUserIdOrNull(): Long
+    - deleteCommentRecursive(comment): void
+    - getPostById(postId): Post
+    - getUserById(userId): User
+    - getOrderById(orderId): Order
+    - convertToContentVO(post): Map<String,Object>
+    - convertToContentDetailVO(post): Map<String,Object>
+    - buildCommentNode(comment, parentId): Map<String,Object>
   }
 
   class AgentServiceImpl {
@@ -226,7 +313,15 @@ package "service.impl" {
     - memoryRepository: AiMemoryRepository
     - userRepository: UserRepository
     - pythonAgentClient: PythonAgentClient
+    - MAX_HISTORY_MESSAGES: int
     --
+    + createConversation(userId): AiConversation
+    + listConversations(userId): List<AiConversation>
+    + getMessages(userId, conversationId): List<AiMessage>
+    + deleteConversation(userId, conversationId): void
+    + sendMessage(userId, conversationId, userMessage): AiMessage
+    + getMemories(userId): List<AiMemory>
+    + deleteMemory(userId, memoryId): void
     + extractMemoryAsync(user, userMessage, assistantReply): void
   }
 
@@ -236,6 +331,7 @@ package "service.impl" {
     - userRepository: UserRepository
     - agentService: AgentServiceImpl
     - pythonAgentClient: PythonAgentClient
+    - executor: ExecutorService
     --
     + streamMessage(userId, conversationId, userMessage): SseEmitter
   }
@@ -244,11 +340,24 @@ package "service.impl" {
     - userRepository: UserRepository
     - orderRepository: OrderRepository
     - postRepository: PostRepository
+    --
+    + getUsers(page, size, userType): Object
+    + updateUserType(userId, userType): void
+    + manageOrder(orderId, status): void
+    + deleteContent(contentId): void
+    + getStatistics(): Object
+    - convertToUserInfo(user): Map<String,Object>
   }
 
   class FileServiceImpl {
     - postMediaRepository: PostMediaRepository
     - baseUploadDir: String
+    --
+    + uploadImage(image): String
+    + uploadVideo(video): String
+    + deleteFile(fileUrl): boolean
+    + deleteFile(pmid): boolean
+    - uploadFile(file, uploadDir, fileType): String
   }
 
   class VerifyServiceImpl {
@@ -256,21 +365,27 @@ package "service.impl" {
     - verifyCodeRecordRepository: VerifyCodeRecordRepository
     - passwordEncoder: PasswordEncoder
     - fromEmail: String
+    - EXPIRE_MINUTES: int
+    --
+    + verifyEmail(email, type): void
   }
 
   class PythonAgentClient {
     - memoryRepository: AiMemoryRepository
     - objectMapper: ObjectMapper
     - pythonBaseUrl: String
+    - httpClient: HttpClient
     --
     + chat(user, history, message): Map<String,Object>
-    + streamChat(user, history, message, emitter, hooks): void
+    + streamChat(user, history, message, onDelta, onToolCall, onDone, onError): void
     + extractMemory(userMessage, assistantReply): List<Map<String,String>>
+    - buildRequestBody(user, history, message): Map<String,Object>
   }
 }
 
 package "repository" {
   interface UserRepository {
+    --
     + findByEmail(email): Optional<User>
     + findByUserType(userType): Iterable<User>
     + findByNicknameContaining(rule): Iterable<User>
@@ -278,65 +393,83 @@ package "repository" {
   }
 
   interface OrderRepository {
+    --
     + findByUser(user): List<Order>
     + findByStatus(status): List<Order>
     + findByCampusAndActivityTypeAndStatus(campus, type, status): List<Order>
+    + findByStartTimeBetween(startTime, endTime): List<Order>
     + findExpiredOrders(status, expiredTime): List<Order>
+    + findByUserAndStatus(user, status): List<Order>
   }
 
   interface OrderApplyRepository {
+    --
     + findByOrderAndUser(order, user): Optional<OrderApply>
     + findByOrder(order): List<OrderApply>
     + findByUser(user): List<OrderApply>
+    + findByOrderAndStatus(order, status): List<OrderApply>
     + existsByOrderAndUser(order, user): boolean
   }
 
   interface OrderAcceptRepository {
+    --
     + findByOrder(order): List<OrderAccept>
     + findByAccepter(accepter): List<OrderAccept>
     + existsByOrder(order): boolean
   }
 
   interface OrderMessageRepository {
+    --
     + findByOrderOrderByCreatedAtAsc(order): List<OrderMessage>
-    + findByReferenceMessage(message): List<OrderMessage>
+    + findBySenderAndReceiverAndOrderOrderByCreatedAtAsc(sender, receiver, order): List<OrderMessage>
+    + findByReferenceMessage(referenceMessage): List<OrderMessage>
   }
 
   interface PostRepository {
+    --
     + findByUserAndTypeAndStatus(user, type, status): List<Post>
+    + findByParentPostAndTypeAndStatusOrderByCreatedAtDesc(parentPost, type, status): List<Post>
     + findByOrderAndStatus(order, status): List<Post>
     + findByTypeAndStatusOrderByCreatedAtDesc(type, status): List<Post>
     + findByContentContainingAndTypeAndStatusOrderByCreatedAtDesc(keyword, type, status): List<Post>
   }
 
   interface PostLikeRepository {
+    --
     + findByPost(post): List<PostLike>
     + existsByPostAndUser(post, user): boolean
+    + findByUser(user): List<PostLike>
     + findByPostAndUser(post, user): Optional<PostLike>
   }
 
   interface PostMediaRepository {
+    --
     + findByPost(post): List<PostMedia>
     + findByPmid(pmid): PostMedia
   }
 
   interface AiConversationRepository {
+    --
     + findByUserOrderByUpdatedAtDesc(user): List<AiConversation>
     + findByCidAndUser(cid, user): Optional<AiConversation>
     + deleteByUserAndCid(user, cid): void
   }
 
   interface AiMessageRepository {
+    --
     + findByConversationOrderByCreatedAtAsc(conversation): List<AiMessage>
     + deleteByConversation(conversation): void
   }
 
   interface AiMemoryRepository {
+    --
     + findByUserOrderByUpdatedAtDesc(user): List<AiMemory>
     + findByUserAndCategory(user, category): List<AiMemory>
   }
 
   interface VerifyCodeRecordRepository {
+    --
+    + findFirstByEmailAndTypeAndStatusOrderByCreatedAtDesc(email, type, status): Optional<VerifyCodeRecord>
   }
 }
 
@@ -348,12 +481,54 @@ package "dto.request" {
     + getters/setters()
   }
 
+  class RefreshTokenRequest {
+    - refreshToken: String
+    --
+    + getters/setters()
+  }
+
   class RegisterRequest {
     - email: String
     - verifycode: String
     - password: String
     - nickname: String
     - studentId: String
+    --
+    + getters/setters()
+  }
+
+  class ForgotPasswordVerifyEmailRequest {
+    - email: String
+    --
+    + getters/setters()
+  }
+
+  class ForgotPasswordVerifyCodeRequest {
+    - email: String
+    - verifyCode: Integer
+    --
+    + getters/setters()
+  }
+
+  class ForgotPasswordResetPasswordRequest {
+    - email: String
+    - verifyCode: Integer
+    - newPassword: String
+    --
+    + getters/setters()
+  }
+
+  class ChangePasswordRequest {
+    - oldPassword: String
+    - newPassword: String
+    --
+    + getters/setters()
+  }
+
+  class UpdateUserRequest {
+    - nickname: String
+    - avatarUrl: String
+    - signature: String
     --
     + getters/setters()
   }
@@ -376,6 +551,24 @@ package "dto.request" {
     + getters/setters()
   }
 
+  class AcceptOrderRequest {
+    - accepterId: Long
+    --
+    + getters/setters()
+  }
+
+  class AuditApplyRequest {
+    - status: ApplyStatus
+    --
+    + getters/setters()
+  }
+
+  class SendOrderMessageRequest {
+    - content: String
+    --
+    + getters/setters()
+  }
+
   class CreateContentRequest {
     - content: String
     - mediaType: MediaType
@@ -387,14 +580,6 @@ package "dto.request" {
   class CreateCommentRequest {
     - content: String
     - parentId: Long
-    --
-    + getters/setters()
-  }
-
-  class UpdateUserRequest {
-    - nickname: String
-    - avatarUrl: String
-    - signature: String
     --
     + getters/setters()
   }
@@ -413,6 +598,19 @@ package "dto.response" {
     + error(message): ApiResponse<T>
   }
 
+  class LoginResponse {
+    - token: String
+    - userInfo: UserInfoResponse
+    --
+    + getters/setters()
+  }
+
+  class ForgotPasswordVerifyEmailResponse {
+    - emailMasked: String
+    --
+    + getters/setters()
+  }
+
   class UserInfoResponse {
     - id: Long
     - email: String
@@ -425,15 +623,11 @@ package "dto.response" {
     + getters/setters()
   }
 
-  class LoginResponse {
-    - token: String
-    - userInfo: UserInfoResponse
-    --
-    + getters/setters()
-  }
-
-  class ForgotPasswordVerifyEmailResponse {
-    - emailMasked: String
+  class PageResponse~T~ {
+    - list: List<T>
+    - total: Long
+    - page: Integer
+    - size: Integer
     --
     + getters/setters()
   }
@@ -454,6 +648,15 @@ package "entity refs" {
   class VerifyCodeRecord
 }
 
+package "enum refs" {
+  enum ActivityType
+  enum Campus
+  enum OrderStatus
+  enum ApplyStatus
+  enum GenderRequire
+  enum MediaType
+}
+
 BaseController <|-- AuthController
 BaseController <|-- UserController
 BaseController <|-- OrderController
@@ -463,20 +666,30 @@ BaseController <|-- AdminController
 BaseController <|-- FileController
 BaseController <|-- VerifyController
 
+BaseController ..> ApiResponse
+
 AuthController --> AuthService
 AuthController --> VerifyService
 AuthController ..> LoginRequest
 AuthController ..> RegisterRequest
+AuthController ..> RefreshTokenRequest
+AuthController ..> ForgotPasswordVerifyEmailRequest
+AuthController ..> ForgotPasswordVerifyCodeRequest
+AuthController ..> ForgotPasswordResetPasswordRequest
 AuthController ..> LoginResponse
 AuthController ..> ForgotPasswordVerifyEmailResponse
 
 UserController --> UserService
 UserController ..> UpdateUserRequest
+UserController ..> ChangePasswordRequest
 UserController ..> UserInfoResponse
 
 OrderController --> OrderService
 OrderController ..> CreateOrderRequest
 OrderController ..> ApplyOrderRequest
+OrderController ..> AcceptOrderRequest
+OrderController ..> AuditApplyRequest
+OrderController ..> SendOrderMessageRequest
 
 ContentController --> ContentService
 ContentController ..> CreateContentRequest
@@ -487,9 +700,6 @@ AgentController --> AgentStreamService
 AdminController --> AdminService
 FileController --> FileService
 VerifyController --> VerifyService
-
-BaseController ..> ApiResponse
-LoginResponse --> UserInfoResponse
 
 AuthServiceImpl ..|> AuthService
 UserServiceImpl ..|> UserService
@@ -545,10 +755,27 @@ AiMessageRepository ..> AiMessage
 AiMemoryRepository ..> AiMemory
 VerifyCodeRecordRepository ..> VerifyCodeRecord
 
+LoginResponse --> UserInfoResponse
+
+CreateOrderRequest ..> ActivityType
+CreateOrderRequest ..> GenderRequire
+CreateOrderRequest ..> Campus
+AuditApplyRequest ..> ApplyStatus
+CreateContentRequest ..> MediaType
+OrderService ..> OrderStatus
+OrderService ..> ActivityType
+OrderService ..> Campus
+
 note bottom of AgentStreamService
-  This class is not an interface implementation.
+  This class does not implement an interface.
   It coordinates SSE streaming with the Python agent
-  and persists conversation history incrementally.
+  and persists incremental AI conversation messages.
+end note
+
+note bottom of PageResponse~T~
+  PageResponse exists in source code as a reusable
+  pagination DTO, even when some services currently
+  return Object wrappers instead of the generic type directly.
 end note
 
 @enduml

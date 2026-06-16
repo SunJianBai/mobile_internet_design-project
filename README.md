@@ -1,4 +1,4 @@
-# 校园约伴系统 - Campus Companion
+# 校内活动预约与分享平台 - CampusHub
 
 [![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 [![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.0-brightgreen.svg)](https://spring.io/projects/spring-boot)
@@ -6,17 +6,17 @@
 [![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
 [![LangChain](https://img.shields.io/badge/LangChain-0.3-orange.svg)](https://www.langchain.com/)
 
-> 本项目为北京理工大学2023级计算机学院本科生**谷奕辰、孙健柏、伍奕涛、张元宏**四位同学的专业限选课《移动互联分析与设计》的结课作业项目
+> 本项目由北京理工大学软件工程开发2部开发并维护
 
 ## 项目概述
 
-校园约伴系统（Campus Companion）是一款面向校园用户的综合性社交平台，旨在解决校园内学生之间约伴进行各类活动（如运动、聚餐、学习、娱乐等）的需求。系统采用前后端分离架构，提供**移动端 App**、**Web 前端**、**Java 后端**和**Python AI 智能体**四端支持。
+校内活动预约与分享平台（CampusHub）是一款面向校园用户的综合性社交平台，旨在解决校园内学生之间组团进行各类活动（如运动、聚餐、学习、娱乐等）的需求。系统采用前后端分离架构，提供**移动端 App**、**Web 前端**、**Java 后端**和**Python AI 智能体**四端支持。
 
 ### 核心功能
 
-- **活动约伴**：发布和参与各类校园活动（运动、聚餐、学习、娱乐等）
+- **活动预约**：发布和参与各类校园活动（运动、聚餐、学习、娱乐等）
 - **动态社区**：发布动态、评论互动、点赞分享
-- **AI 智能体**：多智能体架构的校园助手，支持约伴管理、地图搜索、天气查询、动态互动等
+- **AI 智能体**：多智能体架构的校园助手，支持预约管理、地图搜索、天气查询、动态互动等
 - **用户系统**：完整的用户认证、信息管理功能
 - **实时聊天**：活动参与者之间的消息交流
 - **活动管理**：活动申请、审批、状态管理、历史记录
@@ -85,7 +85,7 @@
 
 ### 子 Agent 工具清单
 
-**订单 Agent** — 约伴活动管理
+**订单 Agent** — 预约活动管理
 - `search_orders` / `create_order` / `get_my_orders` / `get_order_detail`
 - `apply_to_order` / `get_order_applications` / `accept_applicant` / `complete_order`
 
@@ -122,7 +122,7 @@
 CREATE DATABASE campus_companion CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 ```
 
-修改 `CampusCompanionBackend/src/main/resources/application.properties`：
+修改 `CampusHubBackend/src/main/resources/application.properties`：
 
 ```properties
 spring.datasource.username=your_username
@@ -133,7 +133,7 @@ spring.datasource.password=your_password
 
 ### 2. AI 智能体配置
 
-创建 `CampusCompanionAgent/.env`：
+创建 `CampusHubAgent/.env`：
 
 ```env
 # 硅基流动 API
@@ -150,7 +150,7 @@ AMAP_MCP_URL=https://mcp.api-inference.modelscope.net/your_mcp_id/sse
 安装 Python 依赖：
 
 ```bash
-cd CampusCompanionAgent
+cd CampusHubAgent
 python3 -m venv venv
 source venv/bin/activate
 pip install -r requirements.txt
@@ -177,16 +177,16 @@ bash stop-frontend.sh
 
 ```bash
 # 1. Python AI Agent
-cd CampusCompanionAgent
+cd CampusHubAgent
 source venv/bin/activate
 python -m uvicorn app.main:app --host 0.0.0.0 --port 5001
 
 # 2. Java 后端
-cd CampusCompanionBackend
+cd CampusHubBackend
 ./mvnw spring-boot:run
 
 # 3. Web 前端
-cd CampusCompanionWeb
+cd CampusHubWeb
 npm install && npm run dev
 ```
 
@@ -195,11 +195,22 @@ npm install && npm run dev
 - Python Agent：`http://localhost:5001`
 - Web 前端：`http://localhost:5173`
 
+## CI/CD 与生产部署
+
+项目已提供基于 Docker 镜像包上传的 CI/CD 流程，适配服务器外网不稳定的部署环境。
+
+- CI：`.github/workflows/ci.yml`
+- 手动部署：`.github/workflows/deploy.yml`
+- 本地构建/发布脚本：`scripts/`
+- 服务器部署/回滚脚本：`scripts/server/`
+
+完整说明见：[CampusHub CI/CD](docs/CI-CD.md)。
+
 ## 项目结构
 
 ```
-mobile_internet_design-project/
-├── CampusCompanionBackend/         # Java 后端 (Spring Boot)
+CampusHub/
+├── CampusHubBackend/         # Java 后端 (Spring Boot)
 │   └── src/main/java/.../
 │       ├── controller/             # REST 控制器
 │       ├── service/                # 业务逻辑层
@@ -210,7 +221,7 @@ mobile_internet_design-project/
 │       ├── config/                 # 安全、CORS 等配置
 │       └── exception/              # 全局异常处理
 │
-├── CampusCompanionAgent/           # Python AI 智能体
+├── CampusHubAgent/           # Python AI 智能体
 │   ├── app/
 │   │   ├── main.py                 # FastAPI 入口
 │   │   ├── agent.py                # 多智能体架构（主 Agent + 子 Agent）
@@ -226,7 +237,7 @@ mobile_internet_design-project/
 │   ├── .env                        # 敏感配置（已 gitignore）
 │   └── requirements.txt
 │
-├── CampusCompanionWeb/             # Vue 3 Web 前端
+├── CampusHubWeb/             # Vue 3 Web 前端
 │   └── src/
 │       ├── views/                  # 页面（AI、订单、动态、用户等）
 │       ├── services/               # API 服务层
@@ -234,7 +245,7 @@ mobile_internet_design-project/
 │       ├── router/                 # 路由配置
 │       └── components/             # 通用组件
 │
-├── CampusCompanionApp/             # uni-app 移动端
+├── CampusHubApp/             # uni-app 移动端
 ├── docs/                           # 项目文档
 ├── start-backend.sh                # 后端一键启动脚本
 ├── stop-backend.sh                 # 后端停止脚本
@@ -272,7 +283,7 @@ Python Agent 接口（`http://localhost:5001`）：
 - 忘记密码（三步验证流程）
 - 用户资料管理与头像上传
 
-### 活动约伴
+### 活动预约
 - 活动发布（篮球、羽毛球、约饭、自习、电影、跑步、游戏等）
 - 按校区/活动类型/状态筛选浏览
 - 申请加入与审批机制
@@ -285,7 +296,7 @@ Python Agent 接口（`http://localhost:5001`）：
 
 ### AI 智能体
 - 多智能体协作架构（主 Agent + 3 个专精子 Agent）
-- 通过对话完成约伴搜索、创建、管理等操作
+- 通过对话完成活动搜索、创建、管理等操作
 - 高德地图集成（地点搜索、天气查询、路线规划）
 - 对话中内嵌地图展示
 - 回复中的链接可跳转前端页面
@@ -296,12 +307,16 @@ Python Agent 接口（`http://localhost:5001`）：
 
 - **谷奕辰**
 - **孙健柏**
-- **伍奕涛**
+- **辜允泽**
 - **张元宏**
+- **梁育豪**
+- **陈春林**
+- **徐文博**
 
 **所属院校**：北京理工大学 计算机学院
-**课程**：移动互联分析与设计
+
+**项目组**：软件工程 开发2部
 
 ## 许可证
 
-本项目为课程作业项目，仅供学习交流使用。
+本项目为课程项目，仅供学习交流使用。

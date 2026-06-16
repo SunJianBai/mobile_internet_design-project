@@ -1,0 +1,7 @@
+.m2/
+target/
+uploads/
+runlogs/
+*.log
+*.pid
+.env*

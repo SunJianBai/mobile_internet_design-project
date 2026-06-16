@@ -13,10 +13,10 @@
   - 位于项目根目录。
   - 定义三类服务：
     - `db`：MySQL 8.0 数据库服务；
-    - `backend`：后端 Spring Boot 服务（CampusCompanionBackend）；
+    - `backend`：后端 Spring Boot 服务（CampusHubBackend）；
     - `frontend`：前端 Vue 应用（frontend/Web_vue），通过 Nginx 提供静态页并反向代理到后端。
   - 管理服务之间的依赖关系、端口映射和持久化卷（`db_data`）。
-- `CampusCompanionBackend/Dockerfile`
+- `CampusHubBackend/Dockerfile`
 
   - 后端服务的镜像构建脚本，多阶段构建：
     - 使用 `maven:3.9.9-eclipse-temurin-21` 进行 `mvn clean package -DskipTests` 打包；
@@ -65,7 +65,7 @@ docker compose build
 ```
 
 - `db` 服务使用官方 `mysql:8.0` 镜像，无需构建；
-- `backend` 服务：使用 `CampusCompanionBackend/Dockerfile` 构建 `mobile_internet-project-backend:latest`；
+- `backend` 服务：使用 `CampusHubBackend/Dockerfile` 构建 `mobile_internet-project-backend:latest`；
 - `frontend` 服务：使用 `frontend/Web_vue/Dockerfile` 构建 `mobile_internet-project-frontend:latest`。
 
 也可以直接在启动时自动构建：
@@ -178,7 +178,7 @@ docker compose down -v
 
 ### 4.1 仅更新后端代码
 
-1. 修改后端代码（`CampusCompanionBackend/src/...`）；
+1. 修改后端代码（`CampusHubBackend/src/...`）；
 2. 在项目根目录执行：
 
 ```bash

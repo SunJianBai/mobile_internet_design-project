@@ -1,0 +1,166 @@
+@startuml
+title CampusCompanion AI Agent Architecture Class Diagram
+left to right direction
+skinparam shadowing false
+skinparam packageStyle rectangle
+skinparam classAttributeIconSize 0
+
+package "app.main" {
+  class ChatRequest <<PydanticModel>> {
+    - user_info: dict
+    - memories: List[dict]
+    - history: List[dict]
+    - message: str
+  }
+
+  class MemoryExtractionRequest <<PydanticModel>> {
+    - user_message: str
+    - assistant_reply: str
+  }
+
+  class FastAPIApp <<Runtime>> {
+    + health()
+    + chat_endpoint(req)
+    + stream_endpoint(req)
+    + extract_memory_endpoint(req)
+  }
+}
+
+package "app.agent" {
+  class MainAgentRuntime <<Conceptual>> {
+    - MAIN_AGENT_TOOLS: list
+    + chat(user_info, memories, history, user_message): dict
+    + stream_chat(user_info, memories, history, user_message): AsyncIterator
+    + extract_memory(user_message, assistant_reply): list
+    - _get_llm(streaming, temperature, max_tokens): ChatOpenAI
+    - _run_sub_agent(system_prompt, tools, task): str
+    - _build_message_history(history): list
+  }
+
+  class OrderSubAgent <<Conceptual>> {
+    - ORDER_TOOLS: list
+    + call_order_agent(task): str
+  }
+
+  class SocialSubAgent <<Conceptual>> {
+    - SOCIAL_TOOLS: list
+    + call_social_agent(task): str
+  }
+
+  class MapSubAgent <<Conceptual>> {
+    - MAP_TOOLS: list
+    + call_map_agent(task): str
+  }
+}
+
+package "app.mcp_tools" {
+  class MCPSession {
+    - messages_url: Optional[str]
+    - _responses: dict
+    - _thread: Optional[Thread]
+    - _initialized: bool
+    - _post_client: Optional[httpx.Client]
+    - _lock: threading.Lock
+    - _req_counter: int
+    - _reader_alive: bool
+    + call_tool(tool_name, arguments, timeout): str
+    - _derive_base_url(): str
+    - _ensure_connected(): void
+    - _sse_reader(): void
+    - _next_id(): int
+  }
+
+  class MapToolFacade <<Module>> {
+    + maps_text_search(keywords, city): str
+    + maps_around_search(location, keywords, radius): str
+    + maps_weather(city): str
+    + maps_geo(address, city): str
+    + maps_direction_walking(origin, destination): str
+    + maps_direction_driving(origin, destination): str
+  }
+}
+
+package "app.backend_client" {
+  class BackendClient <<Module>> {
+    - _client: Optional[httpx.AsyncClient]
+    + api_get(path, user_id, params): dict
+    + api_post(path, user_id, json_body): dict
+    + api_put(path, user_id, json_body): dict
+    + api_delete(path, user_id): dict
+    - _get_client(): httpx.AsyncClient
+  }
+}
+
+package "tool groups" {
+  class OrderTools <<ToolSet>> {
+    + search_orders()
+    + create_order()
+    + get_my_orders()
+    + get_order_detail()
+    + apply_to_order()
+    + get_order_applications()
+    + accept_applicant()
+    + complete_order()
+  }
+
+  class SocialTools <<ToolSet>> {
+    + search_contents()
+    + get_content_detail()
+    + create_comment()
+    + like_content()
+    + get_user_profile()
+    + search_users()
+  }
+
+  class UtilityTools <<ToolSet>> {
+    + get_current_datetime()
+  }
+}
+
+package "external runtime" {
+  class ChatOpenAI <<External>>
+  class LangGraphReActAgent <<Runtime>>
+  class FastAPI <<External>>
+  class AMapMCPServer <<External>>
+  class JavaBackendAPI <<External>>
+}
+
+FastAPIApp ..> FastAPI
+FastAPIApp ..> ChatRequest
+FastAPIApp ..> MemoryExtractionRequest
+FastAPIApp --> MainAgentRuntime
+
+MainAgentRuntime ..> ChatOpenAI
+MainAgentRuntime ..> LangGraphReActAgent : create_react_agent()
+MainAgentRuntime --> OrderSubAgent
+MainAgentRuntime --> SocialSubAgent
+MainAgentRuntime --> MapSubAgent
+
+OrderSubAgent ..> LangGraphReActAgent
+SocialSubAgent ..> LangGraphReActAgent
+MapSubAgent ..> LangGraphReActAgent
+
+OrderSubAgent --> OrderTools
+SocialSubAgent --> SocialTools
+MapSubAgent --> MapToolFacade
+MapSubAgent --> UtilityTools
+
+MapToolFacade --> MCPSession
+MCPSession ..> AMapMCPServer
+
+OrderTools --> BackendClient
+SocialTools --> BackendClient
+BackendClient ..> JavaBackendAPI
+
+note bottom of MainAgentRuntime
+  This is a conceptual class in the UML sense.
+  In source code, the orchestration is function-based and
+  LangGraph creates the concrete ReAct agent at runtime.
+end note
+
+note right of MCPSession
+  MCPSession is the main concrete class in the Python
+  AI subsystem and manages the SSE-based MCP handshake.
+end note
+
+@enduml

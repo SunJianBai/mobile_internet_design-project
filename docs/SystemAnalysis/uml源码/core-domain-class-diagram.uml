@@ -1,5 +1,5 @@
 @startuml
-title CampusCompanionBackend Core Domain Class Diagram
+title CampusHubBackend Core Domain Class Diagram
 
 skinparam backgroundColor white
 skinparam shadowing false

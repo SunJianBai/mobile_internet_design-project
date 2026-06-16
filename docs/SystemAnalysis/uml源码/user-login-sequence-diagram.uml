@@ -1,0 +1,34 @@
+@startuml
+title User Login Sequence Diagram
+skinparam shadowing false
+
+actor User as U
+participant "App/Web" as C
+participant "AuthController" as AC
+participant "AuthServiceImpl" as AS
+participant "UserRepository" as UR
+database "MySQL" as DB
+
+U -> C : input email and password
+activate C
+C -> AC : POST /api/v1/auth/login
+activate AC
+AC -> AS : login(LoginRequest)
+activate AS
+AS -> UR : findByEmail(email)
+activate UR
+UR -> DB : SELECT users
+activate DB
+DB --> UR : User
+deactivate DB
+UR --> AS : User
+deactivate UR
+AS -> AS : verify password and create JWT
+AS --> AC : token and user info
+deactivate AS
+AC --> C : ApiResponse<LoginResponse>
+deactivate AC
+C --> U : store token and redirect
+deactivate C
+
+@enduml

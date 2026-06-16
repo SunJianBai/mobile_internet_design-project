@@ -1,0 +1,27 @@
+@startuml
+title Order Lifecycle State Diagram
+hide empty description
+skinparam shadowing false
+
+[*] --> PENDING : create order
+
+PENDING --> MATCHED : approved or full
+PENDING --> CANCELLED : publisher cancels
+PENDING --> EXPIRED : start time passed
+
+MATCHED --> IN_PROGRESS : activity starts
+MATCHED --> CANCELLED : publisher cancels
+
+IN_PROGRESS --> COMPLETED : marked complete
+IN_PROGRESS --> CANCELLED : abnormal cancel
+
+COMPLETED --> [*]
+CANCELLED --> [*]
+EXPIRED --> [*]
+
+note right of PENDING
+  Backed by Order.status
+  using enum OrderStatus.
+end note
+
+@enduml

@@ -1,0 +1,60 @@
+@startuml
+title AI Stream Chat Sequence Diagram
+skinparam shadowing false
+
+actor User as U
+participant Client as C
+participant AgentController as AG
+participant AgentStreamService as AS
+participant "Python Agent :5001" as PY
+participant "Qwen API" as LLM
+database MySQL as DB
+
+U -> C : send message
+activate C
+C -> AG : POST /agent/conversations/{cid}/messages/stream
+activate AG
+AG -> AS : streamMessage(userId, cid, text)
+activate AS
+AS -> DB : save user message
+activate DB
+DB --> AS : saved
+deactivate DB
+AS -> PY : POST /stream with history and memory
+activate PY
+
+loop ReAct loop
+  PY -> LLM : infer
+  activate LLM
+  LLM --> PY : tokens / tool intent
+  deactivate LLM
+  opt call sub agent
+    PY -> PY : call_order/social/map_agent
+    PY -> AS : call Java API through backend_client
+    activate AS
+    AS --> PY : API result
+    deactivate AS
+  end
+end
+
+PY --> AS : SSE token stream
+deactivate PY
+AS --> C : forward SSE events
+C --> U : render incremental reply
+AS -> DB : save assistant message
+activate DB
+DB --> AS : saved
+deactivate DB
+
+opt extract memory
+  AS -> DB : upsert ai_memories
+  activate DB
+  DB --> AS : upserted
+  deactivate DB
+end
+
+deactivate AS
+deactivate AG
+deactivate C
+
+@enduml

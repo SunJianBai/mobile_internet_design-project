@@ -16,7 +16,7 @@ services:
 
   backend:
     image: mobile_internet-project-backend:latest
-    build: ./CampusCompanionBackend
+    build: ./CampusHubBackend
     container_name: campus_backend
     restart: unless-stopped
     depends_on:
@@ -39,7 +39,7 @@ services:
 
   frontend:
     image: mobile_internet-project-frontend:latest
-    build: ./CampusCompanionWeb
+    build: ./CampusHubWeb
     container_name: campus_frontend
     restart: unless-stopped
     depends_on:
