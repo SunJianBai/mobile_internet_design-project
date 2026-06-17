@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class DuplicateOperationException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.DUPLICATE_OPERATION;
-
     public DuplicateOperationException(String message) {
-        super(message);
+        super(ErrorCode.DUPLICATE_OPERATION, message);
     }
 
     public DuplicateOperationException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.DUPLICATE_OPERATION, message, cause);
     }
 }

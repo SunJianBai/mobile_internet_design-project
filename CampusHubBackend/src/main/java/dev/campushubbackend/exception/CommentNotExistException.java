@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class CommentNotExistException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.COMMENT_NOT_EXIST;
-
     public CommentNotExistException(String message) {
-        super(message);
+        super(ErrorCode.COMMENT_NOT_EXIST, message);
     }
 
     public CommentNotExistException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.COMMENT_NOT_EXIST, message, cause);
     }
 }

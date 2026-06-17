@@ -8,8 +8,10 @@ import dev.campushubbackend.exception.UserNotExistException;
 import dev.campushubbackend.repository.UserRepository;
 import dev.campushubbackend.entity.User;
 import dev.campushubbackend.repository.VerifyCodeRecordRepository;
+import dev.campushubbackend.service.SystemSettingService;
 import dev.campushubbackend.service.VerifyService;
 import dev.campushubbackend.exception.EmailInvalidException;
+import dev.campushubbackend.exception.RegisterFailedException;
 import dev.campushubbackend.utils.EmailTemplateUtil;
 import dev.campushubbackend.utils.VerifyCodeUtil;
 import jakarta.mail.MessagingException;
@@ -35,6 +37,7 @@ public class VerifyServiceImpl implements VerifyService {
     private final JavaMailSender mailSender;
     private final VerifyCodeRecordRepository verifyCodeRecordRepository;
     private final PasswordEncoder passwordEncoder;
+    private final SystemSettingService systemSettingService;
 
     /**
      * 发件人邮箱地址，需与 spring.mail.username 保持一致
@@ -48,6 +51,10 @@ public class VerifyServiceImpl implements VerifyService {
 
     @Transactional
     public void verifyEmail(String email, VerifyCodeRecordType type) throws EmailInvalidException, UserExistException {
+        if (type == VerifyCodeRecordType.REGISTER && !systemSettingService.isPublicRegistrationAllowed()) {
+            throw new RegisterFailedException("当前暂未开放公开注册");
+        }
+
         String code = VerifyCodeUtil.generateCode6Num();
         LocalDateTime expireTime =
                 LocalDateTime.now().plusMinutes(EXPIRE_MINUTES);

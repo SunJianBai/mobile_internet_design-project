@@ -4,6 +4,7 @@ target/
 !**/src/main/**/target/
 !**/src/test/**/target/
 uploads/*
+CampusHubBackend/uploads/
 
 ### STS ###
 .apt_generated
@@ -75,6 +76,15 @@ runlogs/
 .npm-cache/
 .npm-appdata/
 **/.vite/
+node_modules/
+**/node_modules/
+dist/
+**/dist/
+unpackage/
+**/unpackage/
+
+### Local design/reference materials ###
+素材/
 
 ### Sensitive local env variants ###
 .env*

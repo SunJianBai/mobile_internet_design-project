@@ -10,6 +10,7 @@ import dev.campushubbackend.exception.ParamValidationFailedException;
 import dev.campushubbackend.exception.PasswordErrorException;
 import dev.campushubbackend.exception.UserNotExistException;
 import dev.campushubbackend.repository.UserRepository;
+import dev.campushubbackend.service.SystemSettingService;
 import dev.campushubbackend.service.UserService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -35,6 +36,7 @@ public class UserServiceImpl implements UserService {
 
     private final UserRepository userRepository;
     private final PasswordEncoder passwordEncoder;
+    private final SystemSettingService systemSettingService;
 
     @Override
     public UserInfoResponse getUserInfo(Long userId) {
@@ -82,6 +84,8 @@ public class UserServiceImpl implements UserService {
     public String uploadAvatar(Long userId, MultipartFile avatar) {
         log.info("上传头像: userId={}, filename={}", userId, avatar.getOriginalFilename());
         getUserById(userId);
+
+        systemSettingService.validateUploadSize(avatar);
 
         String contentType = avatar.getContentType();
         if (contentType == null || !contentType.startsWith("image/")) {

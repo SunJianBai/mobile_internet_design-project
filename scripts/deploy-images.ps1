@@ -44,7 +44,7 @@ scp scripts/server/rollback-release.sh "${HostAlias}:$DeployPath/scripts/server/
 scp scripts/server/smoke-test.sh "${HostAlias}:$DeployPath/scripts/server/smoke-test.sh"
 
 Write-Host "Deploying release $Tag..."
-ssh $HostAlias "cd '$DeployPath' && chmod +x scripts/server/*.sh && scripts/server/deploy-release.sh '$Tag' '$remoteTar' '$PublicBaseUrl'"
+ssh $HostAlias "cd '$DeployPath' && sed -i 's/\r$//' scripts/server/*.sh && chmod +x scripts/server/*.sh && scripts/server/deploy-release.sh '$Tag' '$remoteTar' '$PublicBaseUrl'"
 
 Write-Host "Running local smoke test..."
 & (Join-Path "scripts" "smoke-test.ps1") -BaseUrl $PublicBaseUrl

@@ -1,322 +1,204 @@
-# 校内活动预约与分享平台 - CampusHub
+# CampusHub 校园活动预约与分享平台
 
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0.0-brightgreen.svg)](https://spring.io/projects/spring-boot)
+[![Spring Boot](https://img.shields.io/badge/Spring%20Boot-4.0-brightgreen.svg)](https://spring.io/projects/spring-boot)
 [![Vue](https://img.shields.io/badge/Vue-3.5-brightgreen.svg)](https://vuejs.org/)
-[![Python](https://img.shields.io/badge/Python-3.9+-blue.svg)](https://www.python.org/)
-[![LangChain](https://img.shields.io/badge/LangChain-0.3-orange.svg)](https://www.langchain.com/)
+[![uni-app](https://img.shields.io/badge/uni--app-Mobile-blue.svg)](https://uniapp.dcloud.net.cn/)
+[![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
+[![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://docs.docker.com/compose/)
 
-> 本项目由北京理工大学软件工程开发2部开发并维护
+## 在线体验
 
-## 项目概述
+- Web 体验入口：http://124.220.81.104/
+- API 基础地址：http://124.220.81.104/api/v1
+- Android APK：请在 GitHub Releases 下载 `CampusHubApp.apk`
 
-校内活动预约与分享平台（CampusHub）是一款面向校园用户的综合性社交平台，旨在解决校园内学生之间组团进行各类活动（如运动、聚餐、学习、娱乐等）的需求。系统采用前后端分离架构，提供**移动端 App**、**Web 前端**、**Java 后端**和**Python AI 智能体**四端支持。
+CampusHub 是一个面向校园用户的活动预约、动态分享与 AI 助手系统。项目采用前后端分离架构，包含 Vue Web 端、uni-app 移动端、Spring Boot 后端和 Python AI Agent，并提供 Docker 镜像包部署脚本，适合课程展示、局域网演示和服务器生产部署。
 
-### 核心功能
+## 当前能力
 
-- **活动预约**：发布和参与各类校园活动（运动、聚餐、学习、娱乐等）
-- **动态社区**：发布动态、评论互动、点赞分享
-- **AI 智能体**：多智能体架构的校园助手，支持预约管理、地图搜索、天气查询、动态互动等
-- **用户系统**：完整的用户认证、信息管理功能
-- **实时聊天**：活动参与者之间的消息交流
-- **活动管理**：活动申请、审批、状态管理、历史记录
+- 活动预约：发布活动、分页浏览、筛选、查看详情、编辑、取消、完成活动。
+- 申请协作：申请加入、撤销申请、发布者审核、接受申请人、查看申请列表。
+- 校园动态：发布图文/视频动态、关联活动、搜索动态、详情查看、评论、嵌套回复、点赞。
+- 用户体系：邮箱验证码注册、登录、退出、忘记密码、资料编辑、头像上传、公开用户主页。
+- AI 助手：多 Agent 校园助手，支持活动检索/创建/申请、动态互动、用户查询、地图天气查询和 SSE 流式回复。
+- 管理后台：用户管理、订单管理、内容/评论审核、文件资源管理、AI 会话审计、系统设置、操作日志和仪表盘。
+- 工程化：Web/App 本地开发、Docker 多阶段构建、Nginx 反向代理、生产 Compose、镜像包上传部署和 smoke test。
+
+## 演示截图
+
+> 以下演示图片为项目原有截图，保留用于 README 展示。
+
+![image-20260617225533270](https://raw.githubusercontent.com/SunJianBai/pictures/main/img/20260617225533798.png)
+
+![image-20260617225650918](https://raw.githubusercontent.com/SunJianBai/pictures/main/img/20260617225651116.png)
+
+![image-20260617230407359](https://raw.githubusercontent.com/SunJianBai/pictures/main/img/20260617230407686.png)
 
 ## 系统架构
 
-```
-┌─────────────┐   ┌─────────────┐
-│  移动端 App   │   │  Web 前端    │
-│  (uni-app)   │   │  (Vue 3)    │
-└──────┬───────┘   └──────┬──────┘
-       │                  │
-       └────────┬─────────┘
-                │ HTTP / SSE
-                ▼
-       ┌─────────────────┐         ┌──────────────────────┐
-       │  Java 后端        │  HTTP   │  Python AI Agent     │
-       │  (Spring Boot)   │ ◄─────► │  (LangChain/LangGraph)│
-       │  :8080           │         │  :5001               │
-       └────────┬─────────┘         └──────┬───────────────┘
-                │                          │
-                ▼                          ▼
-         ┌───────────┐            ┌──────────────────┐
-         │  MySQL     │            │  高德地图 MCP     │
-         │  :3306     │            │  (天气/地图/路线) │
-         └───────────┘            └──────────────────┘
+```text
+CampusHubApp (uni-app)
+CampusHubWeb (Vue 3 + Vite + Element Plus)
+          |
+          | HTTP / SSE / uploads
+          v
+CampusHubBackend (Spring Boot + JPA + MySQL)
+          |
+          | HTTP
+          v
+CampusHubAgent (FastAPI + LangChain/LangGraph)
+          |
+          | LLM / MCP
+          v
+SiliconFlow Qwen + AMap MCP
 ```
 
-### 技术栈
+生产环境中，`campushub_frontend` 通过 Nginx 暴露 80 端口，并将 `/api/**` 和 `/uploads/**` 反向代理到后端容器。后端连接 Docker Compose 中的 MySQL 服务，并通过 `AGENT_PYTHON_BASE_URL` 调用 Python Agent。
 
-| 层级 | 技术 |
-|------|------|
-| **移动端** | uni-app (Vue 3) + Vuex 4 |
-| **Web 前端** | Vue 3 + Vite + Element Plus + Pinia |
-| **Java 后端** | Spring Boot 4.0 + JDK 21 + Spring Data JPA + MySQL |
-| **AI 智能体** | Python 3.9 + LangChain + LangGraph + FastAPI |
-| **LLM** | Qwen3-32B (硅基流动 SiliconFlow API) |
-| **地图服务** | 高德地图 MCP Server (ModelScope) |
+## 技术栈
 
-## AI 智能体架构
+| 模块 | 技术 |
+| --- | --- |
+| Web 前端 | Vue 3, Vite, Element Plus, Pinia, Axios |
+| 移动端 | uni-app, Vue, HBuilderX, H5/Android 打包 |
+| Java 后端 | Spring Boot 4, JDK 21, Spring Data JPA, MySQL 8 |
+| AI Agent | FastAPI, LangChain, LangGraph, httpx |
+| AI 能力 | SiliconFlow Qwen, 高德地图 MCP |
+| 部署 | Docker, Docker Compose, Nginx, PowerShell/SSH 脚本 |
 
-系统采用**多智能体协作架构**（子 Agent 作为工具模式）：
+## 目录结构
 
-```
-用户消息
-  │
-  ▼
-┌──────────────────────────────────────┐
-│  主 Agent (ReAct 循环)                │
-│  职责：理解用户意图，调度子 Agent，     │
-│       整合结果生成最终回复              │
-│                                      │
-│  工具：                               │
-│  - call_order_agent(task)            │
-│  - call_social_agent(task)           │
-│  - call_map_agent(task)              │
-└──────────┬──────────┬───────────┘
-           │          │           │
-     ┌─────▼──┐ ┌─────▼──┐ ┌─────▼────┐
-     │ 订单    │ │ 社交    │ │ 地图天气  │
-     │ Agent  │ │ Agent  │ │ Agent    │
-     │ 8 工具 │ │ 6 工具 │ │ 7 工具   │
-     └────────┘ └────────┘ └──────────┘
-```
-![1774500438688](image/README/1774500438688.png)
-
-### 子 Agent 工具清单
-
-**订单 Agent** — 预约活动管理
-- `search_orders` / `create_order` / `get_my_orders` / `get_order_detail`
-- `apply_to_order` / `get_order_applications` / `accept_applicant` / `complete_order`
-
-**社交 Agent** — 校园动态与用户
-- `search_contents` / `get_content_detail` / `create_comment` / `like_content`
-- `get_user_profile` / `search_users`
-
-**地图天气 Agent** — 位置与环境信息（通过高德 MCP Server）
-- `maps_text_search` / `maps_around_search` / `maps_geo`
-- `maps_weather` / `maps_direction_walking` / `maps_direction_driving`
-- `get_current_datetime`
-
-### 智能体特性
-
-- **行为约束**：只读操作直接执行，写操作（创建订单、发评论等）必须用户确认后才执行
-- **跨域协作**：主 Agent 可同时调多个子 Agent，如"查天气 + 搜活动"一次完成
-- **地图展示**：搜索到地点后在对话中内嵌静态地图
-- **前端导航**：回复中的链接可直接跳转到对应的前端页面
-- **用户记忆**：自动从对话中提取用户偏好，跨会话保持
-
-## 快速开始
-
-### 环境要求
-
-- **JDK** 21+
-- **Python** 3.9+
-- **Node.js** 16+
-- **MySQL** 8.0+
-- **Maven** 3.6+（或使用项目自带的 `mvnw`）
-
-### 1. 数据库配置
-
-```sql
-CREATE DATABASE campus_companion CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+```text
+CampusHubBackend/   Spring Boot 后端服务
+CampusHubWeb/       Vue Web 前端
+CampusHubApp/       uni-app 移动端
+CampusHubAgent/     Python AI Agent 服务
+docs/               需求分析、系统分析、CI/CD 与接口文档
+scripts/            本地构建、镜像打包、服务器部署和 smoke test 脚本
+docker-compose.prod.yml
+DOCKER.md
 ```
 
-修改 `CampusHubBackend/src/main/resources/application.properties`：
+## 本地开发
 
-```properties
-spring.datasource.username=your_username
-spring.datasource.password=your_password
-```
+### 1. 后端
 
-后端使用 JPA 自动建表（`spring.jpa.hibernate.ddl-auto=update`）。
-
-### 2. AI 智能体配置
-
-创建 `CampusHubAgent/.env`：
-
-```env
-# 硅基流动 API
-SILICONFLOW_API_KEY=your_siliconflow_api_key
-SILICONFLOW_MODEL=Qwen/Qwen3-32B
-
-# Java 后端地址
-JAVA_BACKEND_URL=http://localhost:8080
-
-# 高德地图 MCP Server
-AMAP_MCP_URL=https://mcp.api-inference.modelscope.net/your_mcp_id/sse
-```
-
-安装 Python 依赖：
-
-```bash
-cd CampusHubAgent
-python3 -m venv venv
-source venv/bin/activate
-pip install -r requirements.txt
-```
-
-### 3. 一键启动
-
-```bash
-# 启动后端（MySQL + Python Agent + Java Backend）
-bash start-backend.sh
-
-# 启动前端
-bash start-frontend.sh
-```
-
-停止服务：
-
-```bash
-bash stop-backend.sh
-bash stop-frontend.sh
-```
-
-### 手动启动
-
-```bash
-# 1. Python AI Agent
-cd CampusHubAgent
-source venv/bin/activate
-python -m uvicorn app.main:app --host 0.0.0.0 --port 5001
-
-# 2. Java 后端
+```powershell
 cd CampusHubBackend
-./mvnw spring-boot:run
+.\mvnw.cmd spring-boot:run
+```
 
-# 3. Web 前端
+默认后端地址为 `http://localhost:8080`，API 前缀为 `/api/v1`。开发环境数据库连接位于 `CampusHubBackend/src/main/resources/application.properties`，生产环境通过 Compose 环境变量覆盖。
+
+### 2. Web
+
+```powershell
 cd CampusHubWeb
-npm install && npm run dev
+npm install
+npm run dev
 ```
 
-服务地址：
-- Java 后端：`http://localhost:8080`
-- Python Agent：`http://localhost:5001`
-- Web 前端：`http://localhost:5173`
+Web 开发服务默认运行在 `http://localhost:5173`，开发代理会将 `/api` 转发到 `http://localhost:8080`。
 
-## CI/CD 与生产部署
+### 3. 移动端 H5
 
-项目已提供基于 Docker 镜像包上传的 CI/CD 流程，适配服务器外网不稳定的部署环境。
-
-- CI：`.github/workflows/ci.yml`
-- 手动部署：`.github/workflows/deploy.yml`
-- 本地构建/发布脚本：`scripts/`
-- 服务器部署/回滚脚本：`scripts/server/`
-
-完整说明见：[CampusHub CI/CD](docs/CI-CD.md)。
-
-## 项目结构
-
-```
-CampusHub/
-├── CampusHubBackend/         # Java 后端 (Spring Boot)
-│   └── src/main/java/.../
-│       ├── controller/             # REST 控制器
-│       ├── service/                # 业务逻辑层
-│       ├── repository/             # 数据访问层
-│       ├── entity/                 # JPA 实体
-│       ├── dto/                    # 请求/响应 DTO
-│       ├── enums/                  # 枚举（活动类型、校区等）
-│       ├── config/                 # 安全、CORS 等配置
-│       └── exception/              # 全局异常处理
-│
-├── CampusHubAgent/           # Python AI 智能体
-│   ├── app/
-│   │   ├── main.py                 # FastAPI 入口
-│   │   ├── agent.py                # 多智能体架构（主 Agent + 子 Agent）
-│   │   ├── prompts.py              # 各 Agent 的 System Prompt
-│   │   ├── tools.py                # 订单基础工具
-│   │   ├── tools_order.py          # 订单扩展工具
-│   │   ├── tools_content.py        # 动态/社交工具
-│   │   ├── tools_user.py           # 用户工具
-│   │   ├── tools_utils.py          # 时间查询等工具
-│   │   ├── mcp_tools.py            # 高德地图 MCP 集成
-│   │   ├── backend_client.py       # Java 后端 HTTP 客户端
-│   │   └── config.py               # 环境配置
-│   ├── .env                        # 敏感配置（已 gitignore）
-│   └── requirements.txt
-│
-├── CampusHubWeb/             # Vue 3 Web 前端
-│   └── src/
-│       ├── views/                  # 页面（AI、订单、动态、用户等）
-│       ├── services/               # API 服务层
-│       ├── stores/                 # Pinia 状态管理
-│       ├── router/                 # 路由配置
-│       └── components/             # 通用组件
-│
-├── CampusHubApp/             # uni-app 移动端
-├── docs/                           # 项目文档
-├── start-backend.sh                # 后端一键启动脚本
-├── stop-backend.sh                 # 后端停止脚本
-├── start-frontend.sh               # 前端启动脚本
-└── stop-frontend.sh                # 前端停止脚本
+```powershell
+cd CampusHubApp
+$env:UNI_INPUT_DIR='.'
+npm.cmd run dev:h5 -- --host 127.0.0.1 --port 5173
 ```
 
-## API 接口
+`CampusHubApp/utils/config.js` 中 H5 和 App 默认使用生产地址 `http://124.220.81.104/api/v1`。如需调试本地后端，可在运行环境中设置 `uni.setStorageSync('env', 'dev')`。
 
-基础 URL：`http://localhost:8080/api/v1`
+### 4. AI Agent
+
+```powershell
+cd CampusHubAgent
+uvicorn app.main:app --host 0.0.0.0 --port 5001
+```
+
+Agent 需要配置 `SILICONFLOW_API_KEY`、`SILICONFLOW_MODEL`、`JAVA_BACKEND_URL`、`AMAP_MCP_URL` 等环境变量。生产部署时这些变量来自服务器 `.env.prod`。
+
+## API 概览
+
+后端统一前缀：`/api/v1`
 
 | 模块 | 路径 | 说明 |
-|------|------|------|
-| 认证 | `/auth` | 登录、注册、密码重置 |
-| 用户 | `/users` | 用户资料、搜索、头像上传 |
-| 订单 | `/orders` | 活动发布、申请、审批、消息 |
-| 动态 | `/contents` | 动态发布、评论、点赞 |
-| AI 智能体 | `/agent` | 会话管理、消息发送（SSE 流式）、记忆管理 |
-| 文件 | `/upload` | 图片/视频上传 |
-| 管理 | `/admin` | 用户管理、系统统计（管理员） |
+| --- | --- | --- |
+| 认证 | `/auth` | 登录、注册、退出、忘记密码 |
+| 验证码 | `/verify` | 邮箱验证码发送和校验 |
+| 用户 | `/users` | 用户资料、头像、公开主页、搜索 |
+| 活动 | `/orders` | 活动发布、查询、申请、审核、消息 |
+| 动态 | `/contents` | 动态、媒体、评论、点赞 |
+| 上传 | `/upload` | 图片、视频、头像上传 |
+| AI | `/agent` | 会话、消息、流式回复、记忆 |
+| 管理 | `/admin` | 后台管理、审计、系统设置 |
+| 系统 | `/system` | 公共系统配置与维护状态 |
 
-Python Agent 接口（`http://localhost:5001`）：
+当前实现中，后端安全配置允许接口进入业务层，业务身份主要通过前端注入的 `X-User-Id` 识别。管理接口额外通过管理员拦截器校验当前用户类型。
 
-| 路径 | 说明 |
-|------|------|
-| `POST /chat` | 非流式对话 |
-| `POST /stream` | SSE 流式对话 |
-| `POST /extract-memory` | 记忆提取 |
-| `GET /health` | 健康检查 |
+## 生产部署
 
-## 功能特性
+项目提供“本地构建镜像包，再复制到服务器加载部署”的流程，适合服务器公网拉镜像不稳定的情况。
 
-### 用户系统
-- 邮箱验证码注册与登录
-- 忘记密码（三步验证流程）
-- 用户资料管理与头像上传
+### 构建镜像
 
-### 活动预约
-- 活动发布（篮球、羽毛球、约饭、自习、电影、跑步、游戏等）
-- 按校区/活动类型/状态筛选浏览
-- 申请加入与审批机制
-- 活动参与者消息交流
+```powershell
+.\scripts\build-images.ps1 -Tag <release-tag>
+.\scripts\save-images.ps1 -Tag <release-tag>
+```
 
-### 动态社区
-- 图文/视频动态发布
-- 评论（支持嵌套回复）与点赞
-- 关键词搜索
+生成文件：
 
-### AI 智能体
-- 多智能体协作架构（主 Agent + 3 个专精子 Agent）
-- 通过对话完成活动搜索、创建、管理等操作
-- 高德地图集成（地点搜索、天气查询、路线规划）
-- 对话中内嵌地图展示
-- 回复中的链接可跳转前端页面
-- 用户记忆自动提取与跨会话保持
-- SSE 流式输出
+```text
+artifacts/campushub-images-<release-tag>.tar
+```
 
-## 开发团队
+### 上传并部署
 
-- **谷奕辰**
-- **孙健柏**
-- **辜允泽**
-- **张元宏**
-- **梁育豪**
-- **陈春林**
-- **徐文博**
+```powershell
+.\scripts\deploy-images.ps1 -Tag <release-tag> -HostAlias TX4H4G -PublicBaseUrl http://124.220.81.104
+```
 
-**所属院校**：北京理工大学 计算机学院
+脚本会完成：
 
-**项目组**：软件工程 开发2部
+- 上传镜像包到 `/home/ubuntu/CampusHub/releases/`
+- 同步 `docker-compose.prod.yml` 与 `scripts/server/*.sh`
+- 在服务器执行 `scripts/server/deploy-release.sh`
+- `docker load` 加载镜像
+- 通过 `CAMPUSHUB_IMAGE_TAG` 切换 Agent、Backend、Web 镜像
+- 保留服务器原有 MySQL 容器和 `db_data` 数据卷
+- 运行服务器内部 smoke test 和本地公网 smoke test
+
+生产服务器私有配置保存在服务器 `/home/ubuntu/CampusHub/.env.prod`，不要提交 `.env`、密钥、镜像包、APK、keystore 或运行日志。
+
+## 验证方式
+
+```powershell
+.\scripts\smoke-test.ps1 -BaseUrl http://124.220.81.104
+```
+
+该脚本验证：
+
+- 首页可以通过公网访问
+- `/api/v1/orders?page=1&size=1` 返回 `code=200`
+
+移动端验证重点：
+
+- App/H5 能连接 `http://124.220.81.104/api/v1`
+- 登录后请求会携带 `Authorization` 和 `X-User-Id`
+- 图片、视频、头像通过 `http://124.220.81.104/uploads/**` 访问
+- AI SSE、动态列表、订单列表和详情页能正常加载
+
+## 文档
+
+- [CI/CD 文档](docs/CI-CD.md)
+- [接口文档](docs/SystemAnalysis/接口文档.md)
+- [Controller-Service 对接文档](docs/SystemAnalysis/controller-service对接文档.md)
+- [数据库模型设计](docs/SystemAnalysis/数据库模型设计.md)
+- [uni-app 移动端说明](CampusHubApp/README.md)
+- [Docker 说明](DOCKER.md)
 
 ## 许可证
 
-本项目为课程项目，仅供学习交流使用。
+本项目为课程设计与学习项目，仅供学习交流使用。

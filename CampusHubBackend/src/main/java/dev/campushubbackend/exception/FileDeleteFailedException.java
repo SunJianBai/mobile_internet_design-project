@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class FileDeleteFailedException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.FILE_DELETE_FAILED;
-
     public FileDeleteFailedException(String message) {
-        super(message);
+        super(ErrorCode.FILE_DELETE_FAILED, message);
     }
 
     public FileDeleteFailedException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.FILE_DELETE_FAILED, message, cause);
     }
 }

@@ -42,6 +42,9 @@ scp scripts/server/deploy-release.sh "${HostAlias}:$DeployPath/scripts/server/de
 scp scripts/server/rollback-release.sh "${HostAlias}:$DeployPath/scripts/server/rollback-release.sh"
 scp scripts/server/smoke-test.sh "${HostAlias}:$DeployPath/scripts/server/smoke-test.sh"
 
+Write-Host "Normalizing remote server script line endings..."
+ssh $HostAlias "cd '$DeployPath' && sed -i 's/\r$//' scripts/server/*.sh && chmod +x scripts/server/*.sh"
+
 Write-Host ""
 Write-Host "Preloaded bundle ready:"
 Write-Host "  tag    : $Tag"

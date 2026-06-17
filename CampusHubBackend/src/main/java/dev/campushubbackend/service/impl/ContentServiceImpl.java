@@ -12,6 +12,7 @@ import dev.campushubbackend.exception.*;
 import dev.campushubbackend.repository.*;
 import dev.campushubbackend.service.ContentService;
 import dev.campushubbackend.service.FileService;
+import dev.campushubbackend.service.SystemSettingService;
 import dev.campushubbackend.exception.FileDeleteFailedException;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -41,6 +42,7 @@ public class ContentServiceImpl implements ContentService {
     private final OrderRepository orderRepository;
     private final PostMediaRepository postMediaRepository;
     private final FileService fileService;
+    private final SystemSettingService systemSettingService;
 
     /**
      * 从当前 HTTP 请求头中解析出登录用户 ID。
@@ -99,7 +101,7 @@ public class ContentServiceImpl implements ContentService {
         post.setType(PostType.POST);
         post.setContent(request.getContent());
         post.setHasMedia(request.getMediaType() != null ? request.getMediaType() : MediaType.TEXT_ONLY);
-        post.setStatus(ContentStatus.NORMAL);
+        post.setStatus(systemSettingService.initialContentStatus());
         post.setCreatedAt(LocalDateTime.now());
         post.setUpdatedAt(LocalDateTime.now());
 
@@ -231,6 +233,7 @@ public class ContentServiceImpl implements ContentService {
         log.info("上传媒体文件: contentId={}, filename={}", contentId, media.getOriginalFilename());
 
         Post post = getPostById(contentId);
+        systemSettingService.validateUploadSize(media);
 
         String contentType = media.getContentType();
         if (contentType == null) {
@@ -318,7 +321,7 @@ public class ContentServiceImpl implements ContentService {
         comment.setType(PostType.COMMENT);
         comment.setContent(request.getContent());
         comment.setHasMedia(MediaType.TEXT_ONLY);
-        comment.setStatus(ContentStatus.NORMAL);
+        comment.setStatus(systemSettingService.initialContentStatus());
         comment.setCreatedAt(LocalDateTime.now());
         comment.setUpdatedAt(LocalDateTime.now());
 

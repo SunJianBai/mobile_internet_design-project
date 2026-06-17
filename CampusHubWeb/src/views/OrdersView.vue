@@ -74,9 +74,10 @@
         v-if="ordersList.length > 0"
         v-loading="loading"
         :data="ordersList"
+        class="orders-table"
         style="width: 100%"
       >
-        <el-table-column label="发布者" min-width="120">
+        <el-table-column label="发布者" width="110">
           <template #default="scope">
             <div class="user-info">
               <el-avatar :src="scope.row.user.avatarUrl" size="small">
@@ -88,7 +89,7 @@
             </div>
           </template>
         </el-table-column>
-        <el-table-column label="活动类型" width="100">
+        <el-table-column label="活动类型" width="90">
           <template #default="scope">
             {{ getActivityTypeLabel(scope.row.activityType) }}
           </template>
@@ -98,14 +99,18 @@
             {{ getCampusLabel(scope.row.campus) }}
           </template>
         </el-table-column>
-        <el-table-column prop="location" label="地点" min-width="120" />
-        <el-table-column prop="startTime" label="开始时间" width="150" />
-        <el-table-column label="人数" width="100">
+        <el-table-column prop="location" label="地点" min-width="100" />
+        <el-table-column label="开始时间" width="140">
+          <template #default="scope">
+            {{ formatDateTime(scope.row.startTime) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="人数" width="80">
           <template #default="scope">
             {{ scope.row.currentPeople }}/{{ scope.row.maxPeople }}
           </template>
         </el-table-column>
-        <el-table-column width="240">
+        <el-table-column width="105">
           <template #header>
             <div class="status-header">
               <span>状态</span>
@@ -129,8 +134,12 @@
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="createdAt" label="发布时间" width="150" />
-        <el-table-column label="操作" width="180" fixed="right">
+        <el-table-column label="发布时间" width="145">
+          <template #default="scope">
+            {{ formatDateTime(scope.row.createdAt, true) }}
+          </template>
+        </el-table-column>
+        <el-table-column label="操作" width="150">
           <template #default="scope">
             <el-button type="primary" size="small" @click="handleViewDetail(scope.row.id)">
               详情
@@ -147,6 +156,60 @@
         </el-table-column>
       </el-table>
 
+      <div v-if="ordersList.length > 0" class="orders-mobile-list">
+        <article v-for="order in ordersList" :key="order.id" class="order-mobile-card">
+          <div class="mobile-card-head">
+            <div class="mobile-user">
+              <el-avatar :src="order.user.avatarUrl" size="small">
+                <span v-if="!order.user.avatarUrl">
+                  {{ (order.user.nickname || '用').slice(0, 1) }}
+                </span>
+              </el-avatar>
+              <div>
+                <strong>{{ order.user.nickname || '匿名用户' }}</strong>
+                <span>{{ getActivityTypeLabel(order.activityType) }}</span>
+              </div>
+            </div>
+            <el-tag :type="getStatusType(order.status)">
+              {{ getStatusLabel(order.status) }}
+            </el-tag>
+          </div>
+
+          <div class="mobile-meta-grid">
+            <div>
+              <span>校区</span>
+              <strong>{{ getCampusLabel(order.campus) }}</strong>
+            </div>
+            <div>
+              <span>人数</span>
+              <strong>{{ order.currentPeople }}/{{ order.maxPeople }}</strong>
+            </div>
+            <div>
+              <span>地点</span>
+              <strong>{{ order.location || '-' }}</strong>
+            </div>
+            <div>
+              <span>开始时间</span>
+              <strong>{{ formatDateTime(order.startTime) }}</strong>
+            </div>
+          </div>
+
+          <div class="mobile-actions">
+            <el-button type="primary" size="small" @click="handleViewDetail(order.id)">
+              详情
+            </el-button>
+            <el-button
+              type="success"
+              size="small"
+              :disabled="isApplyDisabled(order)"
+              @click="handleApplyOrder(order)"
+            >
+              {{ getApplyButtonText(order) }}
+            </el-button>
+          </div>
+        </article>
+      </div>
+
       <el-empty
         v-else-if="!loading"
         description="没有找到符合条件的订单，试试调整筛选条件吧"
@@ -157,7 +220,8 @@
           v-model:current-page="currentPage"
           v-model:page-size="pageSize"
           :page-sizes="[10, 20, 50, 100]"
-          layout="total, sizes, prev, pager, next, jumper"
+          :layout="paginationLayout"
+          :pager-count="isCompact ? 5 : 7"
           :total="total"
           @size-change="handleSizeChange"
           @current-change="handleCurrentChange"
@@ -168,7 +232,7 @@
 </template>
 
 <script setup>
-import { ref, reactive, onMounted, computed, watch } from 'vue'
+import { ref, reactive, onMounted, onBeforeUnmount, computed, watch } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { InfoFilled } from '@element-plus/icons-vue'
@@ -185,6 +249,7 @@ const currentPage = ref(1)
 const pageSize = ref(10)
 const total = ref(0)
 const ordersList = ref([])
+const isCompact = ref(false)
 // 记录当前用户已申请的订单，key 为 orderId
 const appliedOrderMap = ref({})
 
@@ -196,6 +261,15 @@ const searchForm = reactive({
   campus: '',
   status: ''
 })
+
+const paginationLayout = computed(() => (
+  isCompact.value ? 'prev, pager, next' : 'total, sizes, prev, pager, next, jumper'
+))
+
+const syncCompactState = () => {
+  if (typeof window === 'undefined') return
+  isCompact.value = window.innerWidth <= 620
+}
 
 // 当前登录用户 ID
 const currentUserId = computed(() => {
@@ -255,6 +329,19 @@ const getStatusLabel = (status) => {
 
 const getStatusType = (status) => {
   return statusTypeMap[status] || 'info'
+}
+
+const formatDateTime = (value, withSeconds = false) => {
+  if (!value) return ''
+  if (typeof value === 'string') {
+    const normalized = value.replace('T', ' ')
+    return withSeconds ? normalized.slice(0, 19) : normalized.slice(0, 16)
+  }
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return ''
+  const pad = (number) => (number < 10 ? `0${number}` : `${number}`)
+  const formatted = `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ${pad(date.getHours())}:${pad(date.getMinutes())}`
+  return withSeconds ? `${formatted}:${pad(date.getSeconds())}` : formatted
 }
 
 // 与用户 store 保持一致，将后端返回的相对头像路径转换为完整 URL
@@ -562,9 +649,16 @@ const handleApplyOrder = async (order) => {
 }
 
 onMounted(() => {
+  syncCompactState()
+  window.addEventListener('resize', syncCompactState)
   applyStateFromRoute()
   syncRouteWithState()
   fetchOrders()
+})
+
+onBeforeUnmount(() => {
+  if (typeof window === 'undefined') return
+  window.removeEventListener('resize', syncCompactState)
 })
 
 // 监听筛选条件，自动刷新列表
@@ -614,6 +708,91 @@ watch(
   justify-content: flex-end;
 }
 
+.orders-mobile-list {
+  display: none;
+}
+
+.order-mobile-card {
+  border: 1px solid var(--ch-border, #dcdfe6);
+  border-radius: 14px;
+  background: var(--ch-surface-solid, #fff);
+  padding: 14px;
+}
+
+.mobile-card-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.mobile-user {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+}
+
+.mobile-user strong,
+.mobile-user span {
+  display: block;
+}
+
+.mobile-user strong {
+  color: var(--ch-text, #303133);
+  font-size: 15px;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.mobile-user span {
+  color: var(--ch-muted, #909399);
+  font-size: 12px;
+  margin-top: 3px;
+}
+
+.mobile-meta-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  padding: 12px;
+  border-radius: 12px;
+  background: var(--ch-bg-soft, #f5f7fa);
+}
+
+.mobile-meta-grid span,
+.mobile-meta-grid strong {
+  display: block;
+}
+
+.mobile-meta-grid span {
+  color: var(--ch-muted, #909399);
+  font-size: 12px;
+}
+
+.mobile-meta-grid strong {
+  margin-top: 4px;
+  color: var(--ch-text, #303133);
+  font-size: 13px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.mobile-actions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin-top: 14px;
+}
+
+.mobile-actions :deep(.el-button) {
+  width: 100%;
+  margin-left: 0 !important;
+}
+
 .status-header {
   display: flex;
   align-items: center;
@@ -643,6 +822,50 @@ watch(
 }
 .status-tooltip-content div {
   margin-bottom: 6px;
+}
+
+@media (max-width: 620px) {
+  .orders-container {
+    padding: 0;
+  }
+
+  .card-header h2 {
+    font-size: 26px;
+  }
+
+  .search-form {
+    display: grid;
+    grid-template-columns: 1fr;
+  }
+
+  .search-form :deep(.el-form-item) {
+    margin-right: 0;
+  }
+
+  .search-form :deep(.el-form-item__content),
+  .filter-select {
+    width: 100%;
+  }
+
+  .orders-table {
+    display: none;
+  }
+
+  .orders-mobile-list {
+    display: grid;
+    gap: 12px;
+    margin-top: 16px;
+  }
+
+  .pagination {
+    justify-content: center;
+    overflow: hidden;
+  }
+
+  .pagination :deep(.el-pagination) {
+    max-width: 100%;
+    justify-content: center;
+  }
 }
 </style>
 

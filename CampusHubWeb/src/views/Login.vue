@@ -2,7 +2,10 @@
   <div class="login-container">
     <el-card class="login-card">
       <template #header>
-        <h2>CampusHub</h2>
+        <div class="auth-card-header">
+          <h2>欢迎回来</h2>
+          <p>登录后继续查看校园活动、动态与后台工作台。</p>
+        </div>
       </template>
       <el-form
         ref="loginFormRef"
@@ -14,10 +17,15 @@
           <el-input v-model="loginForm.identifier" placeholder="请输入学号或邮箱" />
         </el-form-item>
         <el-form-item label="密码" prop="password">
-          <el-input v-model="loginForm.password" type="password" placeholder="请输入密码" />
+          <el-input
+            v-model="loginForm.password"
+            type="password"
+            placeholder="请输入密码"
+            show-password
+          />
         </el-form-item>
         <div class="login-actions">
-          <el-button type="primary" @click="handleLogin">登录</el-button>
+          <el-button type="primary" class="auth-primary-btn" @click="handleLogin">登录</el-button>
           <div class="login-links">
             <router-link to="/forgot-password" class="forgot-link">忘记密码？</router-link>
             <router-link to="/register" class="register-link">注册</router-link>
@@ -72,29 +80,32 @@ const handleLogin = async () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
 }
 
 .login-card {
-  width: 300px;
+  width: 100%;
   margin: 0;
 }
 
 .login-actions {
   display: flex;
-  justify-content: space-between;
-  margin-top: 20px;
+  flex-direction: column;
+  gap: 16px;
+  margin-top: 24px;
 }
 
 .login-links {
   display: flex;
+  justify-content: space-between;
   gap: 12px;
   align-items: center;
+  font-size: 14px;
 }
 
 .register-link,
 .forgot-link {
-  color: #409eff;
+  color: var(--ch-primary);
   text-decoration: none;
+  font-weight: 700;
 }
 </style>

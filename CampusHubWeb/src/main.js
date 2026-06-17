@@ -1,8 +1,52 @@
 import { createApp } from 'vue'
 import './style.css'
 import App from './App.vue'
-import ElementPlus from 'element-plus'
+import {
+	ElAlert,
+	ElAvatar,
+	ElBadge,
+	ElButton,
+	ElCard,
+	ElCheckbox,
+	ElCol,
+	ElDatePicker,
+	ElDialog,
+	ElDrawer,
+	ElDropdown,
+	ElDropdownItem,
+	ElDropdownMenu,
+	ElEmpty,
+	ElForm,
+	ElFormItem,
+	ElIcon,
+	ElImage,
+	ElInput,
+	ElInputNumber,
+	ElLoading,
+	ElOption,
+	ElPagination,
+	ElPopover,
+	ElRadio,
+	ElRadioButton,
+	ElRadioGroup,
+	ElResult,
+	ElRow,
+	ElSelect,
+	ElSkeleton,
+	ElSpace,
+	ElStep,
+	ElSteps,
+	ElSwitch,
+	ElTabPane,
+	ElTable,
+	ElTableColumn,
+	ElTabs,
+	ElTag,
+	ElTooltip,
+	ElUpload
+} from 'element-plus'
 import 'element-plus/dist/index.css'
+import 'element-plus/theme-chalk/dark/css-vars.css'
 import { createPinia } from 'pinia'
 import router from './router'
 import logger from './utils/logger'
@@ -10,8 +54,52 @@ import { useAuthStore } from './stores/auth'
 
 const app = createApp(App)
 const pinia = createPinia()
+const elementComponents = [
+	ElAlert,
+	ElAvatar,
+	ElBadge,
+	ElButton,
+	ElCard,
+	ElCheckbox,
+	ElCol,
+	ElDatePicker,
+	ElDialog,
+	ElDrawer,
+	ElDropdown,
+	ElDropdownItem,
+	ElDropdownMenu,
+	ElEmpty,
+	ElForm,
+	ElFormItem,
+	ElIcon,
+	ElImage,
+	ElInput,
+	ElInputNumber,
+	ElOption,
+	ElPagination,
+	ElPopover,
+	ElRadio,
+	ElRadioButton,
+	ElRadioGroup,
+	ElResult,
+	ElRow,
+	ElSelect,
+	ElSkeleton,
+	ElSpace,
+	ElStep,
+	ElSteps,
+	ElSwitch,
+	ElTabPane,
+	ElTable,
+	ElTableColumn,
+	ElTabs,
+	ElTag,
+	ElTooltip,
+	ElUpload
+]
 
-app.use(ElementPlus)
+elementComponents.forEach((component) => app.use(component))
+app.use(ElLoading)
 app.use(pinia)
 app.use(router)
 

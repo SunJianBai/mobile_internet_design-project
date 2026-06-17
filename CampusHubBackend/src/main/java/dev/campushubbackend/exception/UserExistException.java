@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class UserExistException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.USER_EXISTS;
-
     public UserExistException(String message) {
-        super(message);
+        super(ErrorCode.USER_EXISTS, message);
     }
 
     public UserExistException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.USER_EXISTS, message, cause);
     }
 }

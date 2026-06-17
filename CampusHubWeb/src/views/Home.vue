@@ -123,7 +123,7 @@
             </el-avatar>
             <div class="user-name">{{ content.user.nickname }}</div>
           </div>
-          <div class="content-time">{{ content.createdAt }}</div>
+          <div class="content-time">{{ formatDateTime(content.createdAt, true) }}</div>
         </div>
         <div class="content-body">
           <div class="content-text">{{ content.content }}</div>
@@ -258,7 +258,8 @@ const getApplyStatusType = (status) => applyStatusTypeMap[status] || 'info'
 const formatDateTime = (value, withSeconds = false) => {
   if (!value) return ''
   if (typeof value === 'string') {
-    return withSeconds ? value.slice(0, 19) : value.slice(0, 16)
+    const normalized = value.replace('T', ' ')
+    return withSeconds ? normalized.slice(0, 19) : normalized.slice(0, 16)
   }
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return ''
@@ -595,19 +596,27 @@ onMounted(() => {
 }
 
 .order-item {
+  position: relative;
+  overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
   padding: 8px 10px;
-  border-radius: 6px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
   cursor: pointer;
-  transition: background-color 0.15s ease, transform 0.15s ease;
+  transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
 .order-item:hover {
-  background-color: #f5f7fa;
-  transform: translateY(-1px);
+  border-color: rgba(20, 184, 166, 0.32);
+  background:
+    linear-gradient(135deg, rgba(20, 184, 166, 0.1), rgba(59, 130, 246, 0.08)),
+    color-mix(in srgb, var(--ch-surface-solid, #fff) 76%, transparent);
+  box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+  transform: translateY(-2px);
 }
 
 .order-main {

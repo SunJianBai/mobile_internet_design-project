@@ -79,10 +79,8 @@ public class GlobalExceptionHandler {
     public ResponseEntity<ApiResponse<Void>> handleException(NoPermissionException e) {
         log.warn("接收到不允许的操作请求!");
         log.debug("不允许的操作请求！", e);
-        ApiResponse<Void> response = ApiResponse.error(
-                ErrorCode.SOMETHING_HAPPENED.getCode(),
-                ErrorCode.SOMETHING_HAPPENED.getMessage()
-        );
-        return new ResponseEntity<>(response, HttpStatus.INTERNAL_SERVER_ERROR);
+        String msg = e.getCodeType() + ':' + e.getMessage().split(":")[0];
+        ApiResponse<Void> response = ApiResponse.error(e.getCode(), msg);
+        return new ResponseEntity<>(response, HttpStatus.FORBIDDEN);
     }
 }

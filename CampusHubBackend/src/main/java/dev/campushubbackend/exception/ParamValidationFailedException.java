@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class ParamValidationFailedException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.PARAM_VALIDATION_FAILED;
-
     public ParamValidationFailedException(String message) {
-        super(message);
+        super(ErrorCode.PARAM_VALIDATION_FAILED, message);
     }
 
     public ParamValidationFailedException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.PARAM_VALIDATION_FAILED, message, cause);
     }
 }

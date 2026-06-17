@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class EmailInvalidException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.EMAIL_INVALID;
-
     public EmailInvalidException(String message) {
-        super(message);
+        super(ErrorCode.EMAIL_INVALID, message);
     }
 
     public EmailInvalidException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.EMAIL_INVALID, message, cause);
     }
 }

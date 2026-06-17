@@ -530,7 +530,8 @@ const formatDateTime = (value, withSeconds = false) => {
   if (!value) return ''
   // 后端格式 yyyy-MM-dd HH:mm:ss
   if (typeof value === 'string') {
-    return withSeconds ? value.slice(0, 19) : value.slice(0, 16)
+    const normalized = value.replace('T', ' ').replace(/\.\d+$/, '')
+    return withSeconds ? normalized.slice(0, 19) : normalized.slice(0, 16)
   }
   const d = new Date(value)
   if (Number.isNaN(d.getTime())) return ''
@@ -994,14 +995,20 @@ onMounted(() => {
 .order-detail-view {
   display: flex;
   flex-direction: column;
-  gap: 12px;
+  gap: 14px;
 }
 
 .detail-header {
   display: flex;
   align-items: center;
   gap: 12px;
-  margin-bottom: 4px;
+  margin-bottom: 6px;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-lg);
+  padding: 18px 20px;
+  background:
+    linear-gradient(135deg, rgba(31, 102, 255, 0.07), transparent 44%),
+    var(--ch-surface-solid);
 }
 
 .back-btn {
@@ -1012,8 +1019,10 @@ onMounted(() => {
 
 .detail-title {
   margin: 0;
-  font-size: 20px;
-  font-weight: 600;
+  color: var(--ch-text);
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 900;
 }
 
 .detail-skeleton {
@@ -1030,11 +1039,16 @@ onMounted(() => {
 
 .detail-card {
   margin-bottom: 16px;
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  overflow: hidden;
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
 
 .detail-card:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  border-color: color-mix(in srgb, var(--ch-primary) 28%, var(--ch-border)) !important;
+  box-shadow: var(--ch-shadow) !important;
   transform: translateY(-2px);
 }
 
@@ -1042,8 +1056,9 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  font-size: 14px;
-  font-weight: 500;
+  color: var(--ch-text);
+  font-size: 15px;
+  font-weight: 800;
 }
 
 .edit-actions {
@@ -1089,8 +1104,8 @@ onMounted(() => {
   display: flex;
   align-items: center;
   justify-content: center;
-  background-color: #f5f7fa;
-  color: #909399;
+  background: linear-gradient(135deg, rgba(31, 102, 255, 0.13), rgba(22, 168, 115, 0.12));
+  color: var(--ch-muted);
   font-size: 20px;
   border-radius: 50%;
 }
@@ -1108,13 +1123,14 @@ onMounted(() => {
 
 .publisher-name {
   font-size: 16px;
-  font-weight: 600;
+  color: var(--ch-text);
+  font-weight: 800;
 }
 
 .publisher-extra {
   margin-top: 4px;
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
@@ -1130,17 +1146,22 @@ onMounted(() => {
 .info-item {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 5px;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius);
+  padding: 11px 12px;
+  background: color-mix(in srgb, var(--ch-bg-soft) 54%, transparent);
 }
 
 .label {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .value {
   font-size: 14px;
-  color: #303133;
+  color: var(--ch-text);
+  line-height: 1.45;
 }
 
 .editable-badge {
@@ -1161,16 +1182,16 @@ onMounted(() => {
 
 .current-people {
   font-size: 13px;
-  color: #606266;
+  color: var(--ch-muted);
 }
 
 .slash {
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .field-error {
   font-size: 12px;
-  color: #f56c6c;
+  color: var(--ch-danger);
 }
 
 .highlight {
@@ -1180,35 +1201,35 @@ onMounted(() => {
 
 .note-block {
   margin-top: 8px;
-  padding-top: 8px;
-  border-top: 1px solid #ebeef5;
+  border-top: 1px solid var(--ch-border);
+  padding-top: 12px;
 }
 
 .note-label {
   font-size: 13px;
-  color: #606266;
+  color: var(--ch-muted);
   margin-bottom: 4px;
 }
 
 .note-content {
   font-size: 14px;
-  color: #303133;
+  color: var(--ch-text);
   white-space: pre-wrap;
 }
 
 .note-empty {
-  color: #c0c4cc;
+  color: var(--ch-muted);
 }
 
 .history-block {
   margin-top: 12px;
   padding-top: 8px;
-  border-top: 1px dashed #ebeef5;
+  border-top: 1px dashed var(--ch-border);
 }
 
 .history-label {
   font-size: 13px;
-  color: #606266;
+  color: var(--ch-muted);
   margin-bottom: 6px;
 }
 
@@ -1220,13 +1241,14 @@ onMounted(() => {
 
 .history-item {
   padding: 8px 10px;
-  border-radius: 6px;
-  background-color: #f9fafc;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius);
+  background: color-mix(in srgb, var(--ch-bg-soft) 54%, transparent);
 }
 
 .history-meta {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
   margin-bottom: 4px;
 }
 
@@ -1239,7 +1261,7 @@ onMounted(() => {
 
 .history-field {
   width: 36px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .history-value {
@@ -1250,20 +1272,20 @@ onMounted(() => {
 }
 
 .history-value.old {
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .history-value.new {
-  color: #409eff;
+  color: var(--ch-primary);
 }
 
 .history-arrow {
-  color: #c0c4cc;
+  color: var(--ch-muted);
 }
 
 .apply-count {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .applications-list {
@@ -1296,7 +1318,8 @@ onMounted(() => {
 
 .apply-name {
   font-size: 14px;
-  font-weight: 500;
+  color: var(--ch-text);
+  font-weight: 800;
 }
 
 .apply-actions {
@@ -1308,16 +1331,24 @@ onMounted(() => {
 .apply-time {
   margin-top: 2px;
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .apply-email {
   margin-top: 2px;
   font-size: 12px;
-  color: #606266;
+  color: var(--ch-muted);
 }
 
 @media (max-width: 768px) {
+  .detail-header {
+    padding: 16px;
+  }
+
+  .detail-title {
+    font-size: 22px;
+  }
+
   .publisher-info {
     align-items: flex-start;
   }

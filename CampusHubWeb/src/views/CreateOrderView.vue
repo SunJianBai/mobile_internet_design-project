@@ -29,9 +29,9 @@
 
         <el-form-item label="性别要求" prop="genderRequire">
           <el-radio-group v-model="form.genderRequire">
-            <el-radio :label="'ANY'">不限</el-radio>
-            <el-radio :label="'MALE'">仅限男生</el-radio>
-            <el-radio :label="'FEMALE'">仅限女生</el-radio>
+            <el-radio value="ANY">不限</el-radio>
+            <el-radio value="MALE">仅限男生</el-radio>
+            <el-radio value="FEMALE">仅限女生</el-radio>
           </el-radio-group>
         </el-form-item>
 
