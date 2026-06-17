@@ -4,6 +4,34 @@ import vue from '@vitejs/plugin-vue'
 // https://vite.dev/config/
 export default defineConfig({
   plugins: [vue()],
+  build: {
+    rollupOptions: {
+      output: {
+        manualChunks(id) {
+          if (!id.includes('node_modules')) return
+
+          const normalized = id.replace(/\\/g, '/')
+          if (normalized.includes('@element-plus/icons-vue')) {
+            return 'vendor-element-icons'
+          }
+          if (normalized.includes('element-plus')) {
+            return 'vendor-element-plus'
+          }
+          if (
+            normalized.includes('/vue/') ||
+            normalized.includes('/vue-router/') ||
+            normalized.includes('/pinia/')
+          ) {
+            return 'vendor-vue'
+          }
+          if (normalized.includes('/axios/')) {
+            return 'vendor-axios'
+          }
+          return 'vendor'
+        }
+      }
+    }
+  },
   server: {
     port: 5173,
     proxy: {

@@ -1,23 +1,19 @@
 package dev.campushubbackend.exception;
 
 public class AIException extends BusinessException{
-    private ErrorCode errorCode = ErrorCode.AI_FAILED;
-
     public AIException(String message) {
-        super(message);
+        super(ErrorCode.AI_FAILED, message);
     }
 
     public AIException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.AI_FAILED, message, cause);
     }
 
     public AIException(String message, ErrorCode errorCode) {
-        super(message);
-        this.errorCode = errorCode;
+        super(errorCode, message);
     }
 
     public AIException(String message, Throwable cause, ErrorCode errorCode) {
-        super(message, cause);
-        this.errorCode = errorCode;
+        super(errorCode, message, cause);
     }
 }

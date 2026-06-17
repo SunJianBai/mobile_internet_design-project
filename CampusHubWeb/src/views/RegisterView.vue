@@ -2,7 +2,10 @@
   <div class="register-container">
     <el-card class="register-card">
       <template #header>
-        <h2>CampusHub</h2>
+        <div class="auth-card-header">
+          <h2>创建账号</h2>
+          <p>填写邮箱验证码和基础资料，进入 CampusHub。</p>
+        </div>
       </template>
       <el-form
         ref="registerFormRef"
@@ -33,10 +36,20 @@
           </div>
         </el-form-item>
         <el-form-item label="密码" prop="password">
-          <el-input v-model="registerForm.password" type="password" placeholder="请输入密码" />
+          <el-input
+            v-model="registerForm.password"
+            type="password"
+            placeholder="请输入密码"
+            show-password
+          />
         </el-form-item>
         <el-form-item label="确认密码" prop="confirmPassword">
-          <el-input v-model="registerForm.confirmPassword" type="password" placeholder="请确认密码" />
+          <el-input
+            v-model="registerForm.confirmPassword"
+            type="password"
+            placeholder="请确认密码"
+            show-password
+          />
         </el-form-item>
         <el-form-item label="昵称" prop="nickname">
           <el-input v-model="registerForm.nickname" placeholder="请输入昵称" />
@@ -45,7 +58,7 @@
           <el-input v-model="registerForm.studentId" placeholder="请输入学号（选填）" />
         </el-form-item>
         <div class="register-actions">
-          <el-button type="primary" @click="handleRegister">注册</el-button>
+          <el-button type="primary" class="auth-primary-btn" @click="handleRegister">注册</el-button>
           <router-link to="/login" class="login-link">登录</router-link>
         </div>
       </el-form>
@@ -170,11 +183,10 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: center;
   align-items: center;
-  height: 100vh;
 }
 
 .register-card {
-  width: 400px;
+  width: 100%;
   margin: 0;
 }
 
@@ -182,20 +194,34 @@ onBeforeUnmount(() => {
   display: flex;
   justify-content: space-between;
   align-items: center;
-  margin-top: 20px;
+  gap: 16px;
+  margin-top: 24px;
 }
 
 .login-link {
-  color: #409eff;
+  color: var(--ch-primary);
   text-decoration: none;
+  font-weight: 700;
 }
 
 .verify-row {
   display: flex;
   gap: 8px;
+  width: 100%;
 }
 
 .verify-btn {
+  flex: 0 0 auto;
   white-space: nowrap;
+}
+
+@media (max-width: 520px) {
+  .verify-row {
+    flex-direction: column;
+  }
+
+  .verify-btn {
+    width: 100%;
+  }
 }
 </style>

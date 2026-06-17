@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class VerifyCodeErrorException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.VERIFY_CODE_ERROR;
-
     public VerifyCodeErrorException(String message) {
-        super(message);
+        super(ErrorCode.VERIFY_CODE_ERROR, message);
     }
 
     public VerifyCodeErrorException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.VERIFY_CODE_ERROR, message, cause);
     }
 }

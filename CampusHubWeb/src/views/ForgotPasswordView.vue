@@ -2,9 +2,9 @@
   <div class="forgot-container">
     <el-card class="forgot-card" shadow="hover">
       <template #header>
-        <div class="card-header">
+        <div class="auth-card-header">
           <h2>找回密码</h2>
-          <p class="subtitle">请输入注册时使用的邮箱，通过验证码重置密码。</p>
+          <p>请输入注册时使用的邮箱，通过验证码重置密码。</p>
         </div>
       </template>
 
@@ -20,7 +20,14 @@
             <el-input v-model="emailForm.email" placeholder="请输入注册时使用的邮箱" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" :loading="loading" @click="handleVerifyEmail">下一步</el-button>
+            <el-button
+              type="primary"
+              class="auth-primary-btn"
+              :loading="loading"
+              @click="handleVerifyEmail"
+            >
+              下一步
+            </el-button>
           </el-form-item>
         </el-form>
       </div>
@@ -40,7 +47,14 @@
             <el-input v-model="codeForm.code" maxlength="6" placeholder="请输入邮件中的6位验证码" />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" :loading="loading" @click="handleVerifyCode">下一步</el-button>
+            <el-button
+              type="primary"
+              class="auth-primary-btn"
+              :loading="loading"
+              @click="handleVerifyCode"
+            >
+              下一步
+            </el-button>
             <el-button type="text" :disabled="resendCountdown > 0" @click="handleResendCode">
               <span v-if="resendCountdown > 0">重新发送（{{ resendCountdown }}s）</span>
               <span v-else>重新发送验证码</span>
@@ -68,7 +82,14 @@
             />
           </el-form-item>
           <el-form-item>
-            <el-button type="primary" :loading="loading" @click="handleResetPassword">完成重置</el-button>
+            <el-button
+              type="primary"
+              class="auth-primary-btn"
+              :loading="loading"
+              @click="handleResetPassword"
+            >
+              完成重置
+            </el-button>
             <el-button @click="goLogin">返回登录</el-button>
           </el-form-item>
         </el-form>
@@ -255,23 +276,10 @@ const goLogin = () => {
   display: flex;
   justify-content: center;
   align-items: center;
-  min-height: 100vh;
-  background-color: #f5f7fa;
 }
 
 .forgot-card {
-  width: 420px;
-}
-
-.card-header {
-  display: flex;
-  flex-direction: column;
-  gap: 4px;
-}
-
-.subtitle {
-  font-size: 13px;
-  color: #909399;
+  width: 100%;
 }
 
 .steps {
@@ -293,7 +301,7 @@ const goLogin = () => {
 @media (max-width: 480px) {
   .forgot-card {
     width: 100%;
-    margin: 0 12px;
+    margin: 0;
   }
 }
 </style>

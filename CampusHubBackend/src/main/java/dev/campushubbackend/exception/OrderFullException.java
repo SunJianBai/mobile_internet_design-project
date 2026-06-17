@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class OrderFullException extends BusinessException{
-    private final ErrorCode errorCode = ErrorCode.ORDER_FULL;
-
     public OrderFullException(String message) {
-        super(message);
+        super(ErrorCode.ORDER_FULL, message);
     }
 
     public OrderFullException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.ORDER_FULL, message, cause);
     }
 }

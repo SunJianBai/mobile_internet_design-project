@@ -1,6 +1,12 @@
 <template>
   <div class="content-detail-view">
-    <el-page-header @back="handleBack" content="动态详情" class="page-header" />
+    <div class="page-header content-detail-header">
+      <el-button type="primary" link @click="handleBack" class="back-btn">
+        <el-icon><ArrowLeft /></el-icon>
+        <span>返回</span>
+      </el-button>
+      <h2>动态详情</h2>
+    </div>
 
     <el-skeleton v-if="loading" :rows="6" animated />
 
@@ -160,7 +166,7 @@
 import { ref, onMounted } from 'vue'
 import { useRoute, useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
-import { Tickets, ArrowRight } from '@element-plus/icons-vue'
+import { Tickets, ArrowRight, ArrowLeft } from '@element-plus/icons-vue'
 import ThumbFilled from '../components/ThumbFilled.vue'
 import ThumbOutline from '../components/ThumbOutline.vue'
 import { useContentStore } from '../stores/content'
@@ -395,17 +401,41 @@ onMounted(() => {
 
 <style scoped>
 .content-detail-view {
-  padding: 20px;
-  max-width: 900px;
+  padding: clamp(8px, 2vw, 20px) 0;
+  max-width: 920px;
   margin: 0 auto;
 }
 
 .page-header {
-  margin-bottom: 16px;
+  display: flex;
+  align-items: center;
+  gap: 14px;
+  margin-bottom: 18px;
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-lg);
+  padding: 18px 20px;
+  background:
+    linear-gradient(135deg, rgba(31, 102, 255, 0.07), transparent 44%),
+    var(--ch-surface-solid);
+}
+
+.page-header h2 {
+  margin: 0;
+  color: var(--ch-text);
+  font-size: 24px;
+  line-height: 1.2;
+  font-weight: 900;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
 }
 
 .content-card {
   margin-bottom: 16px;
+  overflow: hidden;
 }
 
 .card-header {
@@ -429,20 +459,24 @@ onMounted(() => {
 }
 
 .nickname {
-  font-weight: 600;
+  color: var(--ch-text);
+  font-weight: 800;
 }
 
 .time {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .card-content {
-  margin-top: 12px;
+  margin-top: 14px;
 }
 
 .text {
-  margin-bottom: 10px;
+  margin: 0 0 14px;
+  color: var(--ch-text);
+  font-size: 16px;
+  line-height: 1.75;
   white-space: pre-wrap;
 }
 
@@ -467,21 +501,25 @@ onMounted(() => {
 }
 
 .order-card {
-  margin-top: 8px;
-  padding: 10px 12px;
-  border-radius: 6px;
-  border: 1px solid #ebeef5;
-  background-color: #f9fafc;
+  margin-top: 14px;
+  padding: 12px 14px;
+  border-radius: var(--ch-radius);
+  border: 1px solid var(--ch-border);
+  background: color-mix(in srgb, var(--ch-bg-soft) 72%, transparent);
   display: flex;
   justify-content: space-between;
   align-items: center;
   cursor: pointer;
-  transition: background-color 0.2s ease, box-shadow 0.2s ease;
+  transition:
+    border-color 0.2s ease,
+    background 0.2s ease,
+    box-shadow 0.2s ease;
 }
 
 .order-card:hover {
-  background-color: #f5f7fa;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.04);
+  border-color: color-mix(in srgb, var(--ch-primary) 34%, var(--ch-border));
+  background: var(--ch-primary-soft);
+  box-shadow: 0 10px 24px rgba(31, 66, 115, 0.09);
 }
 
 .order-card-main {
@@ -503,8 +541,8 @@ onMounted(() => {
   padding: 2px 8px;
   border-radius: 999px;
   font-size: 12px;
-  background-color: var(--el-color-info-light-9, #ecf5ff);
-  color: var(--el-color-info, #409eff);
+  background-color: var(--ch-primary-soft);
+  color: var(--ch-primary);
   white-space: nowrap;
 }
 
@@ -514,7 +552,7 @@ onMounted(() => {
 
 .order-activity {
   font-size: 13px;
-  color: #606266;
+  color: var(--ch-text);
 }
 
 .order-card-meta {
@@ -522,11 +560,11 @@ onMounted(() => {
   flex-wrap: wrap;
   gap: 12px;
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .order-card-arrow {
-  color: #c0c4cc;
+  color: var(--ch-muted);
 }
 
 .card-footer {
@@ -544,11 +582,12 @@ onMounted(() => {
 
 .stat {
   font-size: 13px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .comment-card {
   margin-top: 12px;
+  overflow: hidden;
 }
 
 .comment-header {
@@ -559,7 +598,7 @@ onMounted(() => {
 
 .comment-count {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .comment-editor {
@@ -581,7 +620,7 @@ onMounted(() => {
 
 .comment-item {
   padding: 10px 0;
-  border-bottom: 1px solid #f2f3f5;
+  border-bottom: 1px solid var(--ch-border);
 }
 
 .comment-main {
@@ -609,7 +648,7 @@ onMounted(() => {
 
 .comment-meta .time {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .comment-text {
@@ -630,7 +669,15 @@ onMounted(() => {
 
 @media (max-width: 768px) {
   .content-detail-view {
-    padding: 12px;
+    padding: 0;
+  }
+
+  .page-header {
+    padding: 16px;
+  }
+
+  .text {
+    font-size: 15px;
   }
 
   .comment-children {

@@ -1,9 +1,12 @@
 <template>
   <div class="create-content-view">
-    <el-card class="editor-card" shadow="hover">
+    <el-card class="editor-card create-content-card" shadow="hover">
       <template #header>
         <div class="editor-header">
-          <div class="editor-title">发布动态</div>
+          <div class="editor-title-block">
+            <h2 class="editor-title">发布动态</h2>
+            <p class="editor-subtitle">记录校园瞬间，也可以关联一条活动订单。</p>
+          </div>
           <div class="editor-meta" v-if="userNickname">
             <el-avatar :src="userAvatar" size="small" class="editor-avatar">
               <span>{{ userInitial }}</span>
@@ -13,73 +16,91 @@
         </div>
       </template>
 
-      <!-- 文本输入 -->
-      <el-input
-        v-model="contentText"
-        type="textarea"
-        :rows="6"
-        class="editor-textarea"
-        maxlength="500"
-        show-word-limit
-        placeholder="今天想分享点什么？支持换行和多段落～"
-      />
-
-      <div class="editor-toolbar">
-        <div class="editor-status">
-          <el-tag v-if="draftSaved" size="small" type="success" effect="light">
-            草稿已保存
-          </el-tag>
-          <el-tag v-else-if="hasDraft" size="small" type="info" effect="light">
-            检测到未发布草稿
-          </el-tag>
-        </div>
-      </div>
-
-      <!-- 媒体上传：图片 + 视频 -->
-      <div class="media-section">
-        <div class="media-header">
-          <span class="label">添加图片 / 视频（可选）：</span>
-          <span class="tips">单次最多选择 9 个文件，图片与视频均可</span>
-        </div>
-        <el-upload
-          class="media-uploader"
-          drag
-          multiple
-          :limit="9"
-          :auto-upload="false"
-          :file-list="fileList"
-          :on-change="handleFileChange"
-          :on-remove="handleFileRemove"
-          accept="image/*,video/*"
-        >
-          <el-icon class="media-icon"><UploadFilled /></el-icon>
-          <div class="el-upload__text">
-            将文件拖到此处，或 <em>点击选择</em>
+      <div class="composer-surface">
+        <div class="composer-section">
+          <div class="section-heading">
+            <span>动态内容</span>
+            <small>最多 500 字</small>
           </div>
-          <template #tip>
-            <div class="el-upload__tip">
-              图片将以九宫格形式展示，视频以播放器形式展示；文件实际上传在点击“发布”后进行。
-            </div>
-          </template>
-        </el-upload>
+          <el-input
+            v-model="contentText"
+            type="textarea"
+            :rows="6"
+            class="editor-textarea"
+            maxlength="500"
+            show-word-limit
+            placeholder="今天想分享点什么？支持换行和多段落～"
+          />
 
-        <!-- 选择预览 -->
-        <div v-if="fileList.length" class="media-preview">
-          <div
-            v-for="file in fileList"
-            :key="file.uid"
-            class="media-preview-item"
+          <div class="editor-toolbar">
+            <div class="editor-status">
+              <el-tag v-if="draftSaved" size="small" type="success" effect="light">
+                草稿已保存
+              </el-tag>
+              <el-tag v-else-if="hasDraft" size="small" type="info" effect="light">
+                检测到未发布草稿
+              </el-tag>
+            </div>
+          </div>
+        </div>
+
+        <!-- 媒体上传：图片 + 视频 -->
+        <div class="media-section composer-section">
+          <div class="media-header">
+            <div>
+              <span class="label">添加图片 / 视频</span>
+              <p>单次最多选择 9 个文件，图片与视频均可。</p>
+            </div>
+            <el-tag size="small" effect="plain">可选</el-tag>
+          </div>
+          <el-upload
+            class="media-uploader"
+            drag
+            multiple
+            :limit="9"
+            :auto-upload="false"
+            :file-list="fileList"
+            :on-change="handleFileChange"
+            :on-remove="handleFileRemove"
+            accept="image/*,video/*"
           >
-            <template v-if="isImage(file)">
-              <el-image :src="file.url || file.rawUrl" fit="cover" lazy />
-            </template>
-            <template v-else>
-              <div class="video-placeholder">
-                <el-icon><VideoPlay /></el-icon>
-                <span>{{ file.name }}</span>
+            <el-icon class="media-icon"><UploadFilled /></el-icon>
+            <div class="el-upload__text">
+              将文件拖到此处，或 <em>点击选择</em>
+            </div>
+            <template #tip>
+              <div class="el-upload__tip">
+                图片将以九宫格形式展示，视频以播放器形式展示；文件实际上传在点击“发布”后进行。
               </div>
             </template>
+          </el-upload>
+
+          <!-- 选择预览 -->
+          <div v-if="fileList.length" class="media-preview">
+            <div
+              v-for="file in fileList"
+              :key="file.uid"
+              class="media-preview-item"
+            >
+              <template v-if="isImage(file)">
+                <el-image :src="file.url || file.rawUrl" fit="cover" lazy />
+              </template>
+              <template v-else>
+                <div class="video-placeholder">
+                  <el-icon><VideoPlay /></el-icon>
+                  <span>{{ file.name }}</span>
+                </div>
+              </template>
+            </div>
           </div>
+        </div>
+
+        <div v-if="attachedOrder" class="attached-order">
+          <span>已附加订单</span>
+          <strong>#{{ attachedOrder.id }}</strong>
+          <el-button size="small" text class="detach-order-btn" @click="clearAttachedOrder">
+            移除
+          </el-button>
         </div>
       </div>
 
@@ -87,29 +108,18 @@
       <div class="editor-actions">
         <div class="left-actions">
           <el-button
-            size="small"
             @click="handleSaveDraft"
             :loading="savingDraft"
           >
             保存草稿
           </el-button>
           <el-button
-            size="small"
             type="info"
             plain
             class="attach-order-btn"
             @click="openOrderDialog"
           >
-            {{ attachedOrder ? `已附加订单 #${attachedOrder.id}` : '附加订单' }}
-          </el-button>
-          <el-button
-            v-if="attachedOrder"
-            size="small"
-            text
-            class="detach-order-btn"
-            @click="clearAttachedOrder"
-          >
-            移除
+            {{ attachedOrder ? `更换订单 #${attachedOrder.id}` : '附加订单' }}
           </el-button>
         </div>
         <div class="right-actions">
@@ -611,25 +621,76 @@ onMounted(() => {
 
 <style scoped>
 .create-content-view {
-  padding: 20px;
-  max-width: 900px;
+  padding: clamp(10px, 2vw, 20px) 0;
+  max-width: 920px;
   margin: 0 auto;
 }
 
 .editor-card {
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
+  overflow: hidden;
+  border-color: var(--ch-border);
+  background: var(--ch-surface-solid);
+  transition:
+    border-color 0.2s ease,
+    box-shadow 0.2s ease,
+    transform 0.2s ease;
 }
+
 .editor-card:hover {
-  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.08);
+  border-color: color-mix(in srgb, var(--ch-primary) 28%, var(--ch-border));
+  box-shadow: var(--ch-shadow) !important;
   transform: translateY(-2px);
+}
+
+.editor-card :deep(.el-card__header) {
+  padding: 26px 28px !important;
+  background:
+    linear-gradient(135deg, rgba(31, 102, 255, 0.09), transparent 44%),
+    linear-gradient(215deg, rgba(22, 168, 115, 0.08), transparent 46%),
+    var(--ch-surface-solid);
+}
+
+.editor-card :deep(.el-card__body) {
+  padding: 28px !important;
+}
+
+.editor-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+}
+
+.editor-title-block {
+  min-width: 0;
+}
+
+.editor-title {
+  margin: 0;
+  color: var(--ch-text);
+  font-size: 28px;
+  line-height: 1.2;
+  font-weight: 900;
+}
+
+.editor-subtitle {
+  margin: 7px 0 0;
+  color: var(--ch-muted);
+  font-size: 13px;
 }
 
 .editor-meta {
   display: flex;
   align-items: center;
-  gap: 8px;
-  font-size: 12px;
-  color: #909399;
+  flex: 0 0 auto;
+  gap: 9px;
+  min-height: 38px;
+  border: 1px solid var(--ch-border);
+  border-radius: 999px;
+  padding: 4px 11px 4px 5px;
+  color: var(--ch-muted);
+  background: color-mix(in srgb, var(--ch-bg-soft) 74%, transparent);
+  font-size: 13px;
 }
 
 .editor-avatar {
@@ -637,11 +698,55 @@ onMounted(() => {
 }
 
 .editor-name {
-  font-weight: 500;
+  color: var(--ch-text);
+  font-weight: 700;
+}
+
+.composer-surface {
+  display: grid;
+  gap: 16px;
+}
+
+.composer-section {
+  border: 1px solid var(--ch-border);
+  border-radius: var(--ch-radius-lg);
+  padding: 18px;
+  background: color-mix(in srgb, var(--ch-bg-soft) 42%, transparent);
+}
+
+.section-heading,
+.media-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 14px;
+  margin-bottom: 12px;
+}
+
+.section-heading span,
+.media-header .label {
+  display: block;
+  color: var(--ch-text);
+  font-size: 15px;
+  font-weight: 800;
+}
+
+.section-heading small,
+.media-header p,
+.el-upload__tip {
+  margin: 4px 0 0;
+  color: var(--ch-muted);
+  font-size: 12px;
 }
 
 .editor-textarea {
-  margin-top: 12px;
+  display: block;
+}
+
+.editor-textarea :deep(.el-textarea__inner) {
+  min-height: 158px !important;
+  border-radius: 12px !important;
+  line-height: 1.7;
 }
 
 .editor-toolbar {
@@ -670,33 +775,32 @@ onMounted(() => {
 }
 
 .media-section {
-  margin-top: 16px;
-}
-
-.media-header {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  margin-bottom: 8px;
-}
-
-.media-header .label {
-  font-size: 13px;
-  color: #606266;
-}
-
-.media-header .tips {
-  font-size: 12px;
-  color: #909399;
+  margin-top: 0;
 }
 
 .media-uploader {
   width: 100%;
 }
 
+.media-uploader :deep(.el-upload-dragger) {
+  min-height: 148px;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  border-radius: 12px !important;
+  transition:
+    border-color 0.18s ease,
+    background 0.18s ease;
+}
+
+.media-uploader :deep(.el-upload-dragger:hover) {
+  border-color: color-mix(in srgb, var(--ch-primary) 52%, var(--ch-border)) !important;
+  background: var(--ch-primary-soft) !important;
+}
+
 .media-icon {
-  font-size: 32px;
-  color: #409eff;
+  font-size: 34px;
+  color: var(--ch-primary);
   margin-bottom: 8px;
 }
 
@@ -708,27 +812,55 @@ onMounted(() => {
 }
 
 .media-preview-item {
-  border-radius: 6px;
+  overflow: hidden;
+  border: 1px solid var(--ch-border);
+  border-radius: 10px;
+  background: var(--ch-surface-solid);
+  aspect-ratio: 1;
+}
+
+.media-preview-item :deep(.el-image) {
+  width: 100%;
+  height: 100%;
   overflow: hidden;
 }
 
 .video-placeholder {
-  height: 120px;
+  height: 100%;
   display: flex;
   flex-direction: column;
   align-items: center;
   justify-content: center;
-  background-color: #f5f7fa;
-  color: #606266;
+  background-color: var(--ch-bg-soft);
+  color: var(--ch-muted);
   font-size: 12px;
   gap: 6px;
 }
 
+.attached-order {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  border: 1px solid color-mix(in srgb, var(--ch-primary) 28%, var(--ch-border));
+  border-radius: var(--ch-radius);
+  padding: 10px 12px;
+  color: var(--ch-muted);
+  background: var(--ch-primary-soft);
+  font-size: 13px;
+}
+
+.attached-order strong {
+  color: var(--ch-primary);
+}
+
 .editor-actions {
   margin-top: 18px;
+  padding-top: 18px;
+  border-top: 1px solid var(--ch-border);
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 14px;
 }
 
 .attach-order-btn {
@@ -889,6 +1021,7 @@ onMounted(() => {
 .left-actions {
   display: flex;
   gap: 10px;
+  flex-wrap: wrap;
 }
 
 .right-actions {
@@ -898,17 +1031,53 @@ onMounted(() => {
 
 @media (max-width: 768px) {
   .create-content-view {
-    padding: 12px;
+    padding: 0;
+  }
+
+  .editor-card :deep(.el-card__header),
+  .editor-card :deep(.el-card__body) {
+    padding: 18px !important;
+  }
+
+  .editor-header,
+  .section-heading,
+  .media-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
+
+  .editor-meta {
+    width: fit-content;
+  }
+
+  .media-header .el-tag {
+    align-self: flex-start;
+    width: fit-content;
+  }
+
+  .editor-title {
+    font-size: 24px;
+  }
+
+  .composer-section {
+    padding: 14px;
   }
 
   .editor-actions {
     flex-direction: column-reverse;
     align-items: stretch;
-    gap: 8px;
+    gap: 10px;
   }
 
+  .left-actions,
   .right-actions {
-    justify-content: flex-end;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .left-actions .el-button,
+  .right-actions .el-button {
+    margin-left: 0 !important;
   }
 }
 </style>

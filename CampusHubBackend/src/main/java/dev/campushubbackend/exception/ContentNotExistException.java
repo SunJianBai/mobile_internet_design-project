@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class ContentNotExistException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.CONTENT_NOT_EXIST;
-
     public ContentNotExistException(String message) {
-        super(message);
+        super(ErrorCode.CONTENT_NOT_EXIST, message);
     }
 
     public ContentNotExistException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.CONTENT_NOT_EXIST, message, cause);
     }
 }

@@ -28,6 +28,9 @@ export const useAuthStore = defineStore('auth', () => {
       if (user.value?.id) {
         localStorage.setItem('userId', String(user.value.id))
       }
+      if (user.value?.userType !== undefined && user.value?.userType !== null) {
+        localStorage.setItem('userType', String(user.value.userType))
+      }
 
       // 切换账号时清理用户详情缓存，避免个人中心残留上一个用户的数据
       try {
@@ -88,6 +91,7 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = null
       localStorage.removeItem('token')
       localStorage.removeItem('userId')
+      localStorage.removeItem('userType')
       // 清理用户详情相关状态，防止下次登录看到上一个用户的信息
       try {
         const userStore = useUserStore()
@@ -120,6 +124,9 @@ export const useAuthStore = defineStore('auth', () => {
       user.value = response.data
       if (user.value?.id) {
         localStorage.setItem('userId', String(user.value.id))
+      }
+      if (user.value?.userType !== undefined && user.value?.userType !== null) {
+        localStorage.setItem('userType', String(user.value.userType))
       }
       logger.info('USER_INFO_LOADED', {
         userId: user.value?.id,

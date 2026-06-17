@@ -5,6 +5,7 @@ import dev.campushubbackend.exception.FileDeleteFailedException;
 import dev.campushubbackend.exception.FileUploadFailedException;
 import dev.campushubbackend.repository.PostMediaRepository;
 import dev.campushubbackend.service.FileService;
+import dev.campushubbackend.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -22,6 +23,7 @@ import java.nio.file.Paths;
 public class FileServiceImpl implements FileService {
 
     private final PostMediaRepository postMediaRepository;
+    private final SystemSettingService systemSettingService;
 
     @Value("${file.upload-dir:uploads}")
     private String baseUploadDir;
@@ -125,6 +127,8 @@ public class FileServiceImpl implements FileService {
         if (file.isEmpty()) {
             throw new FileUploadFailedException("文件为空");
         }
+
+        systemSettingService.validateUploadSize(file);
 
         String contentType = file.getContentType();
         if (contentType == null) {

@@ -41,13 +41,6 @@ instance.interceptors.request.use(
       hasData: !!config.data
     })
 
-    // 额外在浏览器控制台直接输出一行，方便你查看
-    console.log('[HTTP REQUEST]', {
-      method: config.method,
-      url: fullUrl,
-      params: config.params,
-      data: config.data
-    })
     return config
   },
   error => {
@@ -78,13 +71,6 @@ instance.interceptors.response.use(
       message: response.data?.message
     })
 
-    // 在控制台输出响应详情（包含返回体）
-    console.log('[HTTP RESPONSE]', {
-      method: response.config.method,
-      url: fullUrl,
-      status: response.status,
-      data: response.data
-    })
     return response
   },
   error => {

@@ -18,6 +18,7 @@ import dev.campushubbackend.exception.*;
 import dev.campushubbackend.repository.UserRepository;
 import dev.campushubbackend.repository.VerifyCodeRecordRepository;
 import dev.campushubbackend.service.AuthService;
+import dev.campushubbackend.service.SystemSettingService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.security.crypto.password.PasswordEncoder;
@@ -34,6 +35,7 @@ public class AuthServiceImpl implements AuthService {
     private final UserRepository userRepository;
     private final VerifyCodeRecordRepository verifyCodeRecordRepository;
     private final PasswordEncoder passwordEncoder;
+    private final SystemSettingService systemSettingService;
 
     @Override
     @Transactional
@@ -44,6 +46,10 @@ public class AuthServiceImpl implements AuthService {
 
         if (!passwordEncoder.matches(request.getPassword(), user.getPassword())) {
             throw new PasswordErrorException("用户密码错误: identifier=" + identifier);
+        }
+
+        if (UserStatus.BANNED.equals(user.getUserStatus())) {
+            throw new UserBannedException("账号已被管理员封禁: identifier=" + identifier);
         }
 
         // TODO 占线处理
@@ -72,6 +78,10 @@ public class AuthServiceImpl implements AuthService {
     @Override
     @Transactional
     public Long register(RegisterRequest request) {
+        if (!systemSettingService.isPublicRegistrationAllowed()) {
+            throw new RegisterFailedException("当前暂未开放公开注册");
+        }
+
         String email = request.getEmail();
         String verifyCode = request.getVerifycode();
 
@@ -151,36 +161,44 @@ public class AuthServiceImpl implements AuthService {
     }
 
     @Override
+    @Transactional
     public void verifyResetCode(ForgotPasswordVerifyCodeRequest request) {
         String email = request.getEmail();
-        String code = String.valueOf(request.getVerifyCode());
-        VerifyCodeRecord record = verifyCodeRecordRepository.findFirstByEmailAndTypeAndStatusOrderByCreatedAtDesc(
-                email, VerifyCodeRecordType.FORGET_PWD, VerifyCodeRecordStatus.UNUSED
-        ).orElseThrow(()->
-                new SomethingHappenedException("邮箱未验证: email=" + email)
-        );
-        if(record.getExpiredAt().isBefore(LocalDateTime.now())){
-            record.setStatus(VerifyCodeRecordStatus.EXPIRED);
-            verifyCodeRecordRepository.save(record);
-            throw new RegisterFailedException("验证码已过期: email=" + email);
-        }
-        if(!passwordEncoder.matches(code, record.getCode())) {
-            throw new VerifyCodeErrorException("验证码错误: email=" + email);
-        }
-        record.setStatus(VerifyCodeRecordStatus.USED);
-        verifyCodeRecordRepository.save(record);
+        findUsableResetCode(email, request.getVerifyCode());
         log.info("验证验证码: email={}, code={}", request.getEmail(), request.getVerifyCode());
     }
 
     @Override
+    @Transactional
     public void resetPassword(ForgotPasswordResetPasswordRequest request) {
         String email = request.getEmail();
         String password = request.getNewPassword();
         User user = userRepository.findByEmail(email).orElseThrow(()->
                 new UserNotExistException("邮箱未注册: email=" + email)
                 );
+        VerifyCodeRecord record = findUsableResetCode(email, request.getVerifyCode());
         user.setPassword(passwordEncoder.encode(password));
+        record.setStatus(VerifyCodeRecordStatus.USED);
+        verifyCodeRecordRepository.save(record);
         userRepository.save(user);
         log.info("已重置密码: email={}", request.getEmail());
+    }
+
+    private VerifyCodeRecord findUsableResetCode(String email, Integer verifyCode) {
+        String code = String.valueOf(verifyCode);
+        VerifyCodeRecord record = verifyCodeRecordRepository.findFirstByEmailAndTypeAndStatusOrderByCreatedAtDesc(
+                email, VerifyCodeRecordType.FORGET_PWD, VerifyCodeRecordStatus.UNUSED
+        ).orElseThrow(() ->
+                new VerifyCodeErrorException("请先获取验证码: email=" + email)
+        );
+        if (record.getExpiredAt().isBefore(LocalDateTime.now())) {
+            record.setStatus(VerifyCodeRecordStatus.EXPIRED);
+            verifyCodeRecordRepository.save(record);
+            throw new RegisterFailedException("验证码已过期: email=" + email);
+        }
+        if (!passwordEncoder.matches(code, record.getCode())) {
+            throw new VerifyCodeErrorException("验证码错误: email=" + email);
+        }
+        return record;
     }
 }

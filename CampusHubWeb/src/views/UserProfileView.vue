@@ -6,11 +6,31 @@
         <div class="avatar-area">
           <el-avatar
             :size="88"
-            :src="currentUser?.avatarUrl"
+            :src="profileAvatarUrl"
             class="avatar"
           >
             {{ currentUserInitial }}
           </el-avatar>
+        </div>
+
+        <div class="base-info">
+          <div class="name-row">
+            <h2 class="nickname">{{ currentUser?.nickname || '未命名用户' }}</h2>
+            <el-tag size="small" type="info" v-if="currentUser">
+              {{ userTypeLabel }}
+            </el-tag>
+          </div>
+          <p class="email" v-if="currentUser?.email">{{ currentUser.email }}</p>
+          <p class="signature" v-if="currentUser?.signature">
+            {{ currentUser.signature }}
+          </p>
+          <div class="meta-row" v-if="currentUser">
+            <span>用户ID：{{ currentUser.id }}</span>
+            <span>注册时间：{{ formatProfileTime(currentUser.createdAt) }}</span>
+          </div>
+        </div>
+
+        <div class="profile-actions">
           <div class="avatar-actions">
             <el-button size="small" @click="triggerAvatarSelect" :loading="avatarUploading">
               更换头像
@@ -25,33 +45,21 @@
             <p class="avatar-tip">支持 JPG/PNG，大小不超过 2MB</p>
           </div>
         </div>
-        <div class="base-info">
-          <div class="name-row">
-            <h2 class="nickname">{{ currentUser?.nickname || '未命名用户' }}</h2>
-            <el-tag size="small" type="info" v-if="currentUser">
-              {{ userTypeLabel }}
-            </el-tag>
-          </div>
-          <p class="email" v-if="currentUser?.email">{{ currentUser.email }}</p>
-          <p class="signature" v-if="currentUser?.signature">
-            {{ currentUser.signature }}
-          </p>
-          <div class="meta-row" v-if="currentUser">
-            <span>用户ID：{{ currentUser.id }}</span>
-            <span>注册时间：{{ currentUser.createdAt }}</span>
-          </div>
-        </div>
       </div>
     </el-card>
 
     <!-- 主要功能区域：标签页 -->
     <el-card class="profile-main-card" shadow="never">
-      <el-tabs v-model="activeTab" type="border-card">
+      <el-tabs v-model="activeTab" type="border-card" class="profile-tabs">
         <!-- 基本信息 -->
         <el-tab-pane label="基本信息" name="basic">
+          <div class="pane-heading">
+            <h3>基本信息</h3>
+            <p>同步更新昵称、头像与对外展示签名。</p>
+          </div>
           <el-form
             :model="editableUser"
-            label-width="90px"
+            label-position="top"
             class="profile-form"
           >
             <el-form-item label="昵称">
@@ -91,10 +99,11 @@
 
         <!-- 账户安全 -->
         <el-tab-pane label="账户安全" name="security">
-          <div class="section-description">
-            <p>建议定期更换密码，保证账户安全。</p>
+          <div class="pane-heading">
+            <h3>账户安全</h3>
+            <p>修改后请使用新密码重新确认后续登录。</p>
           </div>
-          <el-form :model="passwordForm" label-width="100px" class="security-form">
+          <el-form :model="passwordForm" label-position="top" class="security-form">
             <el-form-item label="当前密码">
               <el-input
                 v-model="passwordForm.oldPassword"
@@ -154,6 +163,19 @@ const changingPassword = ref(false)
 
 const currentUser = computed(() => userStore.currentUser)
 
+const fileBaseUrl =
+  import.meta.env.VITE_FILE_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:8080')
+
+const resolveMediaUrl = (url) => {
+  if (!url) return ''
+  if (/^https?:\/\//.test(url)) return url
+  return `${fileBaseUrl}${url}`
+}
+
+const profileAvatarUrl = computed(() => {
+  return currentUser.value?.avatarUrl ? resolveMediaUrl(currentUser.value.avatarUrl) : ''
+})
+
 const currentUserInitial = computed(() => {
   if (currentUser.value?.nickname) {
     return currentUser.value.nickname.slice(0, 1)
@@ -170,6 +192,19 @@ const userTypeLabel = computed(() => {
   if (userType === 1 || userType === 'ADMIN') return '管理员'
   return '普通用户'
 })
+
+const formatProfileTime = (value) => {
+  if (!value) return '未知'
+  const date = new Date(value)
+  if (Number.isNaN(date.getTime())) return String(value)
+  return date.toLocaleString('zh-CN', {
+    year: 'numeric',
+    month: '2-digit',
+    day: '2-digit',
+    hour: '2-digit',
+    minute: '2-digit'
+  })
+}
 
 const editableUser = reactive({
   nickname: '',
@@ -330,40 +365,49 @@ onMounted(async () => {
 .user-profile-view {
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 18px;
 }
 
 .profile-header-card {
-  margin-bottom: 8px;
+  overflow: hidden;
 }
 
 .profile-header {
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   gap: 24px;
+  min-height: 164px;
+  padding: 6px 0;
 }
 
 .avatar-area {
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 8px;
+  justify-content: center;
+  width: 118px;
+  flex: 0 0 118px;
 }
 
 .avatar {
-  border: 2px solid #e4e7ed;
+  border: 2px solid color-mix(in srgb, var(--ch-primary) 14%, var(--ch-border));
+  color: #fff;
+  background: linear-gradient(135deg, #1f66ff, #16a873);
+  font-size: 28px;
+  font-weight: 900;
 }
 
 .avatar-actions {
   display: flex;
   flex-direction: column;
-  align-items: center;
-  gap: 4px;
+  align-items: flex-end;
+  gap: 8px;
 }
 
 .avatar-tip {
+  margin: 0;
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
+  text-align: right;
 }
 
 .hidden-file-input {
@@ -378,55 +422,107 @@ onMounted(async () => {
 .name-row {
   display: flex;
   align-items: center;
-  gap: 8px;
-  margin-bottom: 4px;
+  gap: 10px;
+  margin-bottom: 8px;
 }
 
 .nickname {
-  font-size: 22px;
-  font-weight: 600;
   margin: 0;
+  color: var(--ch-text);
+  font-size: clamp(26px, 3vw, 34px);
+  line-height: 1.1;
+  font-weight: 900;
 }
 
 .email {
-  font-size: 14px;
-  color: #606266;
+  margin: 0;
+  color: var(--ch-text);
+  font-size: 15px;
 }
 
 .signature {
-  margin-top: 4px;
+  margin: 8px 0 0;
   font-size: 14px;
-  color: #909399;
+  color: var(--ch-muted);
 }
 
 .meta-row {
-  margin-top: 8px;
-  font-size: 12px;
-  color: #a0a3a6;
+  margin-top: 16px;
+  font-size: 13px;
+  color: var(--ch-muted);
   display: flex;
   flex-wrap: wrap;
-  gap: 12px;
+  gap: 10px;
+}
+
+.meta-row span {
+  border: 1px solid var(--ch-border);
+  border-radius: 999px;
+  padding: 6px 10px;
+  background: color-mix(in srgb, var(--ch-bg-soft) 76%, transparent);
+}
+
+.profile-actions {
+  flex: 0 0 auto;
+  align-self: stretch;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  min-width: 180px;
 }
 
 .profile-main-card {
   margin-top: 4px;
 }
 
+.profile-tabs {
+  border-radius: var(--ch-radius) !important;
+  overflow: hidden;
+}
+
+.profile-tabs :deep(.el-tabs__header) {
+  background: var(--ch-bg-soft);
+}
+
+.profile-tabs :deep(.el-tabs__item.is-active),
+.profile-tabs :deep(.el-tabs__content),
+.profile-tabs :deep(.el-tab-pane) {
+  background: var(--ch-surface-solid);
+  color: var(--ch-text);
+}
+
 .profile-form,
 .security-form,
 .feedback-form {
-  max-width: 520px;
+  max-width: 640px;
+}
+
+.pane-heading {
+  margin-bottom: 18px;
+}
+
+.pane-heading h3 {
+  margin: 0;
+  color: var(--ch-text);
+  font-size: 18px;
+  line-height: 1.2;
+}
+
+.pane-heading p {
+  margin: 6px 0 0;
+  color: var(--ch-muted);
+  font-size: 13px;
 }
 
 .section-description {
   margin-bottom: 12px;
   font-size: 13px;
-  color: #606266;
+  color: var(--ch-muted);
 }
 
 .security-tip {
   font-size: 12px;
-  color: #909399;
+  color: var(--ch-muted);
   margin-left: 12px;
 }
 
@@ -508,14 +604,58 @@ onMounted(async () => {
 
 @media (max-width: 768px) {
   .profile-header {
-    flex-direction: column;
-    align-items: flex-start;
+    display: grid;
+    grid-template-columns: 72px minmax(0, 1fr);
+    gap: 16px;
+    min-height: 0;
   }
 
   .avatar-area {
-    flex-direction: row;
-    align-items: center;
-    gap: 16px;
+    width: 72px;
+    flex-basis: 72px;
+  }
+
+  .avatar {
+    width: 72px !important;
+    height: 72px !important;
+    font-size: 24px;
+  }
+
+  .profile-actions {
+    grid-column: 1 / -1;
+    justify-content: flex-start;
+    min-width: 0;
+  }
+
+  .avatar-actions {
+    align-items: flex-start;
+  }
+
+  .avatar-tip {
+    text-align: left;
+  }
+
+  .nickname {
+    font-size: 28px;
+  }
+
+  .meta-row {
+    gap: 8px;
+  }
+
+  .profile-main-card :deep(.el-tabs__item) {
+    height: 46px;
+    padding: 0 18px;
+    font-size: 15px;
+  }
+
+  .profile-main-card :deep(.el-tabs__content) {
+    padding: 18px !important;
+  }
+
+  .profile-form,
+  .security-form {
+    max-width: none;
   }
 
   .settings-item {

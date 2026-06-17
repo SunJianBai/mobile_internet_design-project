@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class UserNotExistException extends BusinessException {
-    public final ErrorCode errorCode = ErrorCode.USER_NOT_EXIST;
-
     public UserNotExistException(String message) {
-        super(message);
+        super(ErrorCode.USER_NOT_EXIST, message);
     }
 
     public UserNotExistException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.USER_NOT_EXIST, message, cause);
     }
 }

@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class PasswordErrorException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.PASSWORD_ERROR;
-
     public PasswordErrorException(String message) {
-        super(message);
+        super(ErrorCode.PASSWORD_ERROR, message);
     }
 
     public PasswordErrorException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.PASSWORD_ERROR, message, cause);
     }
 }

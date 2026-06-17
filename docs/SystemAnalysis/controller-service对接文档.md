@@ -20,12 +20,12 @@
 
 | 功能模块       | 控制器实现状态 | Service接口实现状态 | Service实现状态 |
 | -------------- | -------------- | ------------------- | --------------- |
-| 用户认证模块   | ✅ 已完成      | ✅ 已完成           | ❌ 待实现       |
-| 用户管理模块   | ✅ 已完成      | ✅ 已完成           | ❌ 待实现       |
-| 预约订单模块   | ✅ 已完成      | ✅ 已完成           | ❌ 待实现       |
-| 动态管理模块   | ✅ 已完成      | ✅ 已完成           | ❌ 待实现       |
-| 管理员功能模块 | ✅ 已完成      | ✅ 已完成           | ❌ 待实现       |
-| 文件上传模块   | ✅ 已完成      | ✅ 已完成           | ❌ 待实现       |
+| 用户认证模块   | ✅ 已完成      | ✅ 已完成           | ✅ 已完成       |
+| 用户管理模块   | ✅ 已完成      | ✅ 已完成           | ✅ 已完成       |
+| 预约订单模块   | ✅ 已完成      | ✅ 已完成           | ✅ 已完成       |
+| 动态管理模块   | ✅ 已完成      | ✅ 已完成           | ✅ 已完成       |
+| 管理员功能模块 | ✅ 已完成      | ✅ 已完成           | ✅ 已完成       |
+| 文件上传模块   | ✅ 已完成      | ✅ 已完成           | ✅ 已完成       |
 
 ## 3. 服务层接口设计与实现状态
 
@@ -35,9 +35,9 @@
 
 - [X] 接口定义
 
-#### 待实现：
+#### 已完成：
 
-- [ ] 接口实现
+- [X] 接口实现
 
 ```java
 public interface AuthService {
@@ -70,6 +70,25 @@ public interface AuthService {
      * 用户退出登录
      */
     void logout();
+
+    /**
+     * 忘记密码 - 验证邮箱是否已注册
+     * @param request 邮箱验证请求参数
+     * @return ForgotPasswordVerifyEmailResponse 包含脱敏邮箱
+     */
+    ForgotPasswordVerifyEmailResponse verifyEmailForReset(ForgotPasswordVerifyEmailRequest request);
+
+    /**
+     * 忘记密码 - 校验验证码是否正确且未过期；该步骤不消费验证码
+     * @param request 验证码校验请求参数
+     */
+    void verifyResetCode(ForgotPasswordVerifyCodeRequest request);
+
+    /**
+     * 忘记密码 - 再次校验验证码并重置密码；保存成功后标记验证码为已使用
+     * @param request 重置密码请求参数
+     */
+    void resetPassword(ForgotPasswordResetPasswordRequest request);
 }
 ```
 
@@ -79,9 +98,9 @@ public interface AuthService {
 
 - [X] 接口定义
 
-#### 待实现：
+#### 已完成：
 
-- [ ] 接口实现
+- [X] 接口实现
 
 ```java
 public interface UserService {
@@ -137,9 +156,9 @@ public interface UserService {
 
 - [X] 接口定义
 
-#### 待实现：
+#### 已完成：
 
-- [ ] 接口实现
+- [X] 接口实现
 
 ```java
 public interface OrderService {
@@ -249,9 +268,9 @@ public interface OrderService {
 
 - [X] 接口定义
 
-#### 待实现：
+#### 已完成：
 
-- [ ] 接口实现
+- [X] 接口实现
 
 ```java
 public interface ContentService {
@@ -332,9 +351,9 @@ public interface ContentService {
 
 - [X] 接口定义
 
-#### 待实现：
+#### 已完成：
 
-- [ ] 接口实现
+- [X] 接口实现
 
 ```java
 public interface AdminService {
@@ -344,9 +363,11 @@ public interface AdminService {
      * @param page 页码
      * @param size 每页数量
      * @param userType 用户类型
+     * @param userStatus 用户状态
+     * @param keyword 搜索关键字
      * @return Object 分页用户列表
      */
-    Object getUsers(Integer page, Integer size, UserType userType);
+    Object getUsers(Integer page, Integer size, UserType userType, UserStatus userStatus, String keyword);
   
     /**
      * 修改用户权限
@@ -354,6 +375,18 @@ public interface AdminService {
      * @param userType 用户类型
      */
     void updateUserType(Long userId, UserType userType);
+
+    /**
+     * 获取后台订单列表
+     * @param page 页码
+     * @param size 每页数量
+     * @param status 订单状态
+     * @param activityType 活动类型
+     * @param campus 校区
+     * @param keyword 搜索关键词
+     * @return Object 分页订单列表
+     */
+    Object getOrders(Integer page, Integer size, OrderStatus status, ActivityType activityType, Campus campus, String keyword);
   
     /**
      * 管理订单
@@ -370,6 +403,8 @@ public interface AdminService {
   
     /**
      * 获取系统统计
+     * 返回用户、订单、报名申请、内容、文件、AI资产等统计值，
+     * 其中内容统计包含 pendingPostCount / pendingCommentCount 用于后台待办提醒。
      * @return Object 系统统计数据
      */
     Object getStatistics();
@@ -382,9 +417,9 @@ public interface AdminService {
 
 - [X] 接口定义
 
-#### 待实现：
+#### 已完成：
 
-- [ ] 接口实现
+- [X] 接口实现
 
 ```java
 public interface FileService {
@@ -460,15 +495,44 @@ public interface FileService {
 
 ### 4.5 AdminController
 
+> 后台管理接口已注册 `AdminAuthInterceptor`，统一拦截 `/api/v1/admin/**`：请求必须携带管理员用户的 `X-User-Id`；未登录/用户不存在返回 401，普通用户或封禁用户返回 403。该拦截器作为 Controller 入口前置校验，Service 层继续保留业务状态变更和审计日志逻辑。
+> 后台管理分页参数在 Service 层统一兜底：`page < 1` 按 `1` 处理，`size < 1` 按 `1` 处理，`size > 100` 按 `100` 处理。
+> 后台用户管理在 Service 层保护关键管理员账号：不能取消自己的管理员权限，不能封禁自己，且必须至少保留一个未封禁管理员账号。
+> 系统设置保存会在 Service 层清洗范围：`pageSize` 规整到 10-50，`maxUploadSizeMb` 规整到 1-20，避免超过当前 Spring 单文件上传上限。
+> 系统设置由 `SystemSettingService` 统一读写和解析；`allowPublicRegistration` 会影响注册验证码和注册提交，`contentAuditEnabled` 会影响新动态/新评论初始状态，`maxUploadSizeMb` 会影响动态媒体、独立上传和头像上传大小限制，`maintenanceNotice` 会通过公开系统信息接口供 Web 前台横幅展示。
+
 #### 已完成：
 
 - [X] 获取用户列表接口（GET /admin/users）
+- [X] 获取后台操作日志接口（GET /admin/audit-logs）
 - [X] 修改用户权限接口（PUT /admin/users/{userId}/type）
+- [X] 修改用户状态接口（PUT /admin/users/{userId}/status）
+- [X] 获取后台订单列表接口（GET /admin/orders）
 - [X] 管理订单接口（PUT /admin/orders/{orderId}）
+- [X] 获取订单申请审核列表接口（GET /admin/order-applications）
+- [X] 审核订单申请接口（PUT /admin/order-applications/{applyId}）
+- [X] 获取内容审核列表接口（GET /admin/contents）
+- [X] 修改内容状态接口（PUT /admin/contents/{contentId}/status）
 - [X] 删除任意内容接口（DELETE /admin/contents/{contentId}）
 - [X] 获取系统统计接口（GET /admin/statistics）
+- [X] 获取文件资源列表接口（GET /admin/files）
+- [X] 删除文件资源接口（DELETE /admin/files/{pmid}）
+- [X] 获取系统设置接口（GET /admin/settings）
+- [X] 更新系统设置接口（PUT /admin/settings）
+- [X] 获取AI聚合审计列表接口（GET /admin/ai/audit）
+- [X] 获取AI会话审计列表接口（GET /admin/ai/conversations）
+- [X] 获取AI记忆审计列表接口（GET /admin/ai/memories）
+- [X] 获取AI会话消息详情接口（GET /admin/ai/conversations/{cid}/messages）
+- [X] 删除AI会话接口（DELETE /admin/ai/conversations/{cid}）
+- [X] 删除AI记忆接口（DELETE /admin/ai/memories/{memId}）
 
-### 4.6 FileController
+### 4.6 SystemController
+
+#### 已完成：
+
+- [X] 获取公开系统信息接口（GET /system/public-info）
+
+### 4.7 FileController
 
 #### 已完成：
 
@@ -484,6 +548,8 @@ Service层需要抛出的异常类型：
 * **BusinessException**：业务异常，包含错误码和错误消息
 * **RuntimeException**：运行时异常，如空指针异常等
 
+> `BusinessException` 子类会通过构造器绑定具体 `ErrorCode`，例如 `UserNotExistException` 返回 1002、`VerifyCodeErrorException` 返回 1018，前端可直接依赖响应体中的业务码做错误提示与流程分支。
+
 ### 5.2 错误码定义
 
 | 错误码 | 说明         |
@@ -498,6 +564,17 @@ Service层需要抛出的异常类型：
 | 1008   | 重复操作     |
 | 1009   | 人数已满     |
 | 1010   | 订单已过期   |
+| 1011   | 用户已存在   |
+| 1012   | 令牌无效     |
+| 1013   | 申请记录不存在 |
+| 1014   | 订单已完成   |
+| 1015   | 订单已取消   |
+| 1016   | 评论不存在   |
+| 1017   | 非法邮箱地址 |
+| 1018   | 验证码错误   |
+| 1019   | 文件删除失败 |
+| 1020   | 注册失败     |
+| 1021   | AI调用异常   |
 
 ### 5.3 异常处理流程
 

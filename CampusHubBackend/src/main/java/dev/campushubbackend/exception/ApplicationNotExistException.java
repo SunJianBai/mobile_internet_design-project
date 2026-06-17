@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class ApplicationNotExistException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.APPLICATION_NOT_EXIST;
-
     public ApplicationNotExistException(String message) {
-        super(message);
+        super(ErrorCode.APPLICATION_NOT_EXIST, message);
     }
 
     public ApplicationNotExistException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.APPLICATION_NOT_EXIST, message, cause);
     }
 }

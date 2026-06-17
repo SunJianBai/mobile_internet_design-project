@@ -1,13 +1,11 @@
 package dev.campushubbackend.exception;
 
 public class OrderExpiredException extends BusinessException {
-    private final ErrorCode errorCode = ErrorCode.ORDER_EXPIRED;
-
     public OrderExpiredException(String message) {
-        super(message);
+        super(ErrorCode.ORDER_EXPIRED, message);
     }
 
     public OrderExpiredException(String message, Throwable cause) {
-        super(message, cause);
+        super(ErrorCode.ORDER_EXPIRED, message, cause);
     }
 }

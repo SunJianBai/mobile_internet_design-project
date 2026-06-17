@@ -50,15 +50,15 @@ function createEntry(level, event, payload) {
 function log(level, event, payload = {}) {
   const entry = createEntry(level, event, payload)
 
-  // 控制台输出，便于开发调试
-  // 使用分级输出，保证在不同浏览器中可读性
-  const prefix = `[${entry.timestamp}] [${level.toUpperCase()}] ${event}`
-  if (level === 'error') {
-    console.error(prefix, payload)
-  } else if (level === 'warn') {
-    console.warn(prefix, payload)
-  } else {
-    console.log(prefix, payload)
+  if (import.meta.env.DEV || level === 'error' || level === 'warn') {
+    const prefix = `[${entry.timestamp}] [${level.toUpperCase()}] ${event}`
+    if (level === 'error') {
+      console.error(prefix, payload)
+    } else if (level === 'warn') {
+      console.warn(prefix, payload)
+    } else {
+      console.log(prefix, payload)
+    }
   }
 
   // 写入本地缓存

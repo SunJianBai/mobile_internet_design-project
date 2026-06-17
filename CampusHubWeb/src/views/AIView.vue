@@ -59,7 +59,14 @@
         <!-- 对话区域 -->
         <section v-else class="chat-area">
           <div class="messages-container" ref="chatContainer" @click="handleChatClick">
-            <div class="messages-inner">
+            <div v-if="messages.length === 0" class="chat-empty-state">
+              <div class="chat-empty-icon">
+                <svg viewBox="0 0 24 24" width="30" height="30"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z" fill="currentColor"/></svg>
+              </div>
+              <h3>新的对话</h3>
+              <p>输入活动、天气、地点或校园服务问题，CampusHub 会帮你继续查找。</p>
+            </div>
+            <div v-else class="messages-inner">
               <div v-for="message in messages" :key="message.mid" :class="['message-item', message.role]">
                 <template v-if="message.role !== 'tool'">
                   <!-- 用户消息 -->
@@ -148,6 +155,19 @@ const sending = ref(false)
 const sidebarCollapsed = ref(false)
 const showMemoryPanel = ref(false)
 const memories = ref([])
+const wasMobileViewport = ref(false)
+
+const syncSidebarForViewport = () => {
+  if (typeof window === 'undefined') return
+  const isMobileViewport = window.innerWidth <= 768
+  if (isMobileViewport && !wasMobileViewport.value) {
+    sidebarCollapsed.value = true
+  }
+  if (!isMobileViewport && wasMobileViewport.value) {
+    sidebarCollapsed.value = false
+  }
+  wasMobileViewport.value = isMobileViewport
+}
 
 try { inputMessage.value = localStorage.getItem('ai_draft') || '' } catch (e) { /* ignore */ }
 
@@ -425,10 +445,17 @@ function handleChatClick(e) {
 // ==================== 生命周期 ====================
 
 onMounted(async () => {
+  syncSidebarForViewport()
+  window.addEventListener('resize', syncSidebarForViewport)
   await loadConversations()
   if (conversations.value.length > 0) {
     await switchConversation(conversations.value[0].cid)
   }
+})
+
+onBeforeUnmount(() => {
+  if (typeof window === 'undefined') return
+  window.removeEventListener('resize', syncSidebarForViewport)
 })
 </script>
 
@@ -516,6 +543,44 @@ onMounted(async () => {
 /* 消息列表 */
 .messages-container { flex: 1; overflow-y: auto; }
 .messages-inner { max-width: 768px; margin: 0 auto; padding: 24px 16px; }
+
+.chat-empty-state {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  padding: 32px;
+  text-align: center;
+  color: var(--ch-muted, #6b7280);
+}
+
+.chat-empty-icon {
+  width: 54px;
+  height: 54px;
+  border-radius: 18px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--ch-primary-soft, #eff6ff);
+  color: var(--ch-primary, #2563eb);
+}
+
+.chat-empty-state h3 {
+  margin: 0;
+  color: var(--ch-text, #111827);
+  font-size: 20px;
+  letter-spacing: 0;
+}
+
+.chat-empty-state p {
+  max-width: 360px;
+  margin: 0;
+  color: var(--ch-muted, #6b7280);
+  font-size: 14px;
+  line-height: 1.6;
+}
 
 .message-item { margin-bottom: 24px; }
 
@@ -645,9 +710,26 @@ onMounted(async () => {
 
 /* ==================== 响应式 ==================== */
 @media (max-width: 768px) {
-  .sidebar { position: fixed; left: 0; top: 60px; bottom: 0; z-index: 20; box-shadow: 2px 0 12px rgba(0,0,0,0.3); }
+  .ai-layout {
+    position: relative;
+  }
+
+  .sidebar {
+    position: absolute;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    width: min(78vw, 280px);
+    min-width: 0;
+    z-index: 20;
+    box-shadow: 12px 0 30px rgba(15, 23, 42, 0.16);
+  }
+
   .sidebar.collapsed { width: 0; }
+  .chat-main { width: 100%; }
+  .btn-expand { position: absolute; top: 12px; left: 12px; }
   .user-message-text { max-width: 85%; }
   .messages-inner { padding: 16px 12px; }
+  .input-area { padding: 12px; }
 }
 </style>
