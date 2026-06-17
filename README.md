@@ -6,6 +6,12 @@
 [![Python](https://img.shields.io/badge/Python-3.11-blue.svg)](https://www.python.org/)
 [![Docker](https://img.shields.io/badge/Docker-Compose-2496ED.svg)](https://docs.docker.com/compose/)
 
+## 在线体验
+
+- Web 体验入口：http://124.220.81.104/
+- API 基础地址：http://124.220.81.104/api/v1
+- Android APK：请在 GitHub Releases 下载 `CampusHubApp.apk`
+
 CampusHub 是一个面向校园用户的活动预约、动态分享与 AI 助手系统。项目采用前后端分离架构，包含 Vue Web 端、uni-app 移动端、Spring Boot 后端和 Python AI Agent，并提供 Docker 镜像包部署脚本，适合课程展示、局域网演示和服务器生产部署。
 
 ## 当前能力
