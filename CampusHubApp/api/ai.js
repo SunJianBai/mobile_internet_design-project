@@ -17,7 +17,7 @@ export default {
   sendMessage(cid, message) {
     return post(`/agent/conversations/${cid}/messages`, { message })
   },
-  streamMessage(cid, message, { onDelta, onStatus, onDone, onError } = {}) {
+  streamMessage(cid, message, { onDelta, onStatus, onEvent, onDone, onError } = {}) {
     // #ifndef H5
     return null
     // #endif
@@ -89,10 +89,22 @@ export default {
               onDelta && onDelta(data)
             } else if (eventName === 'status') {
               onStatus && onStatus(data)
+            } else if (
+              eventName === 'tool_call' ||
+              eventName === 'agent_step' ||
+              eventName === 'intent' ||
+              eventName === 'tool_start' ||
+              eventName === 'tool_result' ||
+              eventName === 'artifact' ||
+              eventName === 'confirm_required'
+            ) {
+              onEvent && onEvent(eventName, data)
             } else if (eventName === 'done') {
               finish()
             } else if (eventName === 'error') {
               onError && onError(data)
+            } else {
+              onEvent && onEvent(eventName, data)
             }
           }
         }

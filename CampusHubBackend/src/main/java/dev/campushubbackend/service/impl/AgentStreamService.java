@@ -83,9 +83,9 @@ public class AgentStreamService {
                     }
                 },
                 // onToolCall
-                status -> {
+                (eventName, data) -> {
                     try {
-                        emitter.send(SseEmitter.event().name("status").data(status));
+                        emitter.send(SseEmitter.event().name(eventName).data(data));
                     } catch (Exception e) {
                         log.warn("发送 SSE status 失败: {}", e.getMessage());
                     }

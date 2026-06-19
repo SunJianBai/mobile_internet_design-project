@@ -7,6 +7,7 @@ load_dotenv()
 SILICONFLOW_API_KEY = os.getenv("SILICONFLOW_API_KEY")
 SILICONFLOW_BASE_URL = os.getenv("SILICONFLOW_BASE_URL", "https://api.siliconflow.cn/v1")
 SILICONFLOW_MODEL = os.getenv("SILICONFLOW_MODEL", "Qwen/Qwen3-32B")
+SILICONFLOW_ROUTER_MODEL = os.getenv("SILICONFLOW_ROUTER_MODEL", SILICONFLOW_MODEL)
 
 # Java 后端
 JAVA_BACKEND_URL = os.getenv("JAVA_BACKEND_URL", "http://localhost:8080")

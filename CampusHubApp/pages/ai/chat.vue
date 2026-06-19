@@ -43,6 +43,20 @@
         <view v-else class="assistant-row">
           <view class="assistant-avatar">AI</view>
           <view class="assistant-bubble">
+            <view v-if="msg.operations && msg.operations.length" class="operation-timeline">
+              <view
+                v-for="(operation, opIndex) in msg.operations"
+                :key="`${msg.mid || msg.localId || 'msg'}-${opIndex}`"
+                class="operation-step"
+                :class="operation.state || 'running'"
+              >
+                <view class="operation-dot"></view>
+                <view class="operation-main">
+                  <text class="operation-title">{{ operation.title }}</text>
+                  <text v-if="operation.detail" class="operation-detail">{{ operation.detail }}</text>
+                </view>
+              </view>
+            </view>
             <view v-if="msg.loading && !msg.content" class="loading-dots">
               <view></view><view></view><view></view>
             </view>
@@ -119,6 +133,68 @@ const showMemoryPanel = ref(false)
 const scrollTop = ref(0)
 
 let activeStreamController = null
+
+const AGENT_EVENT_TITLES = {
+  agent_step: '智能体执行中',
+  intent: '意图分析完成',
+  tool_call: '调用工具',
+  tool_start: '开始调用工具',
+  tool_result: '工具调用完成',
+  artifact: '生成结果卡片',
+  confirm_required: '等待确认',
+  status: '处理中'
+}
+
+const parseAgentEventData = (data) => {
+  if (!data) return {}
+  if (typeof data !== 'string') return data
+  try {
+    return JSON.parse(data)
+  } catch (error) {
+    return { title: data }
+  }
+}
+
+const formatIntentDetail = (payload) => {
+  const parts = []
+  if (payload.primary_intent) parts.push(payload.primary_intent)
+  if (payload.operation_type) parts.push(payload.operation_type)
+  if (typeof payload.confidence === 'number') parts.push(`置信度 ${Math.round(payload.confidence * 100)}%`)
+  if (payload.requires_confirmation) parts.push('需要确认')
+  return parts.join(' · ')
+}
+
+const normalizeAgentOperation = (eventName, data) => {
+  const payload = parseAgentEventData(data)
+  const title = payload.title || AGENT_EVENT_TITLES[eventName] || eventName
+  let detail = payload.detail || payload.summary || ''
+  if (eventName === 'intent') {
+    detail = formatIntentDetail(payload) || detail
+  }
+  return {
+    eventName,
+    phase: payload.phase || payload.domain || eventName,
+    title,
+    detail,
+    state: payload.state || (eventName === 'confirm_required' ? 'pending' : 'running')
+  }
+}
+
+const applyAgentEvent = (message, eventName, data) => {
+  if (!message.operations) message.operations = []
+  const operation = normalizeAgentOperation(eventName, data)
+  const previous = [...message.operations].reverse().find(item => item.phase === operation.phase && item.eventName === operation.eventName)
+  if (previous && operation.state !== 'running') {
+    previous.title = operation.title
+    previous.detail = operation.detail
+    previous.state = operation.state
+  } else {
+    message.operations.push(operation)
+  }
+  if (operation.state === 'running' || operation.state === 'pending') {
+    message.status = operation.title
+  }
+}
 
 const conversationTitles = computed(() => {
   if (!conversations.value.length) return ['暂无对话']
@@ -300,7 +376,12 @@ const streamAssistantReply = (cid, userMessage, assistantMsg) => {
     const controller = aiApi.streamMessage(cid, userMessage, {
       onStatus(statusText) {
         assistantMsg.loading = false
-        assistantMsg.status = statusText || '正在处理...'
+        applyAgentEvent(assistantMsg, 'status', statusText || '正在处理...')
+        scrollToBottom()
+      },
+      onEvent(eventName, data) {
+        assistantMsg.loading = false
+        applyAgentEvent(assistantMsg, eventName, data)
         scrollToBottom()
       },
       onDelta(text) {
@@ -360,7 +441,8 @@ const sendMessage = async () => {
     role: 'assistant',
     content: '',
     status: '正在思考...',
-    loading: true
+    loading: true,
+    operations: []
   }
 
   messages.value.push({
@@ -845,6 +927,72 @@ onUnmounted(abortActiveStream)
   color: #263244;
   border-bottom-left-radius: 4rpx;
   box-shadow: 0 8rpx 22rpx rgba(22, 34, 51, 0.06);
+}
+
+.operation-timeline {
+  margin-bottom: 18rpx;
+  padding: 16rpx 18rpx;
+  border: 1rpx solid #e5ebf3;
+  border-radius: 14rpx;
+  background: #f8fafc;
+}
+
+.operation-step {
+  display: flex;
+  gap: 14rpx;
+  align-items: flex-start;
+  padding: 10rpx 0;
+}
+
+.operation-step + .operation-step {
+  border-top: 1rpx solid #edf1f6;
+}
+
+.operation-dot {
+  width: 14rpx;
+  height: 14rpx;
+  margin-top: 10rpx;
+  border-radius: 999rpx;
+  background: #98a2b3;
+  flex: 0 0 14rpx;
+}
+
+.operation-step.running .operation-dot {
+  background: #1f447a;
+  box-shadow: 0 0 0 7rpx rgba(31, 68, 122, 0.12);
+}
+
+.operation-step.completed .operation-dot {
+  background: #16a34a;
+}
+
+.operation-step.failed .operation-dot {
+  background: #dc2626;
+}
+
+.operation-step.pending .operation-dot {
+  background: #d97706;
+}
+
+.operation-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.operation-title {
+  color: #344054;
+  font-size: 24rpx;
+  font-weight: 800;
+  line-height: 1.45;
+}
+
+.operation-detail {
+  color: #667085;
+  font-size: 22rpx;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .loading-dots {

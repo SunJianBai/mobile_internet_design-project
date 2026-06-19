@@ -28,7 +28,7 @@ export default {
    * 流式发送消息 (SSE via fetch)
    * @returns {AbortController}
    */
-  streamMessage(cid, message, { onDelta, onStatus, onDone, onError }) {
+  streamMessage(cid, message, { onDelta, onStatus, onEvent, onDone, onError }) {
     const controller = new AbortController()
     const token = localStorage.getItem('token')
     const userId = localStorage.getItem('userId')
@@ -82,11 +82,23 @@ export default {
               case 'status':
                 onStatus?.(data)
                 break
+              case 'tool_call':
+              case 'agent_step':
+              case 'intent':
+              case 'tool_start':
+              case 'tool_result':
+              case 'artifact':
+              case 'confirm_required':
+                onEvent?.(eventName, data)
+                break
               case 'done':
                 onDone?.()
                 break
               case 'error':
                 onError?.(data)
+                break
+              default:
+                onEvent?.(eventName, data)
                 break
             }
           }

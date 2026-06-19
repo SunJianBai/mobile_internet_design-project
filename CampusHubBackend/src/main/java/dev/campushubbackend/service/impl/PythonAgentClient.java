@@ -17,6 +17,7 @@ import java.net.http.HttpRequest;
 import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.util.*;
+import java.util.function.BiConsumer;
 import java.util.function.Consumer;
 
 /**
@@ -71,7 +72,7 @@ public class PythonAgentClient {
      */
     public void streamChat(User user, List<Map<String, String>> history, String message,
                            Consumer<String> onDelta,
-                           Consumer<String> onToolCall,
+                           BiConsumer<String, String> onEvent,
                            Runnable onDone,
                            Consumer<String> onError) throws Exception {
         Map<String, Object> body = buildRequestBody(user, history, message);
@@ -99,9 +100,10 @@ public class PythonAgentClient {
                     String data = line.substring(5).trim();
                     switch (currentEvent) {
                         case "delta" -> onDelta.accept(data);
-                        case "tool_call" -> onToolCall.accept(data);
                         case "done" -> onDone.run();
                         case "error" -> onError.accept(data);
+                        case "tool_call" -> onEvent.accept("status", data);
+                        default -> onEvent.accept(currentEvent, data);
                     }
                 }
             }

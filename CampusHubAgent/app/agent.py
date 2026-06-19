@@ -6,6 +6,8 @@
 
 import json
 import logging
+import asyncio
+import contextvars
 from typing import AsyncIterator
 
 from langchain_openai import ChatOpenAI
@@ -13,7 +15,12 @@ from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
 from langchain_core.tools import tool
 from langgraph.prebuilt import create_react_agent
 
-from app.config import SILICONFLOW_API_KEY, SILICONFLOW_BASE_URL, SILICONFLOW_MODEL
+from app.config import (
+    SILICONFLOW_API_KEY,
+    SILICONFLOW_BASE_URL,
+    SILICONFLOW_MODEL,
+    SILICONFLOW_ROUTER_MODEL,
+)
 from app.tools import search_orders, create_order, get_my_orders, get_order_detail
 from app.tools_order import ORDER_EXTRA_TOOLS
 from app.tools_content import CONTENT_TOOLS
@@ -29,6 +36,55 @@ from app.prompts import (
 )
 
 logger = logging.getLogger(__name__)
+
+_event_sink: contextvars.ContextVar = contextvars.ContextVar("agent_event_sink", default=None)
+
+INTENT_ANALYSIS_PROMPT = """你是 CampusHub 的意图分析智能体。请基于用户消息、最近对话和用户信息判断请求类型。
+
+要求：
+- 不要依赖单纯关键词匹配，要理解语义。
+- 只输出 JSON，不要输出 Markdown 或解释。
+- 写操作包括：创建订单、发布动态、评论、点赞/取消点赞、报名、接受申请、完成订单、删除内容。
+- 只读操作包括：搜索、查看、查询、推荐、解释、路线/天气/地点查询。
+- 如果是写操作但用户还没有确认或缺少关键字段，requires_confirmation 必须为 true。
+
+JSON 字段：
+{{
+  "primary_intent": "order.search|order.create|order.manage|content.search|content.create|content.interact|map.search|weather.query|user.profile|memory.manage|chat.general|multi_step|unknown",
+  "domain": "order|content|map|weather|user|memory|general|multi",
+  "operation_type": "read|write|mixed|unknown",
+  "requires_confirmation": true,
+  "confidence": 0.0,
+  "summary": "一句话描述用户想做什么",
+  "missing_slots": ["缺失的关键信息"],
+  "suggested_agents": ["order_query|order_draft|content_query|content_draft|map_weather|user_profile|memory|general"],
+  "next_action": "direct_answer|ask_clarification|prepare_draft|execute_read_tools|wait_confirmation"
+}}
+
+当前用户信息：
+{user_info}
+
+用户长期记忆：
+{memories}
+
+最近对话：
+{history}
+
+本轮用户消息：
+{user_message}
+"""
+
+DEFAULT_INTENT_ANALYSIS = {
+    "primary_intent": "unknown",
+    "domain": "general",
+    "operation_type": "unknown",
+    "requires_confirmation": True,
+    "confidence": 0.0,
+    "summary": "",
+    "missing_slots": [],
+    "suggested_agents": ["general"],
+    "next_action": "ask_clarification",
+}
 
 # ==================== 工具分组 ====================
 
@@ -51,14 +107,121 @@ def _get_llm(streaming: bool = False, temperature: float = 0.7, max_tokens: int 
     )
 
 
+def _get_router_llm() -> ChatOpenAI:
+    return ChatOpenAI(
+        api_key=SILICONFLOW_API_KEY,
+        base_url=SILICONFLOW_BASE_URL,
+        model=SILICONFLOW_ROUTER_MODEL,
+        temperature=0,
+        streaming=False,
+        max_tokens=700,
+        extra_body={"enable_thinking": False},
+    )
+
+
+def _json_data(payload: dict) -> str:
+    return json.dumps(payload, ensure_ascii=False)
+
+
+async def _emit_event(event: str, payload: dict):
+    sink = _event_sink.get()
+    if sink:
+        await sink({"event": event, "data": _json_data(payload)})
+
+
+def _safe_json_loads(text: str) -> dict:
+    cleaned = (text or "").strip()
+    if "```" in cleaned:
+        parts = cleaned.split("```")
+        cleaned = parts[1] if len(parts) > 1 else cleaned
+        if cleaned.startswith("json"):
+            cleaned = cleaned[4:]
+        cleaned = cleaned.strip()
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+    if start >= 0 and end >= start:
+        cleaned = cleaned[start:end + 1]
+    parsed = json.loads(cleaned)
+    return parsed if isinstance(parsed, dict) else {}
+
+
+def _normalize_intent_analysis(value: dict) -> dict:
+    result = dict(DEFAULT_INTENT_ANALYSIS)
+    result.update({k: v for k, v in (value or {}).items() if v is not None})
+    if not isinstance(result.get("missing_slots"), list):
+        result["missing_slots"] = []
+    if not isinstance(result.get("suggested_agents"), list):
+        result["suggested_agents"] = ["general"]
+    try:
+        result["confidence"] = float(result.get("confidence", 0))
+    except (TypeError, ValueError):
+        result["confidence"] = 0.0
+    result["requires_confirmation"] = bool(result.get("requires_confirmation", True))
+    return result
+
+
+async def analyze_intent(user_info: dict, memories: list, history: list, user_message: str) -> dict:
+    await _emit_event("agent_step", {
+        "phase": "intent",
+        "title": "分析用户意图",
+        "detail": "正在用轻量模型判断任务类型、风险和需要的子智能体",
+        "state": "running",
+    })
+    prompt = INTENT_ANALYSIS_PROMPT.format(
+        user_info=json.dumps(user_info or {}, ensure_ascii=False),
+        memories=json.dumps(memories or [], ensure_ascii=False),
+        history=json.dumps((history or [])[-8:], ensure_ascii=False),
+        user_message=user_message,
+    )
+    try:
+        result = await _get_router_llm().ainvoke([HumanMessage(content=prompt)])
+        analysis = _normalize_intent_analysis(_safe_json_loads(result.content))
+    except Exception as e:
+        logger.warning("Intent analysis failed: %s", e)
+        analysis = _normalize_intent_analysis({
+            "summary": "意图分析暂时失败，交由主智能体继续判断。",
+            "next_action": "ask_clarification",
+        })
+
+    await _emit_event("intent", {
+        **analysis,
+        "title": "意图分析完成",
+        "state": "completed",
+    })
+    return analysis
+
+
+def _build_intent_system_message(intent_analysis: dict) -> SystemMessage:
+    missing = ", ".join(intent_analysis.get("missing_slots") or []) or "无"
+    content = f"""## 本轮意图分析
+- 主要意图: {intent_analysis.get('primary_intent', 'unknown')}
+- 领域: {intent_analysis.get('domain', 'unknown')}
+- 操作类型: {intent_analysis.get('operation_type', 'unknown')}
+- 是否需要确认: {intent_analysis.get('requires_confirmation', True)}
+- 分析摘要: {intent_analysis.get('summary', '')}
+- 缺失信息: {missing}
+- 建议下一步: {intent_analysis.get('next_action', 'unknown')}
+
+请严格遵守：凡是写操作，必须先确认草稿，不要因为用户语气急切就直接执行。
+"""
+    return SystemMessage(content=content)
+
+
 # ==================== 子 Agent 执行器 ====================
 
-async def _run_sub_agent(system_prompt: str, tools: list, task: str) -> str:
+async def _run_sub_agent(agent_key: str, agent_name: str, system_prompt: str, tools: list, task: str) -> str:
     """运行一个子 Agent，返回其最终回复文本。"""
     llm = _get_llm(streaming=False)
     agent = create_react_agent(llm, tools)
 
     try:
+        await _emit_event("agent_step", {
+            "phase": agent_key,
+            "agent": agent_key,
+            "title": f"{agent_name}开始处理",
+            "detail": task[:180],
+            "state": "running",
+        })
         result = await agent.ainvoke({
             "messages": [
                 SystemMessage(content=system_prompt),
@@ -69,11 +232,25 @@ async def _run_sub_agent(system_prompt: str, tools: list, task: str) -> str:
         # 提取最终 AI 回复
         for msg in reversed(result["messages"]):
             if isinstance(msg, AIMessage) and msg.content and not getattr(msg, "tool_calls", None):
+                await _emit_event("agent_step", {
+                    "phase": agent_key,
+                    "agent": agent_key,
+                    "title": f"{agent_name}完成",
+                    "detail": "已返回处理结果",
+                    "state": "completed",
+                })
                 return msg.content
 
         return "子Agent 未返回有效结果。"
     except Exception as e:
         logger.error("Sub-agent error: %s", e, exc_info=True)
+        await _emit_event("agent_step", {
+            "phase": agent_key,
+            "agent": agent_key,
+            "title": f"{agent_name}执行失败",
+            "detail": str(e),
+            "state": "failed",
+        })
         return f"子Agent 执行出错: {str(e)}"
 
 
@@ -86,7 +263,7 @@ async def call_order_agent(task: str) -> str:
     Args:
         task: 具体任务描述，需包含完整的参数信息。如"搜索良乡校区的篮球约伴活动"、"为用户ID=1创建篮球订单，良乡校区体育馆，2026-03-26 15:00:00"
     """
-    return await _run_sub_agent(ORDER_AGENT_PROMPT, ORDER_TOOLS, task)
+    return await _run_sub_agent("order", "Order Agent", ORDER_AGENT_PROMPT, ORDER_TOOLS, task)
 
 
 @tool
@@ -96,7 +273,7 @@ async def call_social_agent(task: str) -> str:
     Args:
         task: 具体任务描述。如"搜索关于篮球的动态"、"给动态#12点赞，用户ID=1"
     """
-    return await _run_sub_agent(SOCIAL_AGENT_PROMPT, SOCIAL_TOOLS, task)
+    return await _run_sub_agent("content", "Content Agent", SOCIAL_AGENT_PROMPT, SOCIAL_TOOLS, task)
 
 
 @tool
@@ -106,7 +283,7 @@ async def call_map_agent(task: str) -> str:
     Args:
         task: 具体任务描述。如"搜索北京理工大学良乡校区的位置"、"查询北京今天的天气"
     """
-    return await _run_sub_agent(MAP_AGENT_PROMPT, MAP_TOOLS, task)
+    return await _run_sub_agent("map", "Map Agent", MAP_AGENT_PROMPT, MAP_TOOLS, task)
 
 
 # 主 Agent 的工具列表（3 个子 Agent）
@@ -138,6 +315,13 @@ async def chat(
     user_message: str,
 ) -> dict:
     """非流式多 Agent 调用。"""
+    intent_analysis = await analyze_intent(user_info, memories, history, user_message)
+    await _emit_event("agent_step", {
+        "phase": "planning",
+        "title": "规划执行步骤",
+        "detail": "正在根据意图分析结果调度校园服务智能体",
+        "state": "running",
+    })
     system_prompt = build_main_agent_prompt(user_info, memories)
     messages = _build_message_history(history)
     messages.append(HumanMessage(content=user_message))
@@ -146,7 +330,7 @@ async def chat(
     main_agent = create_react_agent(llm, MAIN_AGENT_TOOLS)
 
     result = await main_agent.ainvoke({
-        "messages": [SystemMessage(content=system_prompt)] + messages,
+        "messages": [SystemMessage(content=system_prompt), _build_intent_system_message(intent_analysis)] + messages,
     })
 
     tool_calls_log = []
@@ -159,7 +343,14 @@ async def chat(
         if isinstance(msg, AIMessage) and msg.content and not getattr(msg, "tool_calls", None):
             final_reply = msg.content
 
-    return {"reply": final_reply, "tool_calls": tool_calls_log}
+    await _emit_event("agent_step", {
+        "phase": "response",
+        "title": "整理回复",
+        "detail": "正在把工具结果整理为可阅读的回答",
+        "state": "completed",
+    })
+
+    return {"reply": final_reply, "tool_calls": tool_calls_log, "intent": intent_analysis}
 
 
 async def stream_chat(
@@ -168,35 +359,48 @@ async def stream_chat(
     history: list,
     user_message: str,
 ) -> AsyncIterator[dict]:
-    """流式多 Agent 调用，yield SSE 事件。"""
-    system_prompt = build_main_agent_prompt(user_info, memories)
-    messages = _build_message_history(history)
-    messages.append(HumanMessage(content=user_message))
+    """流式多 Agent 调用，实时输出结构化进度事件和最终文本。"""
+    queue: asyncio.Queue = asyncio.Queue()
 
-    llm = _get_llm(streaming=True)
-    main_agent = create_react_agent(llm, MAIN_AGENT_TOOLS)
+    async def emit(event: dict):
+        await queue.put(event)
 
-    try:
-        # 用非流式调用获取完整结果，然后模拟流式输出
-        # 这样避免子 Agent 的中间 LLM 输出混入主 Agent 的 delta
-        yield {"event": "tool_call", "data": "正在思考..."}
+    async def run_agent():
+        token = _event_sink.set(emit)
+        try:
+            result = await chat(user_info, memories, history, user_message)
+            await queue.put({"event": "__result__", "data": result})
+        except Exception as e:
+            logger.error("Stream error: %s", e, exc_info=True)
+            await queue.put({"event": "error", "data": str(e)})
+        finally:
+            _event_sink.reset(token)
+            await queue.put({"event": "__complete__", "data": ""})
 
-        result = await chat(user_info, memories, history, user_message)
-        reply = result.get("reply", "")
+    task = asyncio.create_task(run_agent())
+    reply_sent = False
 
-        if not reply:
-            reply = "抱歉，AI 未返回有效内容。"
+    while True:
+        event = await queue.get()
+        event_name = event.get("event")
 
-        # 将完整回复按 chunk 发送（模拟流式效果）
-        chunk_size = 4
-        for i in range(0, len(reply), chunk_size):
-            yield {"event": "delta", "data": reply[i:i + chunk_size]}
+        if event_name == "__result__":
+            result = event.get("data") or {}
+            reply = result.get("reply") or "抱歉，AI 未返回有效内容。"
+            chunk_size = 4
+            for i in range(0, len(reply), chunk_size):
+                yield {"event": "delta", "data": reply[i:i + chunk_size]}
+            reply_sent = True
+            continue
 
-        yield {"event": "done", "data": ""}
+        if event_name == "__complete__":
+            if not task.done():
+                await task
+            if reply_sent:
+                yield {"event": "done", "data": ""}
+            break
 
-    except Exception as e:
-        logger.error("Stream error: %s", e, exc_info=True)
-        yield {"event": "error", "data": str(e)}
+        yield event
 
 
 async def extract_memory(user_message: str, assistant_reply: str) -> list:

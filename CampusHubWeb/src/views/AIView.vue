@@ -79,6 +79,19 @@
                       <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" fill="currentColor"/></svg>
                     </div>
                     <div class="assistant-content">
+                      <div v-if="message.operations?.length" class="operation-timeline">
+                        <div
+                          v-for="(operation, opIndex) in message.operations"
+                          :key="`${message.mid || message.localId || 'msg'}-${opIndex}`"
+                          :class="['operation-step', operation.state || 'running']"
+                        >
+                          <span class="operation-dot"></span>
+                          <div class="operation-main">
+                            <div class="operation-title">{{ operation.title }}</div>
+                            <div v-if="operation.detail" class="operation-detail">{{ operation.detail }}</div>
+                          </div>
+                        </div>
+                      </div>
                       <div v-if="message.loading" class="loading-dots">
                         <span></span><span></span><span></span>
                       </div>
@@ -156,6 +169,68 @@ const sidebarCollapsed = ref(false)
 const showMemoryPanel = ref(false)
 const memories = ref([])
 const wasMobileViewport = ref(false)
+
+const AGENT_EVENT_TITLES = {
+  agent_step: '智能体执行中',
+  intent: '意图分析完成',
+  tool_call: '调用工具',
+  tool_start: '开始调用工具',
+  tool_result: '工具调用完成',
+  artifact: '生成结果卡片',
+  confirm_required: '等待确认',
+  status: '处理中'
+}
+
+function parseAgentEventData(data) {
+  if (!data) return {}
+  if (typeof data !== 'string') return data
+  try {
+    return JSON.parse(data)
+  } catch (e) {
+    return { title: data }
+  }
+}
+
+function formatIntentDetail(payload) {
+  const parts = []
+  if (payload.primary_intent) parts.push(payload.primary_intent)
+  if (payload.operation_type) parts.push(payload.operation_type)
+  if (typeof payload.confidence === 'number') parts.push(`置信度 ${Math.round(payload.confidence * 100)}%`)
+  if (payload.requires_confirmation) parts.push('需要确认')
+  return parts.join(' · ')
+}
+
+function normalizeAgentOperation(eventName, data) {
+  const payload = parseAgentEventData(data)
+  const title = payload.title || AGENT_EVENT_TITLES[eventName] || eventName
+  let detail = payload.detail || payload.summary || ''
+  if (eventName === 'intent') {
+    detail = formatIntentDetail(payload) || detail
+  }
+  return {
+    eventName,
+    phase: payload.phase || payload.domain || eventName,
+    title,
+    detail,
+    state: payload.state || (eventName === 'confirm_required' ? 'pending' : 'running')
+  }
+}
+
+function applyAgentEvent(message, eventName, data) {
+  if (!message.operations) message.operations = []
+  const operation = normalizeAgentOperation(eventName, data)
+  const previous = [...message.operations].reverse().find(item => item.phase === operation.phase && item.eventName === operation.eventName)
+  if (previous && operation.state !== 'running') {
+    previous.title = operation.title
+    previous.detail = operation.detail
+    previous.state = operation.state
+  } else {
+    message.operations.push(operation)
+  }
+  if (operation.state === 'running' || operation.state === 'pending') {
+    message.status = operation.title
+  }
+}
 
 const syncSidebarForViewport = () => {
   if (typeof window === 'undefined') return
@@ -240,7 +315,7 @@ async function handleSendMessage() {
   resetTextareaHeight()
   scrollToBottom()
 
-  const aiMsg = { mid: Date.now() + 1, role: 'assistant', content: '', loading: true }
+  const aiMsg = { mid: Date.now() + 1, role: 'assistant', content: '', loading: true, operations: [] }
   messages.value.push(aiMsg)
   scrollToBottom()
 
@@ -256,7 +331,12 @@ async function handleSendMessage() {
     },
     onStatus(statusText) {
       if (aiMsg.loading) aiMsg.loading = false
-      aiMsg.status = statusText  // 用独立字段显示状态，不污染 content
+      applyAgentEvent(aiMsg, 'status', statusText)
+      scrollToBottom()
+    },
+    onEvent(eventName, data) {
+      if (aiMsg.loading) aiMsg.loading = false
+      applyAgentEvent(aiMsg, eventName, data)
       scrollToBottom()
     },
     async onDone() {
@@ -613,6 +693,52 @@ onBeforeUnmount(() => {
 @keyframes dot-pulse {
   0%, 80%, 100% { transform: scale(0.6); opacity: 0.4; }
   40% { transform: scale(1); opacity: 1; }
+}
+
+/* Agent operation timeline */
+.operation-timeline {
+  margin: 0 0 12px;
+  padding: 10px 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #f9fafb;
+}
+.operation-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 6px 0;
+  color: #64748b;
+}
+.operation-step + .operation-step { border-top: 1px solid #edf2f7; }
+.operation-dot {
+  width: 8px;
+  height: 8px;
+  margin-top: 7px;
+  border-radius: 50%;
+  background: #94a3b8;
+  flex: 0 0 8px;
+}
+.operation-step.running .operation-dot {
+  background: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.12);
+}
+.operation-step.completed .operation-dot { background: #16a34a; }
+.operation-step.failed .operation-dot { background: #dc2626; }
+.operation-step.pending .operation-dot { background: #d97706; }
+.operation-main { min-width: 0; }
+.operation-title {
+  color: #334155;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+}
+.operation-detail {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 /* Markdown 样式 */
