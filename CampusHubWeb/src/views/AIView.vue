@@ -589,6 +589,60 @@ const renderMapCard = (props = {}) => {
   `</div>`
 }
 
+const renderEntityLinkCard = (url = '', text = '') => {
+  const orderDetail = url.match(/^\/orders\/(\d+)$/)
+  const contentDetail = url.match(/^\/contents\/(\d+)$/)
+  const cards = {
+    orders: {
+      type: 'order',
+      icon: '约',
+      title: text || '查看约伴活动',
+      subtitle: '浏览可加入的校园约伴订单',
+      action: '打开列表'
+    },
+    contents: {
+      type: 'content',
+      icon: '动',
+      title: text || '查看校园动态',
+      subtitle: '浏览同学发布的校园动态',
+      action: '打开列表'
+    }
+  }
+
+  let meta = null
+  if (orderDetail) {
+    meta = {
+      type: 'order',
+      icon: '约',
+      title: text || `订单 #${orderDetail[1]}`,
+      subtitle: `约伴订单 #${orderDetail[1]}`,
+      action: '查看详情'
+    }
+  } else if (contentDetail) {
+    meta = {
+      type: 'content',
+      icon: '动',
+      title: text || `动态 #${contentDetail[1]}`,
+      subtitle: `校园动态 #${contentDetail[1]}`,
+      action: '查看详情'
+    }
+  } else if (url === '/orders') {
+    meta = cards.orders
+  } else if (url === '/contents') {
+    meta = cards.contents
+  }
+
+  if (!meta) return ''
+  return `<a href="${escapeHtml(url)}" class="app-link entity-link-card entity-${meta.type}" data-route="${escapeHtml(url)}">` +
+    `<span class="entity-icon">${meta.icon}</span>` +
+    `<span class="entity-main">` +
+      `<strong class="entity-title">${meta.title}</strong>` +
+      `<span class="entity-subtitle">${meta.subtitle}</span>` +
+    `</span>` +
+    `<span class="entity-action">${meta.action}</span>` +
+  `</a>`
+}
+
 const renderMarkdown = (md) => {
   if (!md) return ''
 
@@ -614,6 +668,8 @@ const renderMarkdown = (md) => {
 
   md = md.replace(/\[([^\]]+)\]\(([^)]+)\)/g, (match, text, url) => {
     if (url.startsWith('/')) {
+      const entityCard = renderEntityLinkCard(url, text)
+      if (entityCard) return entityCard
       return `<a href="${url}" class="app-link" data-route="${url}">${text}</a>`
     }
     return `<a href="${url}" target="_blank" rel="noopener noreferrer">${text}</a>`
@@ -1026,6 +1082,68 @@ onBeforeUnmount(() => {
 .markdown-body :deep(a:hover) { text-decoration: underline; }
 .markdown-body :deep(.app-link) { color: #2563eb; cursor: pointer; font-weight: 500; }
 .markdown-body :deep(.app-link:hover) { text-decoration: underline; }
+
+.markdown-body :deep(.entity-link-card) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 440px;
+  margin: 10px 0;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 12px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+  color: inherit;
+  text-decoration: none;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s;
+}
+.markdown-body :deep(.entity-link-card:hover) {
+  transform: translateY(-1px);
+  border-color: #bfdbfe;
+  box-shadow: 0 14px 30px rgba(15, 23, 42, 0.10);
+  text-decoration: none;
+}
+.markdown-body :deep(.entity-icon) {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 12px;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 800;
+}
+.markdown-body :deep(.entity-order .entity-icon) { background: #2563eb; }
+.markdown-body :deep(.entity-content .entity-icon) { background: #059669; }
+.markdown-body :deep(.entity-main) {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.markdown-body :deep(.entity-title) {
+  color: #111827;
+  font-size: 14px;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.markdown-body :deep(.entity-subtitle) {
+  color: #64748b;
+  font-size: 12px;
+}
+.markdown-body :deep(.entity-action) {
+  flex: 0 0 auto;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 800;
+}
+.markdown-body :deep(.entity-content .entity-action) { color: #047857; }
 
 /* 地图 */
 /* 状态文字 */

@@ -701,6 +701,56 @@ const renderMapCard = (props = {}) => {
   `</div>`
 }
 
+const renderEntityLinkCard = (url = '', text = '') => {
+  const orderDetail = url.match(/^\/orders\/(\d+)$/)
+  const contentDetail = url.match(/^\/contents\/(\d+)$/)
+  let meta = null
+
+  if (orderDetail) {
+    meta = {
+      type: 'order',
+      icon: '约',
+      title: text || `订单 #${orderDetail[1]}`,
+      subtitle: `约伴订单 #${orderDetail[1]}`,
+      action: '查看详情'
+    }
+  } else if (contentDetail) {
+    meta = {
+      type: 'content',
+      icon: '动',
+      title: text || `动态 #${contentDetail[1]}`,
+      subtitle: `校园动态 #${contentDetail[1]}`,
+      action: '查看详情'
+    }
+  } else if (url === '/orders') {
+    meta = {
+      type: 'order',
+      icon: '约',
+      title: text || '查看约伴活动',
+      subtitle: '浏览可加入的校园约伴订单',
+      action: '打开列表'
+    }
+  } else if (url === '/contents') {
+    meta = {
+      type: 'content',
+      icon: '动',
+      title: text || '查看校园动态',
+      subtitle: '浏览同学发布的校园动态',
+      action: '打开列表'
+    }
+  }
+
+  if (!meta) return ''
+  return `<a href="${escapeHtml(url)}" data-route="${escapeHtml(url)}" class="app-link entity-link-card entity-${meta.type}">` +
+    `<span class="entity-icon">${meta.icon}</span>` +
+    `<span class="entity-main">` +
+      `<strong class="entity-title">${meta.title}</strong>` +
+      `<span class="entity-subtitle">${meta.subtitle}</span>` +
+    `</span>` +
+    `<span class="entity-action">${meta.action}</span>` +
+  `</a>`
+}
+
 const renderMarkdown = (source) => {
   if (!source) return ''
 
@@ -729,6 +779,8 @@ const renderMarkdown = (source) => {
     const url = sanitizeUrl(rawUrl)
     if (!url) return text
     if (url.startsWith('/')) {
+      const entityCard = renderEntityLinkCard(url, text)
+      if (entityCard) return entityCard
       return `<a href="${escapeHtml(url)}" data-route="${escapeHtml(url)}" class="app-link">${text}</a>`
     }
     return `<a href="${escapeHtml(url)}">${text}</a>`
@@ -1399,6 +1451,74 @@ onUnmounted(abortActiveStream)
   color: #1f447a;
   text-decoration: none;
   font-weight: 700;
+}
+
+.markdown-body :deep(.entity-link-card) {
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  margin: 16rpx 0;
+  padding: 18rpx;
+  border: 1rpx solid #e0e7ff;
+  border-radius: 18rpx;
+  background: #ffffff;
+  box-shadow: 0 14rpx 34rpx rgba(23, 32, 51, 0.08);
+  color: inherit;
+  text-decoration: none;
+}
+
+.markdown-body :deep(.entity-icon) {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 68rpx;
+  height: 68rpx;
+  border-radius: 18rpx;
+  color: #ffffff;
+  font-size: 26rpx;
+  font-weight: 900;
+}
+
+.markdown-body :deep(.entity-order .entity-icon) {
+  background: #1f447a;
+}
+
+.markdown-body :deep(.entity-content .entity-icon) {
+  background: #078669;
+}
+
+.markdown-body :deep(.entity-main) {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5rpx;
+}
+
+.markdown-body :deep(.entity-title) {
+  color: #172033;
+  font-size: 27rpx;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.markdown-body :deep(.entity-subtitle) {
+  color: #667085;
+  font-size: 22rpx;
+}
+
+.markdown-body :deep(.entity-action) {
+  flex: 0 0 auto;
+  color: #1f447a;
+  font-size: 22rpx;
+  font-weight: 900;
+}
+
+.markdown-body :deep(.entity-content .entity-action) {
+  color: #078669;
 }
 
 .markdown-body :deep(.map-card) {
