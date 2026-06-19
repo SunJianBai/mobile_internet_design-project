@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <div class="ai-view">
     <div class="ai-layout">
       <!-- 左侧：会话列表 -->
@@ -511,15 +511,91 @@ const escapeHtml = (unsafe) => {
     .replace(/'/g, '&#039;')
 }
 
+const parseMapAttrs = (attrs = '') => {
+  const props = {}
+  attrs.replace(/(\w+)=("[^"]*"|'[^']*'|[^\s}]+)/g, (match, key, value) => {
+    props[key] = value.replace(/^["']|["']$/g, '')
+    return match
+  })
+  ;['lng', 'lat', 'zoom'].forEach((key) => {
+    const match = attrs.match(new RegExp(`${key}=(-?\\d+(?:\\.\\d+)?)`))
+    if (match) props[key] = match[1]
+  })
+  const titleMatch =
+    attrs.match(/(?:^|\s)title=("[^"]*"|'[^']*'|.+?)(?=\s+\w+=|$)/) ||
+    attrs.match(/title=("[^"]*"|'[^']*'|.+)$/)
+  if (titleMatch) {
+    props.title = titleMatch[1].replace(/^["']|["']$/g, '').trim()
+  }
+  return props
+}
+
+const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value))
+
+const lngLatToTilePoint = (lng, lat, zoom) => {
+  const latRad = (lat * Math.PI) / 180
+  const scale = 2 ** zoom
+  return {
+    x: ((lng + 180) / 360) * scale,
+    y: ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale
+  }
+}
+
+const getAmapTileUrl = (x, y, z) => {
+  const server = Math.abs(x + y) % 4 + 1
+  return `https://webrd0${server}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x=${x}&y=${y}&z=${z}`
+}
+
+const renderMapCard = (props = {}) => {
+  const lng = Number.parseFloat(props.lng)
+  const lat = Number.parseFloat(props.lat)
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return ''
+
+  const zoom = clampNumber(Number.parseInt(props.zoom || '15', 10) || 15, 3, 18)
+  const title = props.title || props.name || '位置'
+  const tilePoint = lngLatToTilePoint(lng, lat, zoom)
+  const baseX = Math.floor(tilePoint.x)
+  const baseY = Math.floor(tilePoint.y)
+  const startX = baseX - 1
+  const startY = baseY - 1
+  const pointX = Math.round((tilePoint.x - startX) * 256)
+  const pointY = Math.round((tilePoint.y - startY) * 256)
+  const tiles = []
+
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const x = startX + col
+      const y = startY + row
+      tiles.push(`<img class="map-tile" alt="" loading="lazy" src="${getAmapTileUrl(x, y, zoom)}" />`)
+    }
+  }
+
+  const markerUrl = `https://uri.amap.com/marker?position=${lng},${lat}&name=${encodeURIComponent(title)}&coordinate=gaode&callnative=0`
+  return `<div class="map-card">` +
+    `<div class="map-tile-stage" aria-label="${escapeHtml(title)}地图预览">` +
+      `<div class="map-tile-grid" style="left:calc(50% - ${pointX}px);top:calc(50% - ${pointY}px);">${tiles.join('')}</div>` +
+      `<div class="map-pin" title="${escapeHtml(title)}">` +
+        `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M12 2C8.42 2 5.5 4.92 5.5 8.5c0 4.88 6.5 13.5 6.5 13.5s6.5-8.62 6.5-13.5C18.5 4.92 15.58 2 12 2zm0 8.8a2.3 2.3 0 1 1 0-4.6 2.3 2.3 0 0 1 0 4.6z" fill="currentColor"/></svg>` +
+      `</div>` +
+      `<div class="map-badge">高德地图预览</div>` +
+    `</div>` +
+    `<div class="map-card-meta">` +
+      `<div class="map-card-info">` +
+        `<div class="map-card-title">${escapeHtml(title)}</div>` +
+        `<div class="map-card-coords">${lng.toFixed(6)}, ${lat.toFixed(6)} · zoom ${zoom}</div>` +
+      `</div>` +
+      `<a href="${escapeHtml(markerUrl)}" target="_blank" rel="noopener noreferrer" class="map-card-action">打开高德地图</a>` +
+    `</div>` +
+  `</div>`
+}
+
 const renderMarkdown = (md) => {
   if (!md) return ''
 
   const mapBlocks = []
   md = md.replace(/:::map\{([^}]+)\}/g, (match, attrs) => {
     const idx = mapBlocks.length
-    const props = {}
-    attrs.replace(/(\w+)=([^\s}]+)/g, (m, k, v) => { props[k] = v.replace(/^["']|["']$/g, '') })
-    mapBlocks.push(props)
+    mapBlocks.push(parseMapAttrs(attrs))
     return `@@MAP_BLOCK_${idx}@@`
   })
 
@@ -571,20 +647,7 @@ const renderMarkdown = (md) => {
 
   md = md.replace(/@@MAP_BLOCK_(\d+)@@/g, (m, idx) => {
     const p = mapBlocks[Number(idx)]
-    if (!p || !p.lng || !p.lat) return ''
-    const title = p.title || '位置'
-    const amapLink = `https://uri.amap.com/marker?position=${p.lng},${p.lat}&name=${encodeURIComponent(title)}`
-    return `<div class="map-card">` +
-      `<a href="${amapLink}" target="_blank" rel="noopener noreferrer" class="map-card-inner">` +
-        `<div class="map-card-icon"><svg viewBox="0 0 24 24" width="32" height="32"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z" fill="#2563eb"/></svg></div>` +
-        `<div class="map-card-info">` +
-          `<div class="map-card-title">${escapeHtml(title)}</div>` +
-          `<div class="map-card-coords">${p.lng}, ${p.lat}</div>` +
-          `<div class="map-card-action">点击在高德地图中查看</div>` +
-        `</div>` +
-        `<div class="map-card-arrow"><svg viewBox="0 0 24 24" width="20" height="20"><path d="M8.59 16.59L13.17 12 8.59 7.41 10 6l6 6-6 6z" fill="#9ca3af"/></svg></div>` +
-      `</a>` +
-    `</div>`
+    return renderMapCard(p)
   })
 
   return md
@@ -969,19 +1032,77 @@ onBeforeUnmount(() => {
 .status-text { font-size: 13px; color: #9ca3af; padding: 4px 0; }
 
 /* 地图卡片 */
-.markdown-body :deep(.map-card) { margin: 12px 0; max-width: 420px; }
-.markdown-body :deep(.map-card-inner) {
-  display: flex; align-items: center; gap: 12px; padding: 14px 16px;
-  border: 1px solid #e5e7eb; border-radius: 12px; background: #f9fafb;
-  text-decoration: none; color: inherit; transition: all 0.15s;
+.markdown-body :deep(.map-card) {
+  margin: 14px 0;
+  max-width: 560px;
+  overflow: hidden;
+  border: 1px solid #dbeafe;
+  border-radius: 14px;
+  background: #fff;
+  box-shadow: 0 14px 34px rgba(15, 23, 42, 0.08);
 }
-.markdown-body :deep(.map-card-inner:hover) { background: #eff6ff; border-color: #bfdbfe; }
-.markdown-body :deep(.map-card-icon) { flex-shrink: 0; }
-.markdown-body :deep(.map-card-info) { flex: 1; min-width: 0; }
-.markdown-body :deep(.map-card-title) { font-size: 14px; font-weight: 600; color: #111827; margin-bottom: 2px; }
-.markdown-body :deep(.map-card-coords) { font-size: 12px; color: #9ca3af; font-family: monospace; }
-.markdown-body :deep(.map-card-action) { font-size: 12px; color: #2563eb; margin-top: 4px; }
-.markdown-body :deep(.map-card-arrow) { flex-shrink: 0; color: #9ca3af; }
+.markdown-body :deep(.map-tile-stage) {
+  position: relative;
+  height: 220px;
+  overflow: hidden;
+  background: #e0ecf8;
+}
+.markdown-body :deep(.map-tile-grid) {
+  position: absolute;
+  display: grid;
+  grid-template-columns: repeat(3, 256px);
+  grid-template-rows: repeat(3, 256px);
+  width: 768px;
+  height: 768px;
+}
+.markdown-body :deep(.map-tile) {
+  display: block;
+  width: 256px;
+  height: 256px;
+}
+.markdown-body :deep(.map-pin) {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  z-index: 2;
+  color: #ef4444;
+  transform: translate(-50%, -100%);
+  filter: drop-shadow(0 4px 8px rgba(127, 29, 29, 0.35));
+}
+.markdown-body :deep(.map-badge) {
+  position: absolute;
+  left: 12px;
+  top: 12px;
+  z-index: 2;
+  padding: 5px 10px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: 0 8px 20px rgba(15, 23, 42, 0.12);
+}
+.markdown-body :deep(.map-card-meta) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 13px 14px;
+}
+.markdown-body :deep(.map-card-info) { min-width: 0; }
+.markdown-body :deep(.map-card-title) { font-size: 14px; font-weight: 700; color: #111827; margin-bottom: 4px; }
+.markdown-body :deep(.map-card-coords) { font-size: 12px; color: #64748b; font-family: monospace; }
+.markdown-body :deep(.map-card-action) {
+  flex: 0 0 auto;
+  padding: 8px 11px;
+  border-radius: 10px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 700;
+  text-decoration: none;
+}
+.markdown-body :deep(.map-card-action:hover) { background: #dbeafe; text-decoration: none; }
 
 /* ==================== 输入区域 ==================== */
 .input-area {

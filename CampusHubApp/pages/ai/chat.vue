@@ -1,4 +1,4 @@
-<template>
+﻿<template>
   <view class="chat-container">
     <view class="app-top">
       <button class="back-button" @click="goBack">
@@ -625,6 +625,82 @@ const sanitizeUrl = (url) => {
   return value
 }
 
+const parseMapAttrs = (attrs = '') => {
+  const props = {}
+  attrs.replace(/(\w+)=("[^"]*"|'[^']*'|[^\s}]+)/g, (match, key, value) => {
+    props[key] = value.replace(/^["']|["']$/g, '')
+    return match
+  })
+  ;['lng', 'lat', 'zoom'].forEach((key) => {
+    const match = attrs.match(new RegExp(`${key}=(-?\\d+(?:\\.\\d+)?)`))
+    if (match) props[key] = match[1]
+  })
+  const titleMatch =
+    attrs.match(/(?:^|\s)title=("[^"]*"|'[^']*'|.+?)(?=\s+\w+=|$)/) ||
+    attrs.match(/title=("[^"]*"|'[^']*'|.+)$/)
+  if (titleMatch) {
+    props.title = titleMatch[1].replace(/^["']|["']$/g, '').trim()
+  }
+  return props
+}
+
+const clampNumber = (value, min, max) => Math.min(max, Math.max(min, value))
+
+const lngLatToTilePoint = (lng, lat, zoom) => {
+  const latRad = (lat * Math.PI) / 180
+  const scale = 2 ** zoom
+  return {
+    x: ((lng + 180) / 360) * scale,
+    y: ((1 - Math.log(Math.tan(latRad) + 1 / Math.cos(latRad)) / Math.PI) / 2) * scale
+  }
+}
+
+const getAmapTileUrl = (x, y, z) => {
+  const server = Math.abs(x + y) % 4 + 1
+  return `https://webrd0${server}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x=${x}&y=${y}&z=${z}`
+}
+
+const renderMapCard = (props = {}) => {
+  const lng = Number.parseFloat(props.lng)
+  const lat = Number.parseFloat(props.lat)
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return ''
+
+  const zoom = clampNumber(Number.parseInt(props.zoom || '15', 10) || 15, 3, 18)
+  const title = props.title || props.name || '位置'
+  const tilePoint = lngLatToTilePoint(lng, lat, zoom)
+  const baseX = Math.floor(tilePoint.x)
+  const baseY = Math.floor(tilePoint.y)
+  const startX = baseX - 1
+  const startY = baseY - 1
+  const pointX = Math.round((tilePoint.x - startX) * 256)
+  const pointY = Math.round((tilePoint.y - startY) * 256)
+  const tiles = []
+
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const x = startX + col
+      const y = startY + row
+      tiles.push(`<img class="map-tile" alt="" src="${getAmapTileUrl(x, y, zoom)}" />`)
+    }
+  }
+
+  const amapLink = `https://uri.amap.com/marker?position=${lng},${lat}&name=${encodeURIComponent(title)}&coordinate=gaode&callnative=0`
+  return `<div class="map-card">` +
+    `<div class="map-tile-stage">` +
+      `<div class="map-tile-grid" style="left:calc(50% - ${pointX}px);top:calc(50% - ${pointY}px);">${tiles.join('')}</div>` +
+      `<span class="map-pin"><span class="map-pin-dot"></span></span>` +
+      `<span class="map-badge">高德地图预览</span>` +
+    `</div>` +
+    `<div class="map-card-meta">` +
+      `<span class="map-card-info">` +
+        `<strong class="map-card-title">${escapeHtml(title)}</strong>` +
+        `<span class="map-card-coords">${lng.toFixed(6)}, ${lat.toFixed(6)} · zoom ${zoom}</span>` +
+      `</span>` +
+      `<a href="${escapeHtml(amapLink)}" class="map-card-action">打开高德地图</a>` +
+    `</div>` +
+  `</div>`
+}
+
 const renderMarkdown = (source) => {
   if (!source) return ''
 
@@ -632,11 +708,7 @@ const renderMarkdown = (source) => {
   const mapBlocks = []
   md = md.replace(/:::map\{([^}]+)\}/g, (match, attrs) => {
     const idx = mapBlocks.length
-    const props = {}
-    attrs.replace(/(\w+)=("[^"]*"|'[^']*'|[^\s}]+)/g, (m, key, value) => {
-      props[key] = value.replace(/^["']|["']$/g, '')
-    })
-    mapBlocks.push(props)
+    mapBlocks.push(parseMapAttrs(attrs))
     return `@@MAP_BLOCK_${idx}@@`
   })
 
@@ -694,19 +766,7 @@ const renderMarkdown = (source) => {
 
   md = md.replace(/@@MAP_BLOCK_(\d+)@@/g, (match, idx) => {
     const props = mapBlocks[Number(idx)]
-    if (!props || !props.lng || !props.lat) return ''
-    const title = props.title || '位置'
-    const amapLink = `https://uri.amap.com/marker?position=${props.lng},${props.lat}&name=${encodeURIComponent(title)}`
-    return `<div class="map-card">` +
-      `<a href="${escapeHtml(amapLink)}" class="map-card-inner">` +
-        `<span class="map-card-icon">地图</span>` +
-        `<span class="map-card-info">` +
-          `<strong class="map-card-title">${escapeHtml(title)}</strong>` +
-          `<span class="map-card-coords">${escapeHtml(props.lng)}, ${escapeHtml(props.lat)}</span>` +
-          `<span class="map-card-action">点击在高德地图中查看</span>` +
-        `</span>` +
-      `</a>` +
-    `</div>`
+    return renderMapCard(props)
   })
 
   return md
@@ -1343,38 +1403,85 @@ onUnmounted(abortActiveStream)
 
 .markdown-body :deep(.map-card) {
   margin: 18rpx 0;
+  overflow: hidden;
+  border: 1rpx solid #d9e7ff;
+  border-radius: 20rpx;
+  background: #ffffff;
+  box-shadow: 0 16rpx 38rpx rgba(29, 78, 216, 0.10);
 }
 
-.markdown-body :deep(.map-card-inner) {
+.markdown-body :deep(.map-tile-stage) {
+  position: relative;
+  height: 330rpx;
+  overflow: hidden;
+  background: #e0ecf8;
+}
+
+.markdown-body :deep(.map-tile-grid) {
+  position: absolute;
+  display: grid;
+  grid-template-columns: repeat(3, 256px);
+  grid-template-rows: repeat(3, 256px);
+  width: 768px;
+  height: 768px;
+}
+
+.markdown-body :deep(.map-tile) {
+  display: block;
+  width: 256px;
+  height: 256px;
+}
+
+.markdown-body :deep(.map-pin) {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42rpx;
+  height: 42rpx;
+  z-index: 2;
+  transform: translate(-50%, -100%) rotate(-45deg);
+  border-radius: 50% 50% 50% 0;
+  background: #ef4444;
+  box-shadow: 0 8rpx 18rpx rgba(127, 29, 29, 0.35);
+}
+
+.markdown-body :deep(.map-pin-dot) {
+  position: absolute;
+  left: 11rpx;
+  top: 11rpx;
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.markdown-body :deep(.map-badge) {
+  position: absolute;
+  left: 18rpx;
+  top: 18rpx;
+  z-index: 2;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.93);
+  color: #1f447a;
+  font-size: 22rpx;
+  font-weight: 800;
+  box-shadow: 0 10rpx 26rpx rgba(23, 32, 51, 0.12);
+}
+
+.markdown-body :deep(.map-card-meta) {
   display: flex;
   align-items: center;
+  justify-content: space-between;
   gap: 16rpx;
   padding: 18rpx;
-  border-radius: 12rpx;
-  background: #edf4ff;
-  color: inherit;
-  text-decoration: none;
-}
-
-.markdown-body :deep(.map-card-icon) {
-  width: 64rpx;
-  height: 64rpx;
-  border-radius: 12rpx;
-  background: #1f447a;
-  color: #ffffff;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 20rpx;
-  font-weight: 800;
-  flex: 0 0 64rpx;
 }
 
 .markdown-body :deep(.map-card-info) {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 4rpx;
+  gap: 5rpx;
 }
 
 .markdown-body :deep(.map-card-title) {
@@ -1384,13 +1491,19 @@ onUnmounted(abortActiveStream)
 
 .markdown-body :deep(.map-card-coords) {
   color: #667085;
-  font-size: 22rpx;
+  font-size: 21rpx;
   font-family: monospace;
 }
 
 .markdown-body :deep(.map-card-action) {
+  flex: 0 0 auto;
+  padding: 11rpx 16rpx;
+  border-radius: 14rpx;
+  background: #edf4ff;
   color: #1f447a;
-  font-size: 23rpx;
+  font-size: 22rpx;
+  font-weight: 800;
+  text-decoration: none;
 }
 
 .empty-state {
