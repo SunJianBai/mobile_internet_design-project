@@ -92,6 +92,42 @@
                           </div>
                         </div>
                       </div>
+                      <div v-if="message.artifacts?.length" class="artifact-list">
+                        <div
+                          v-for="(artifact, artifactIndex) in message.artifacts"
+                          :key="`${message.mid || message.localId || 'msg'}-artifact-${artifactIndex}`"
+                          :class="['artifact-card', `artifact-${artifact.type || 'generic'}`]"
+                        >
+                          <div class="artifact-header">
+                            <div class="artifact-icon">{{ artifact.type === 'confirmation' ? '!' : 'i' }}</div>
+                            <div class="artifact-heading">
+                              <div class="artifact-title">{{ artifact.title || '结果卡片' }}</div>
+                              <div v-if="artifact.description" class="artifact-description">{{ artifact.description }}</div>
+                            </div>
+                          </div>
+                          <div v-if="artifact.fields?.length" class="artifact-fields">
+                            <div
+                              v-for="(field, fieldIndex) in artifact.fields"
+                              :key="fieldIndex"
+                              :class="['artifact-field', { missing: field.missing }]"
+                            >
+                              <span class="artifact-field-label">{{ field.label }}</span>
+                              <span class="artifact-field-value">{{ formatArtifactValue(field.value) }}</span>
+                            </div>
+                          </div>
+                          <div v-if="artifact.type === 'confirmation'" class="artifact-actions">
+                            <button class="artifact-action primary" :disabled="sending" @click="handleArtifactAction(artifact, 'confirm')">
+                              确认执行
+                            </button>
+                            <button class="artifact-action" :disabled="sending" @click="handleArtifactAction(artifact, 'edit')">
+                              修改草稿
+                            </button>
+                            <button class="artifact-action ghost" :disabled="sending" @click="handleArtifactAction(artifact, 'cancel')">
+                              取消
+                            </button>
+                          </div>
+                        </div>
+                      </div>
                       <div v-if="message.loading" class="loading-dots">
                         <span></span><span></span><span></span>
                       </div>
@@ -216,6 +252,30 @@ function normalizeAgentOperation(eventName, data) {
   }
 }
 
+function normalizeArtifact(eventName, data) {
+  const payload = parseAgentEventData(data)
+  const type = payload.type || (eventName === 'confirm_required' ? 'confirmation' : 'generic')
+  const fields = Array.isArray(payload.fields) ? payload.fields : []
+  return {
+    ...payload,
+    type,
+    fields: fields.map(field => {
+      if (field && typeof field === 'object') return field
+      return { label: '信息', value: field }
+    })
+  }
+}
+
+function applyAgentArtifact(message, eventName, data) {
+  if (!message.artifacts) message.artifacts = []
+  const artifact = normalizeArtifact(eventName, data)
+  const key = artifact.id || `${artifact.type}:${artifact.title || ''}:${artifact.actionKind || ''}`
+  const exists = message.artifacts.some(item => (item.id || `${item.type}:${item.title || ''}:${item.actionKind || ''}`) === key)
+  if (!exists) {
+    message.artifacts.push(artifact)
+  }
+}
+
 function applyAgentEvent(message, eventName, data) {
   if (!message.operations) message.operations = []
   const operation = normalizeAgentOperation(eventName, data)
@@ -230,6 +290,33 @@ function applyAgentEvent(message, eventName, data) {
   if (operation.state === 'running' || operation.state === 'pending') {
     message.status = operation.title
   }
+  if (eventName === 'confirm_required' || eventName === 'artifact') {
+    applyAgentArtifact(message, eventName, data)
+  }
+}
+
+function formatArtifactValue(value) {
+  if (value === null || value === undefined || value === '') return '未填写'
+  if (Array.isArray(value)) return value.join('、')
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
+}
+
+async function sendMessageText(text) {
+  if (!text || sending.value) return
+  inputMessage.value = text
+  await nextTick()
+  await handleSendMessage()
+}
+
+function handleArtifactAction(artifact, action) {
+  const title = artifact?.title || '这个草稿'
+  const messages = {
+    confirm: artifact?.confirmMessage || `我确认执行这个草稿：${title}`,
+    edit: artifact?.editMessage || `我想修改这个草稿：${title}`,
+    cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
+  }
+  sendMessageText(messages[action])
 }
 
 const syncSidebarForViewport = () => {
@@ -315,7 +402,7 @@ async function handleSendMessage() {
   resetTextareaHeight()
   scrollToBottom()
 
-  const aiMsg = { mid: Date.now() + 1, role: 'assistant', content: '', loading: true, operations: [] }
+  const aiMsg = { mid: Date.now() + 1, role: 'assistant', content: '', loading: true, operations: [], artifacts: [] }
   messages.value.push(aiMsg)
   scrollToBottom()
 
@@ -739,6 +826,116 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.45;
   word-break: break-word;
+}
+
+.artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  margin: 0 0 12px;
+}
+.artifact-card {
+  max-width: 520px;
+  padding: 14px;
+  border: 1px solid #dbe5f3;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.06);
+}
+.artifact-confirmation {
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
+}
+.artifact-header {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.artifact-icon {
+  width: 24px;
+  height: 24px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #2563eb;
+  color: #fff;
+  font-size: 13px;
+  font-weight: 800;
+  flex: 0 0 24px;
+}
+.artifact-heading { min-width: 0; }
+.artifact-title {
+  color: #0f172a;
+  font-size: 14px;
+  font-weight: 800;
+  line-height: 1.4;
+}
+.artifact-description {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.artifact-fields {
+  margin-top: 12px;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.artifact-field {
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: #f8fafc;
+  border: 1px solid #edf2f7;
+}
+.artifact-field.missing {
+  background: #fff7ed;
+  border-color: #fed7aa;
+}
+.artifact-field-label {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  line-height: 1.3;
+}
+.artifact-field-value {
+  display: block;
+  margin-top: 2px;
+  color: #1e293b;
+  font-size: 13px;
+  font-weight: 700;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.artifact-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+}
+.artifact-action {
+  height: 32px;
+  padding: 0 12px;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  background: #fff;
+  color: #334155;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 700;
+}
+.artifact-action.primary {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+.artifact-action.ghost {
+  color: #64748b;
+}
+.artifact-action:disabled {
+  cursor: not-allowed;
+  opacity: 0.55;
 }
 
 /* Markdown 样式 */

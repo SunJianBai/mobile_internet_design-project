@@ -57,6 +57,38 @@
                 </view>
               </view>
             </view>
+            <view v-if="msg.artifacts && msg.artifacts.length" class="artifact-list">
+              <view
+                v-for="(artifact, artifactIndex) in msg.artifacts"
+                :key="`${msg.mid || msg.localId || 'msg'}-artifact-${artifactIndex}`"
+                class="artifact-card"
+                :class="`artifact-${artifact.type || 'generic'}`"
+              >
+                <view class="artifact-header">
+                  <view class="artifact-icon">{{ artifact.type === 'confirmation' ? '!' : 'i' }}</view>
+                  <view class="artifact-heading">
+                    <text class="artifact-title">{{ artifact.title || '结果卡片' }}</text>
+                    <text v-if="artifact.description" class="artifact-description">{{ artifact.description }}</text>
+                  </view>
+                </view>
+                <view v-if="artifact.fields && artifact.fields.length" class="artifact-fields">
+                  <view
+                    v-for="(field, fieldIndex) in artifact.fields"
+                    :key="fieldIndex"
+                    class="artifact-field"
+                    :class="{ missing: field.missing }"
+                  >
+                    <text class="artifact-field-label">{{ field.label }}</text>
+                    <text class="artifact-field-value">{{ formatArtifactValue(field.value) }}</text>
+                  </view>
+                </view>
+                <view v-if="artifact.type === 'confirmation'" class="artifact-actions">
+                  <button class="artifact-action primary" :disabled="loading" @click="handleArtifactAction(artifact, 'confirm')">确认执行</button>
+                  <button class="artifact-action" :disabled="loading" @click="handleArtifactAction(artifact, 'edit')">修改草稿</button>
+                  <button class="artifact-action ghost" :disabled="loading" @click="handleArtifactAction(artifact, 'cancel')">取消</button>
+                </view>
+              </view>
+            </view>
             <view v-if="msg.loading && !msg.content" class="loading-dots">
               <view></view><view></view><view></view>
             </view>
@@ -180,6 +212,30 @@ const normalizeAgentOperation = (eventName, data) => {
   }
 }
 
+const normalizeArtifact = (eventName, data) => {
+  const payload = parseAgentEventData(data)
+  const type = payload.type || (eventName === 'confirm_required' ? 'confirmation' : 'generic')
+  const fields = Array.isArray(payload.fields) ? payload.fields : []
+  return {
+    ...payload,
+    type,
+    fields: fields.map(field => {
+      if (field && typeof field === 'object') return field
+      return { label: '信息', value: field }
+    })
+  }
+}
+
+const applyAgentArtifact = (message, eventName, data) => {
+  if (!message.artifacts) message.artifacts = []
+  const artifact = normalizeArtifact(eventName, data)
+  const key = artifact.id || `${artifact.type}:${artifact.title || ''}:${artifact.actionKind || ''}`
+  const exists = message.artifacts.some(item => (item.id || `${item.type}:${item.title || ''}:${item.actionKind || ''}`) === key)
+  if (!exists) {
+    message.artifacts.push(artifact)
+  }
+}
+
 const applyAgentEvent = (message, eventName, data) => {
   if (!message.operations) message.operations = []
   const operation = normalizeAgentOperation(eventName, data)
@@ -194,6 +250,16 @@ const applyAgentEvent = (message, eventName, data) => {
   if (operation.state === 'running' || operation.state === 'pending') {
     message.status = operation.title
   }
+  if (eventName === 'confirm_required' || eventName === 'artifact') {
+    applyAgentArtifact(message, eventName, data)
+  }
+}
+
+const formatArtifactValue = (value) => {
+  if (value === null || value === undefined || value === '') return '未填写'
+  if (Array.isArray(value)) return value.join('、')
+  if (typeof value === 'object') return JSON.stringify(value)
+  return String(value)
 }
 
 const conversationTitles = computed(() => {
@@ -363,6 +429,23 @@ const handleConversationChange = async (e) => {
   }
 }
 
+const sendMessageText = async (text) => {
+  if (!text || loading.value) return
+  inputText.value = text
+  await nextTick()
+  await sendMessage()
+}
+
+const handleArtifactAction = (artifact, action) => {
+  const title = artifact?.title || '这个草稿'
+  const messages = {
+    confirm: artifact?.confirmMessage || `我确认执行这个草稿：${title}`,
+    edit: artifact?.editMessage || `我想修改这个草稿：${title}`,
+    cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
+  }
+  sendMessageText(messages[action])
+}
+
 const streamAssistantReply = (cid, userMessage, assistantMsg) => {
   return new Promise((resolve) => {
     let settled = false
@@ -442,7 +525,8 @@ const sendMessage = async () => {
     content: '',
     status: '正在思考...',
     loading: true,
-    operations: []
+    operations: [],
+    artifacts: []
   }
 
   messages.value.push({
@@ -993,6 +1077,133 @@ onUnmounted(abortActiveStream)
   font-size: 22rpx;
   line-height: 1.45;
   word-break: break-word;
+}
+
+.artifact-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14rpx;
+  margin-bottom: 18rpx;
+}
+
+.artifact-card {
+  padding: 18rpx;
+  border: 1rpx solid #dbe5f3;
+  border-radius: 16rpx;
+  background: #ffffff;
+  box-shadow: 0 8rpx 22rpx rgba(22, 34, 51, 0.06);
+}
+
+.artifact-confirmation {
+  border-color: #b8d4ff;
+  background: #f8fbff;
+}
+
+.artifact-header {
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+}
+
+.artifact-icon {
+  width: 42rpx;
+  height: 42rpx;
+  border-radius: 999rpx;
+  background: #1f447a;
+  color: #ffffff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24rpx;
+  font-weight: 900;
+  flex: 0 0 42rpx;
+}
+
+.artifact-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.artifact-title {
+  color: #172033;
+  font-size: 27rpx;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.artifact-description {
+  color: #667085;
+  font-size: 23rpx;
+  line-height: 1.45;
+}
+
+.artifact-fields {
+  margin-top: 16rpx;
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+}
+
+.artifact-field {
+  padding: 12rpx 14rpx;
+  border-radius: 12rpx;
+  border: 1rpx solid #edf1f6;
+  background: #f8fafc;
+}
+
+.artifact-field.missing {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.artifact-field-label {
+  display: block;
+  color: #667085;
+  font-size: 21rpx;
+  line-height: 1.35;
+}
+
+.artifact-field-value {
+  display: block;
+  margin-top: 4rpx;
+  color: #263244;
+  font-size: 25rpx;
+  font-weight: 800;
+  line-height: 1.4;
+  word-break: break-word;
+}
+
+.artifact-actions {
+  display: flex;
+  gap: 10rpx;
+  margin-top: 16rpx;
+  flex-wrap: wrap;
+}
+
+.artifact-action {
+  width: auto;
+  min-width: 138rpx;
+  height: 58rpx;
+  line-height: 58rpx;
+  padding: 0 18rpx;
+  border: 1rpx solid #cfd8e6;
+  border-radius: 999rpx;
+  background: #ffffff;
+  color: #344054;
+  font-size: 24rpx;
+  font-weight: 800;
+}
+
+.artifact-action.primary {
+  border-color: #1f447a;
+  background: #1f447a;
+  color: #ffffff;
+}
+
+.artifact-action.ghost {
+  color: #667085;
 }
 
 .loading-dots {

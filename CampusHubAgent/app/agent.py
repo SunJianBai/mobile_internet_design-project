@@ -86,7 +86,124 @@ DEFAULT_INTENT_ANALYSIS = {
     "next_action": "ask_clarification",
 }
 
+INTENT_REVIEW_PROMPT = """You are the senior intent-review agent for CampusHub. The fast router may miss write operations, so review the request semantically.
+
+Rules:
+- Do not rely on simple keyword matching. Infer the user's real goal from the message and recent context.
+- If the user wants the system to create, publish, edit, delete, comment, like, apply, accept, or complete something, classify it as write or mixed.
+- A write classification does not mean immediate execution. If enough information is present, use next_action=prepare_draft and requires_confirmation=true. If required fields are missing, use next_action=ask_clarification and requires_confirmation=true.
+- Read-only search, browse, explain, recommend, route, weather, and place lookup tasks are read operations.
+- Return JSON only. No Markdown. No explanation.
+
+Examples:
+User: 帮我发布一条动态：今天下午一起去图书馆自习，欢迎同学加入。
+Output: {{"primary_intent":"content.create","domain":"content","operation_type":"write","requires_confirmation":true,"confidence":0.95,"summary":"用户想发布一条校园动态","missing_slots":[],"suggested_agents":["content_draft"],"next_action":"prepare_draft"}}
+
+User: 帮我创建一个明天下午三点的篮球活动
+Output: {{"primary_intent":"order.create","domain":"order","operation_type":"write","requires_confirmation":true,"confidence":0.9,"summary":"用户想创建约伴活动","missing_slots":["地点","参与人数"],"suggested_agents":["order_draft"],"next_action":"ask_clarification"}}
+
+User: 帮我找附近的篮球场
+Output: {{"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询附近篮球场","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}}
+
+JSON fields:
+{{
+  "primary_intent": "order.search|order.create|order.manage|content.search|content.create|content.interact|map.search|weather.query|user.profile|memory.manage|chat.general|multi_step|unknown",
+  "domain": "order|content|map|weather|user|memory|general|multi",
+  "operation_type": "read|write|mixed|unknown",
+  "requires_confirmation": true,
+  "confidence": 0.0,
+  "summary": "one-sentence summary",
+  "missing_slots": ["missing fields"],
+  "suggested_agents": ["order_query|order_draft|content_query|content_draft|map_weather|user_profile|memory|general"],
+  "next_action": "direct_answer|ask_clarification|prepare_draft|execute_read_tools|wait_confirmation"
+}}
+
+Fast router first pass:
+{previous_analysis}
+
+User info:
+{user_info}
+
+Long-term memories:
+{memories}
+
+Recent conversation:
+{history}
+
+Current user message:
+{user_message}
+"""
+
+DRAFT_CONFIRMATION_PROMPT = """你是 CampusHub 的写操作安全确认智能体。用户想执行写操作时，请把本轮请求整理成确认草稿。
+
+要求：
+- 只输出 JSON，不要输出 Markdown 或解释。
+- 不要调用工具，不要假装已经创建、发布、点赞、报名或删除。
+- 如果缺少必要信息，请在 missing_fields 中列出，并让 reply 询问用户补充。
+- 如果信息足够，请让 reply 请求用户确认后再执行。
+
+JSON 字段：
+{{
+  "title": "确认发布篮球约伴活动",
+  "description": "一句话描述将要执行的操作",
+  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.accept|order.complete|other.write",
+  "fields": [
+    {{"label": "字段名", "value": "字段值"}}
+  ],
+  "missing_fields": ["缺失字段"],
+  "reply": "面向用户的确认或追问信息"
+}}
+
+意图分析：
+{intent_analysis}
+
+当前用户信息：
+{user_info}
+
+最近对话：
+{history}
+
+本轮用户消息：
+{user_message}
+"""
+
 # ==================== 工具分组 ====================
+
+DRAFT_CONFIRMATION_PROMPT = """You are CampusHub's write-operation confirmation agent. Convert the current user request into a confirmation draft card.
+
+Rules:
+- Return JSON only. No Markdown. No explanation.
+- Do not call tools and do not claim that data has already been created, published, liked, applied, accepted, completed, or deleted.
+- The title must match the actual action_kind and current user request. Do not copy example titles.
+- For action_kind=content.create, use a title like "确认发布动态".
+- For action_kind=order.create, use a title like "确认创建约伴活动".
+- If required information is missing, list it in missing_fields and make reply ask the user to complete it.
+- If enough information is present, make reply ask the user to confirm before execution.
+
+Return this JSON shape:
+{{
+  "title": "确认发布动态",
+  "description": "one sentence describing the pending write operation",
+  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.accept|order.complete|other.write",
+  "fields": [
+    {{"label": "字段名", "value": "字段值"}}
+  ],
+  "missing_fields": ["缺失字段"],
+  "reply": "message shown to the user"
+}}
+
+Intent analysis:
+{intent_analysis}
+
+User info:
+{user_info}
+
+Recent conversation:
+{history}
+
+Current user message:
+{user_message}
+"""
 
 ORDER_TOOLS = [search_orders, create_order, get_my_orders, get_order_detail, *ORDER_EXTRA_TOOLS]
 SOCIAL_TOOLS = [*CONTENT_TOOLS, *USER_TOOLS]
@@ -157,7 +274,56 @@ def _normalize_intent_analysis(value: dict) -> dict:
     except (TypeError, ValueError):
         result["confidence"] = 0.0
     result["requires_confirmation"] = bool(result.get("requires_confirmation", True))
+    operation_type = (result.get("operation_type") or "").lower()
+    next_action = (result.get("next_action") or "").lower()
+    if operation_type in {"write", "mixed"} and next_action in {"ask_clarification", "prepare_draft", "wait_confirmation"}:
+        result["requires_confirmation"] = True
     return result
+
+
+def _should_review_intent(analysis: dict) -> bool:
+    confidence = analysis.get("confidence", 0.0)
+    primary_intent = (analysis.get("primary_intent") or "").lower()
+    operation_type = (analysis.get("operation_type") or "").lower()
+    next_action = (analysis.get("next_action") or "").lower()
+    return (
+        confidence < 0.65
+        or primary_intent == "unknown"
+        or operation_type == "unknown"
+        or next_action == "direct_answer"
+    )
+
+
+async def review_intent(
+    user_info: dict,
+    memories: list,
+    history: list,
+    user_message: str,
+    previous_analysis: dict,
+) -> dict:
+    await _emit_event("agent_step", {
+        "phase": "intent_review",
+        "title": "复核低置信度意图",
+        "detail": "快模型判断不够确定，正在调用主模型复核是否涉及写操作或子智能体调度",
+        "state": "running",
+    })
+    prompt = INTENT_REVIEW_PROMPT.format(
+        previous_analysis=json.dumps(previous_analysis or {}, ensure_ascii=False),
+        user_info=json.dumps(user_info or {}, ensure_ascii=False),
+        memories=json.dumps(memories or [], ensure_ascii=False),
+        history=json.dumps((history or [])[-8:], ensure_ascii=False),
+        user_message=user_message,
+    )
+    try:
+        result = await _get_llm(streaming=False, temperature=0, max_tokens=700).ainvoke([HumanMessage(content=prompt)])
+        reviewed = _normalize_intent_analysis(_safe_json_loads(result.content))
+        reviewed["reviewed"] = True
+        reviewed["router_first_pass"] = previous_analysis
+        return reviewed
+    except Exception as e:
+        logger.warning("Intent review failed: %s", e)
+        previous_analysis["review_failed"] = True
+        return previous_analysis
 
 
 async def analyze_intent(user_info: dict, memories: list, history: list, user_message: str) -> dict:
@@ -183,6 +349,9 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
             "next_action": "ask_clarification",
         })
 
+    if _should_review_intent(analysis):
+        analysis = await review_intent(user_info, memories, history, user_message, analysis)
+
     await _emit_event("intent", {
         **analysis,
         "title": "意图分析完成",
@@ -205,6 +374,93 @@ def _build_intent_system_message(intent_analysis: dict) -> SystemMessage:
 请严格遵守：凡是写操作，必须先确认草稿，不要因为用户语气急切就直接执行。
 """
     return SystemMessage(content=content)
+
+
+def _requires_confirmation_gate(intent_analysis: dict) -> bool:
+    operation_type = (intent_analysis.get("operation_type") or "").lower()
+    next_action = (intent_analysis.get("next_action") or "").lower()
+    if operation_type not in {"write", "mixed"}:
+        return False
+    if intent_analysis.get("requires_confirmation", True):
+        return True
+    return next_action in {"prepare_draft", "wait_confirmation"}
+
+
+def _normalize_artifact_fields(fields: list, missing_fields: list) -> list:
+    normalized = []
+    for item in fields or []:
+        if isinstance(item, dict):
+            label = str(item.get("label") or item.get("name") or "").strip()
+            value = item.get("value", "")
+            if label:
+                normalized.append({"label": label, "value": str(value)})
+        elif item:
+            normalized.append({"label": "信息", "value": str(item)})
+
+    for field in missing_fields or []:
+        if field:
+            normalized.append({"label": str(field), "value": "待补充", "missing": True})
+    return normalized
+
+
+async def build_confirmation_artifact(
+    user_info: dict,
+    history: list,
+    user_message: str,
+    intent_analysis: dict,
+) -> dict:
+    await _emit_event("agent_step", {
+        "phase": "confirmation",
+        "title": "生成确认草稿",
+        "detail": "写操作需要先由你确认，当前不会执行数据库写入",
+        "state": "running",
+    })
+    prompt = DRAFT_CONFIRMATION_PROMPT.format(
+        intent_analysis=json.dumps(intent_analysis or {}, ensure_ascii=False),
+        user_info=json.dumps(user_info or {}, ensure_ascii=False),
+        history=json.dumps((history or [])[-8:], ensure_ascii=False),
+        user_message=user_message,
+    )
+
+    try:
+        result = await _get_router_llm().ainvoke([HumanMessage(content=prompt)])
+        draft = _safe_json_loads(result.content)
+    except Exception as e:
+        logger.warning("Confirmation draft failed: %s", e)
+        draft = {}
+
+    missing_fields = draft.get("missing_fields") if isinstance(draft.get("missing_fields"), list) else []
+    fields = _normalize_artifact_fields(draft.get("fields") if isinstance(draft.get("fields"), list) else [], missing_fields)
+    title = draft.get("title") or "请确认这次操作"
+    description = draft.get("description") or intent_analysis.get("summary") or "这是一个需要确认后才会执行的写操作。"
+    reply = draft.get("reply")
+    if not reply:
+        if missing_fields:
+            reply = "我还需要你补充这些信息后再执行：" + "、".join(str(item) for item in missing_fields)
+        else:
+            reply = "我已经整理好操作草稿。确认无误后，请点击确认执行或直接回复“确认”。"
+
+    artifact = {
+        "type": "confirmation",
+        "title": title,
+        "description": description,
+        "actionKind": draft.get("action_kind") or intent_analysis.get("primary_intent") or "other.write",
+        "fields": fields,
+        "missingFields": missing_fields,
+        "requiresConfirmation": True,
+        "confirmMessage": f"我确认执行这个草稿：{title}",
+        "editMessage": f"我想修改这个草稿：{title}",
+        "cancelMessage": f"取消这个草稿：{title}",
+        "reply": reply,
+    }
+    await _emit_event("confirm_required", artifact)
+    await _emit_event("agent_step", {
+        "phase": "confirmation",
+        "title": "等待用户确认",
+        "detail": "确认后才会继续执行写操作",
+        "state": "pending",
+    })
+    return artifact
 
 
 # ==================== 子 Agent 执行器 ====================
@@ -316,6 +572,15 @@ async def chat(
 ) -> dict:
     """非流式多 Agent 调用。"""
     intent_analysis = await analyze_intent(user_info, memories, history, user_message)
+    if _requires_confirmation_gate(intent_analysis):
+        artifact = await build_confirmation_artifact(user_info, history, user_message, intent_analysis)
+        return {
+            "reply": artifact.get("reply", ""),
+            "tool_calls": [],
+            "intent": intent_analysis,
+            "artifacts": [artifact],
+        }
+
     await _emit_event("agent_step", {
         "phase": "planning",
         "title": "规划执行步骤",
