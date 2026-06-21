@@ -610,19 +610,37 @@ onMounted(() => {
   transition: background 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease, transform 0.2s ease;
 }
 
+.order-item::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.12), rgba(59, 130, 246, 0.1));
+  transition: opacity 0.2s ease;
+}
+
 .order-item:hover {
   border-color: rgba(20, 184, 166, 0.32);
-  background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.1), rgba(59, 130, 246, 0.08)),
-    color-mix(in srgb, var(--ch-surface-solid, #fff) 76%, transparent);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
   transform: translateY(-2px);
 }
 
+.order-item:hover::before {
+  opacity: 1;
+}
+
 .order-main {
+  position: relative;
+  z-index: 1;
   display: flex;
   flex-direction: column;
   gap: 4px;
+}
+
+.order-status {
+  position: relative;
+  z-index: 1;
 }
 
 .order-title {

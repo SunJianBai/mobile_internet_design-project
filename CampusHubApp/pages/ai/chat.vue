@@ -71,7 +71,7 @@
                     <text v-if="artifact.description" class="artifact-description">{{ artifact.description }}</text>
                   </view>
                 </view>
-                <view v-if="artifact.fields && artifact.fields.length" class="artifact-fields">
+                <view v-if="artifact.fields && artifact.fields.length && !artifact.editing" class="artifact-fields">
                   <view
                     v-for="(field, fieldIndex) in artifact.fields"
                     :key="fieldIndex"
@@ -82,10 +82,32 @@
                     <text class="artifact-field-value">{{ formatArtifactValue(field.value) }}</text>
                   </view>
                 </view>
+                <view v-if="artifact.editing" class="artifact-editor">
+                  <view
+                    v-for="(field, fieldIndex) in artifact.fields"
+                    :key="`edit-${fieldIndex}`"
+                    class="artifact-edit-field"
+                  >
+                    <text class="artifact-field-label">{{ field.label }}</text>
+                    <textarea
+                      v-model="field.editValue"
+                      class="artifact-edit-input"
+                      auto-height
+                      maxlength="500"
+                      :placeholder="field.missing ? '补充这个信息' : '修改内容'"
+                    />
+                  </view>
+                </view>
                 <view v-if="artifact.type === 'confirmation'" class="artifact-actions">
-                  <button class="artifact-action primary" :disabled="loading" @click="handleArtifactAction(artifact, 'confirm')">确认执行</button>
-                  <button class="artifact-action" :disabled="loading" @click="handleArtifactAction(artifact, 'edit')">修改草稿</button>
-                  <button class="artifact-action ghost" :disabled="loading" @click="handleArtifactAction(artifact, 'cancel')">取消</button>
+                  <template v-if="artifact.editing">
+                    <button class="artifact-action primary" :disabled="loading" @click="handleArtifactAction(artifact, 'confirm-edited')">保存并确认</button>
+                    <button class="artifact-action ghost" :disabled="loading" @click="handleArtifactAction(artifact, 'cancel-edit')">退出编辑</button>
+                  </template>
+                  <template v-else>
+                    <button class="artifact-action primary" :disabled="loading" @click="handleArtifactAction(artifact, 'confirm')">确认执行</button>
+                    <button class="artifact-action" :disabled="loading" @click="handleArtifactAction(artifact, 'edit')">修改草稿</button>
+                    <button class="artifact-action ghost" :disabled="loading" @click="handleArtifactAction(artifact, 'cancel')">取消</button>
+                  </template>
                 </view>
               </view>
             </view>
@@ -99,6 +121,53 @@
               :nodes="formatContent(msg.content)"
               @itemclick="handleRichTextItemClick"
             />
+            <view v-if="getInteractiveMapCards(msg).length" class="inline-map-list">
+              <view
+                v-for="mapCard in getInteractiveMapCards(msg)"
+                :key="mapCard.key"
+                class="inline-map-card"
+              >
+                <view
+                  class="inline-map-stage"
+                  @touchstart.stop="startMapDrag(mapCard, $event)"
+                  @touchmove.stop.prevent="moveMapDrag"
+                  @touchend="endMapDrag"
+                  @touchcancel="endMapDrag"
+                  @mousedown.stop="startMapDrag(mapCard, $event)"
+                  @mousemove.stop="moveMapDrag"
+                  @mouseup="endMapDrag"
+                  @mouseleave="endMapDrag"
+                >
+                  <view class="inline-map-grid" :style="mapCard.gridStyle">
+                    <image
+                      v-for="tile in mapCard.tiles"
+                      :key="tile.key"
+                      class="inline-map-tile"
+                      :src="tile.src"
+                      mode="widthFix"
+                    />
+                  </view>
+                  <view class="inline-map-pin"><view class="inline-map-pin-dot"></view></view>
+                  <text class="inline-map-badge">高德地图预览</text>
+                  <view class="inline-map-controls">
+                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'zoom-in')">+</button>
+                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'zoom-out')">-</button>
+                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'north')">↑</button>
+                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'south')">↓</button>
+                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'west')">←</button>
+                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'east')">→</button>
+                  </view>
+                </view>
+                <view class="inline-map-meta">
+                  <view class="inline-map-info">
+                    <text class="inline-map-title">{{ mapCard.title }}</text>
+                    <text class="inline-map-coords">{{ mapCard.lng.toFixed(6) }}, {{ mapCard.lat.toFixed(6) }} · zoom {{ mapCard.zoom }}</text>
+                  </view>
+                  <button class="inline-map-open" @click="openExternalUrl(mapCard.link)">打开高德地图</button>
+                </view>
+                <text class="inline-map-hint">可拖拽地图，也可以使用缩放和平移按钮。</text>
+              </view>
+            </view>
           </view>
         </view>
       </view>
@@ -148,11 +217,12 @@
 
 <script setup>
 import { computed, nextTick, onUnmounted, ref } from 'vue'
-import { onLoad, onUnload } from '@dcloudio/uni-app'
+import { onLoad, onShow, onUnload } from '@dcloudio/uni-app'
 import { aiApi } from '@/api/index.js'
 import { showError, showSuccess } from '@/utils/util.js'
 
 const DRAFT_KEY = 'ai_draft'
+const STREAM_STATE_KEY = 'campushub_ai_stream_states'
 
 const conversations = ref([])
 const currentCid = ref(null)
@@ -163,8 +233,11 @@ const loading = ref(false)
 const memoryLoading = ref(false)
 const showMemoryPanel = ref(false)
 const scrollTop = ref(0)
+const mapStates = ref({})
 
 let activeStreamController = null
+let activeMapDrag = null
+let streamStateSyncTimer = null
 
 const AGENT_EVENT_TITLES = {
   agent_step: '智能体执行中',
@@ -220,10 +293,103 @@ const normalizeArtifact = (eventName, data) => {
     ...payload,
     type,
     fields: fields.map(field => {
-      if (field && typeof field === 'object') return field
-      return { label: '信息', value: field }
-    })
+      const normalized = field && typeof field === 'object' ? field : { label: '信息', value: field }
+      const displayValue = formatArtifactValue(normalized.value)
+      return {
+        ...normalized,
+        editValue: displayValue === '未填写' ? '' : displayValue
+      }
+    }),
+    editing: false
   }
+}
+
+const readStreamStates = () => {
+  try {
+    return JSON.parse(uni.getStorageSync(STREAM_STATE_KEY) || '{}')
+  } catch (error) {
+    return {}
+  }
+}
+
+const writeStreamStates = (states) => {
+  try {
+    uni.setStorageSync(STREAM_STATE_KEY, JSON.stringify(states || {}))
+  } catch (error) {
+    // ignore storage failures
+  }
+}
+
+const getStoredStreamState = (cid) => {
+  if (!cid) return null
+  return readStreamStates()[String(cid)] || null
+}
+
+const toPlainStreamValue = (value, fallback) => {
+  try {
+    return JSON.parse(JSON.stringify(value ?? fallback))
+  } catch (error) {
+    return fallback
+  }
+}
+
+const snapshotAssistantMessage = (message, state = 'running') => ({
+  mid: message.mid,
+  localId: message.localId,
+  role: 'assistant',
+  content: message.content || '',
+  status: message.status || '',
+  loading: state === 'running',
+  operations: toPlainStreamValue(message.operations, []),
+  artifacts: toPlainStreamValue(message.artifacts, [])
+})
+
+const saveStreamState = (cid, assistantMsg, userText, state = 'running') => {
+  if (!cid || !assistantMsg) return
+  const states = readStreamStates()
+  states[String(cid)] = {
+    cid,
+    state,
+    userText,
+    updatedAt: Date.now(),
+    assistant: snapshotAssistantMessage(assistantMsg, state)
+  }
+  writeStreamStates(states)
+}
+
+const clearStreamState = (cid) => {
+  if (!cid) return
+  const states = readStreamStates()
+  delete states[String(cid)]
+  writeStreamStates(states)
+}
+
+const appendStoredStreamMessage = (cid) => {
+  const stored = getStoredStreamState(cid)
+  if (!stored?.assistant) return false
+
+  const restoredMessage = {
+    ...stored.assistant,
+    loading: stored.state === 'running',
+    restored: true
+  }
+  const index = messages.value.findIndex(item =>
+    (restoredMessage.mid && item.mid === restoredMessage.mid) ||
+    (restoredMessage.localId && item.localId === restoredMessage.localId) ||
+    (item.restored && item.role === 'assistant')
+  )
+  if (index >= 0) {
+    Object.assign(messages.value[index], restoredMessage)
+  } else {
+    messages.value.push(restoredMessage)
+  }
+  nextTick(scrollToBottom)
+  return true
+}
+
+const syncStoredStreamMessage = () => {
+  if (!currentCid.value) return
+  appendStoredStreamMessage(currentCid.value)
 }
 
 const applyAgentArtifact = (message, eventName, data) => {
@@ -327,19 +493,25 @@ const loadMessages = async (cid) => {
   }
 
   const list = await aiApi.getMessages(cid)
-  messages.value = normalizeList(list).map(item => ({
+  const normalizedMessages = normalizeList(list)
+  messages.value = normalizedMessages.map(item => ({
     ...item,
     role: item.role || 'assistant',
     content: item.content || item.message || ''
   }))
+  const stored = getStoredStreamState(cid)
+  const latestSaved = normalizedMessages[normalizedMessages.length - 1]
+  if (stored && (latestSaved?.role || 'assistant') === 'assistant' && (latestSaved?.content || latestSaved?.message)) {
+    clearStreamState(cid)
+  } else if (stored && Date.now() - Number(stored.updatedAt || 0) < 10 * 60 * 1000) {
+    appendStoredStreamMessage(cid)
+  } else if (stored) {
+    clearStreamState(cid)
+  }
   scrollToBottom()
 }
 
 const switchConversation = async (cid) => {
-  if (activeStreamController && activeStreamController.abort) {
-    activeStreamController.abort()
-    activeStreamController = null
-  }
   currentCid.value = cid
   await loadMessages(cid)
 }
@@ -438,12 +610,36 @@ const sendMessageText = async (text) => {
 
 const handleArtifactAction = (artifact, action) => {
   const title = artifact?.title || '这个草稿'
+  if (action === 'edit') {
+    artifact.editing = true
+    artifact.fields = (artifact.fields || []).map(field => ({
+      ...field,
+      editValue: field.editValue ?? (formatArtifactValue(field.value) === '未填写' ? '' : formatArtifactValue(field.value))
+    }))
+    return
+  }
+  if (action === 'cancel-edit') {
+    artifact.editing = false
+    return
+  }
   const messages = {
     confirm: artifact?.confirmMessage || `我确认执行这个草稿：${title}`,
-    edit: artifact?.editMessage || `我想修改这个草稿：${title}`,
+    'confirm-edited': buildEditedArtifactMessage(artifact),
     cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
   }
   sendMessageText(messages[action])
+}
+
+const buildEditedArtifactMessage = (artifact) => {
+  const title = artifact?.title || '这个草稿'
+  const fields = (artifact?.fields || [])
+    .map(field => {
+      const value = String(field.editValue ?? '').trim()
+      return value ? `${field.label}: ${value}` : ''
+    })
+    .filter(Boolean)
+  const fieldText = fields.length ? `\n${fields.join('\n')}` : ''
+  return `我确认按修改后的内容执行这个草稿：${title}${fieldText}`
 }
 
 const streamAssistantReply = (cid, userMessage, assistantMsg) => {
@@ -460,17 +656,20 @@ const streamAssistantReply = (cid, userMessage, assistantMsg) => {
       onStatus(statusText) {
         assistantMsg.loading = false
         applyAgentEvent(assistantMsg, 'status', statusText || '正在处理...')
+        saveStreamState(cid, assistantMsg, userMessage)
         scrollToBottom()
       },
       onEvent(eventName, data) {
         assistantMsg.loading = false
         applyAgentEvent(assistantMsg, eventName, data)
+        saveStreamState(cid, assistantMsg, userMessage)
         scrollToBottom()
       },
       onDelta(text) {
         assistantMsg.loading = false
         assistantMsg.status = ''
         assistantMsg.content += text
+        saveStreamState(cid, assistantMsg, userMessage)
         scrollToBottom()
       },
       onDone() {
@@ -478,14 +677,17 @@ const streamAssistantReply = (cid, userMessage, assistantMsg) => {
         if (!assistantMsg.content) {
           assistantMsg.content = '抱歉，AI 未返回有效内容。'
         }
+        clearStreamState(cid)
         finish(true)
       },
       onError(errorText) {
         assistantMsg.loading = false
         if (assistantMsg.content) {
           assistantMsg.content += `\n\n错误：${errorText || '流式回复中断'}`
+          saveStreamState(cid, assistantMsg, userMessage, 'error')
           finish(true)
         } else {
+          saveStreamState(cid, assistantMsg, userMessage, 'error')
           finish(false)
         }
       }
@@ -535,6 +737,13 @@ const sendMessage = async () => {
     content: userMessage
   })
   messages.value.push(assistantMsg)
+  applyAgentEvent(assistantMsg, 'agent_step', JSON.stringify({
+    phase: 'client',
+    title: '已发送消息',
+    detail: '正在建立 AI 流式连接并等待智能体调度',
+    state: 'running'
+  }))
+  saveStreamState(currentCid.value, assistantMsg, userMessage)
   scrollToBottom()
 
   loading.value = true
@@ -550,6 +759,7 @@ const sendMessage = async () => {
       assistantMsg.loading = false
       assistantMsg.status = ''
       assistantMsg.content = reply?.content || reply?.message || 'AI 未返回有效内容'
+      clearStreamState(sentCid)
     }
 
     await loadConversations(false)
@@ -558,6 +768,7 @@ const sendMessage = async () => {
     assistantMsg.loading = false
     assistantMsg.status = ''
     assistantMsg.content = error.message || 'AI 服务暂时不可用'
+    saveStreamState(currentCid.value, assistantMsg, userMessage, 'error')
     showError(error.message || 'AI 回复失败')
   } finally {
     loading.value = false
@@ -627,8 +838,11 @@ const sanitizeUrl = (url) => {
 
 const parseMapAttrs = (attrs = '') => {
   const props = {}
-  attrs.replace(/(\w+)=("[^"]*"|'[^']*'|[^\s}]+)/g, (match, key, value) => {
-    props[key] = value.replace(/^["']|["']$/g, '')
+  const normalizedAttrs = String(attrs || '')
+    .replace(/\s*(lng|lat|zoom|title|name)=/g, ' $1=')
+    .trim()
+  normalizedAttrs.replace(/(\w+)=("[^"]*"|'[^']*'|.*?)(?=\s+\w+=|$)/g, (match, key, value) => {
+    props[key] = String(value || '').replace(/^["']|["']$/g, '').trim()
     return match
   })
   ;['lng', 'lat', 'zoom'].forEach((key) => {
@@ -658,6 +872,138 @@ const lngLatToTilePoint = (lng, lat, zoom) => {
 const getAmapTileUrl = (x, y, z) => {
   const server = Math.abs(x + y) % 4 + 1
   return `https://webrd0${server}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x=${x}&y=${y}&z=${z}`
+}
+
+const tilePointToLngLat = (x, y, zoom) => {
+  const scale = 2 ** zoom
+  const lng = (x / scale) * 360 - 180
+  const n = Math.PI - (2 * Math.PI * y) / scale
+  const lat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))
+  return { lng, lat }
+}
+
+const buildMapTileGrid = (lng, lat, zoom) => {
+  const tilePoint = lngLatToTilePoint(lng, lat, zoom)
+  const baseX = Math.floor(tilePoint.x)
+  const baseY = Math.floor(tilePoint.y)
+  const startX = baseX - 1
+  const startY = baseY - 1
+  const pointX = Math.round((tilePoint.x - startX) * 256)
+  const pointY = Math.round((tilePoint.y - startY) * 256)
+  const tiles = []
+
+  for (let row = 0; row < 3; row += 1) {
+    for (let col = 0; col < 3; col += 1) {
+      const x = startX + col
+      const y = startY + row
+      tiles.push({ key: `${zoom}-${x}-${y}`, src: getAmapTileUrl(x, y, zoom) })
+    }
+  }
+
+  return {
+    tiles,
+    gridStyle: `left:calc(50% - ${pointX}px);top:calc(50% - ${pointY}px);`
+  }
+}
+
+const getMessageKey = (msg) => String(msg?.mid || msg?.localId || 'message')
+
+const extractMapProps = (content = '') => {
+  const cards = []
+  String(content || '').replace(/:{2,}map\{([^}]+)\}/g, (match, attrs) => {
+    const props = parseMapAttrs(attrs)
+    const lng = Number.parseFloat(props.lng)
+    const lat = Number.parseFloat(props.lat)
+    if (Number.isFinite(lng) && Number.isFinite(lat)) {
+      cards.push({
+        lng,
+        lat,
+        zoom: clampNumber(Number.parseInt(props.zoom || '15', 10) || 15, 3, 18),
+        title: props.title || props.name || '位置'
+      })
+    }
+    return match
+  })
+  return cards
+}
+
+const getInteractiveMapCards = (msg) => {
+  return extractMapProps(msg?.content).map((props, index) => {
+    const key = `${getMessageKey(msg)}-${index}`
+    const current = mapStates.value[key] || props
+    const grid = buildMapTileGrid(current.lng, current.lat, current.zoom)
+    const link = `https://uri.amap.com/marker?position=${current.lng},${current.lat}&name=${encodeURIComponent(current.title)}&coordinate=gaode&callnative=0`
+    return { key, ...current, ...grid, link }
+  })
+}
+
+const setMapCardState = (key, nextState) => {
+  const state = mapStates.value[key] || nextState
+  mapStates.value = {
+    ...mapStates.value,
+    [key]: {
+      ...state,
+      title: nextState.title || state.title || '位置',
+      lng: clampNumber(nextState.lng, -180, 180),
+      lat: clampNumber(nextState.lat, -85, 85),
+      zoom: clampNumber(Math.round(nextState.zoom), 3, 18)
+    }
+  }
+}
+
+const adjustMapCard = (card, action) => {
+  if (!card?.key || !action) return
+  if (action === 'zoom-in') return setMapCardState(card.key, { ...card, zoom: card.zoom + 1 })
+  if (action === 'zoom-out') return setMapCardState(card.key, { ...card, zoom: card.zoom - 1 })
+
+  const point = lngLatToTilePoint(card.lng, card.lat, card.zoom)
+  const step = 0.45
+  const moves = {
+    north: { x: 0, y: -step },
+    south: { x: 0, y: step },
+    west: { x: -step, y: 0 },
+    east: { x: step, y: 0 }
+  }
+  const move = moves[action]
+  if (!move) return
+  const next = tilePointToLngLat(point.x + move.x, point.y + move.y, card.zoom)
+  setMapCardState(card.key, { ...card, ...next })
+}
+
+const getPointerXY = (event) => {
+  const touch = event?.touches?.[0] || event?.changedTouches?.[0]
+  if (touch) return { x: touch.clientX, y: touch.clientY }
+  return { x: event?.clientX || 0, y: event?.clientY || 0 }
+}
+
+const startMapDrag = (card, event) => {
+  if (!card?.key) return
+  const point = getPointerXY(event)
+  activeMapDrag = {
+    key: card.key,
+    startX: point.x,
+    startY: point.y,
+    zoom: card.zoom,
+    startPoint: lngLatToTilePoint(card.lng, card.lat, card.zoom),
+    title: card.title
+  }
+}
+
+const moveMapDrag = (event) => {
+  if (!activeMapDrag) return
+  const point = getPointerXY(event)
+  const dx = (point.x - activeMapDrag.startX) / 256
+  const dy = (point.y - activeMapDrag.startY) / 256
+  const next = tilePointToLngLat(activeMapDrag.startPoint.x - dx, activeMapDrag.startPoint.y - dy, activeMapDrag.zoom)
+  setMapCardState(activeMapDrag.key, {
+    title: activeMapDrag.title,
+    zoom: activeMapDrag.zoom,
+    ...next
+  })
+}
+
+const endMapDrag = () => {
+  activeMapDrag = null
 }
 
 const renderMapCard = (props = {}) => {
@@ -756,7 +1102,7 @@ const renderMarkdown = (source) => {
 
   let md = source
   const mapBlocks = []
-  md = md.replace(/:::map\{([^}]+)\}/g, (match, attrs) => {
+  md = md.replace(/:{2,}map\{([^}]+)\}/g, (match, attrs) => {
     const idx = mapBlocks.length
     mapBlocks.push(parseMapAttrs(attrs))
     return `@@MAP_BLOCK_${idx}@@`
@@ -828,7 +1174,8 @@ const formatContent = (text) => {
   if (!text) return ''
   let cleaned = String(text)
   cleaned = cleaned.replace(/^正在思考.{0,3}/g, '')
-  cleaned = cleaned.replace(/:::map\{[^}]*$/g, '正在加载地图...')
+  cleaned = cleaned.replace(/:{2,}map\{[^}]+\}/g, '')
+  cleaned = cleaned.replace(/:{2,}map\{[^}]*$/g, '正在加载地图...')
   return renderMarkdown(cleaned.trim())
 }
 
@@ -891,20 +1238,35 @@ onLoad(async () => {
   inputText.value = uni.getStorageSync(DRAFT_KEY) || ''
   try {
     await loadConversations(true)
+    startStreamStateSync()
   } catch (error) {
     showError(error.message || '加载 AI 会话失败')
   }
 })
 
-const abortActiveStream = () => {
-  if (activeStreamController && activeStreamController.abort) {
-    activeStreamController.abort()
-  }
-  activeStreamController = null
+onShow(() => {
+  syncStoredStreamMessage()
+  startStreamStateSync()
+})
+
+const startStreamStateSync = () => {
+  if (streamStateSyncTimer) return
+  streamStateSyncTimer = setInterval(syncStoredStreamMessage, 600)
 }
 
-onUnload(abortActiveStream)
-onUnmounted(abortActiveStream)
+const stopStreamStateSync = () => {
+  if (!streamStateSyncTimer) return
+  clearInterval(streamStateSyncTimer)
+  streamStateSyncTimer = null
+}
+
+const detachActiveStream = () => {
+  activeStreamController = null
+  stopStreamStateSync()
+}
+
+onUnload(detachActiveStream)
+onUnmounted(detachActiveStream)
 </script>
 
 <style>
@@ -1318,6 +1680,32 @@ onUnmounted(abortActiveStream)
   color: #667085;
 }
 
+.artifact-editor {
+  display: flex;
+  flex-direction: column;
+  gap: 12rpx;
+  margin-top: 16rpx;
+}
+
+.artifact-edit-field {
+  display: flex;
+  flex-direction: column;
+  gap: 8rpx;
+}
+
+.artifact-edit-input {
+  width: 100%;
+  min-height: 72rpx;
+  padding: 14rpx 16rpx;
+  border: 1rpx solid #cfd8e6;
+  border-radius: 12rpx;
+  box-sizing: border-box;
+  background: #f8fafc;
+  color: #172033;
+  font-size: 25rpx;
+  line-height: 1.45;
+}
+
 .loading-dots {
   display: flex;
   gap: 8rpx;
@@ -1626,6 +2014,154 @@ onUnmounted(abortActiveStream)
   text-decoration: none;
 }
 
+.inline-map-list {
+  display: flex;
+  flex-direction: column;
+  gap: 18rpx;
+  margin-top: 12rpx;
+}
+
+.inline-map-card {
+  overflow: hidden;
+  border: 1rpx solid #d9e7ff;
+  border-radius: 20rpx;
+  background: #ffffff;
+  box-shadow: 0 16rpx 38rpx rgba(29, 78, 216, 0.10);
+}
+
+.inline-map-stage {
+  position: relative;
+  height: 330rpx;
+  overflow: hidden;
+  background: #e0ecf8;
+  cursor: grab;
+}
+
+.inline-map-grid {
+  position: absolute;
+  display: grid;
+  grid-template-columns: repeat(3, 256px);
+  grid-template-rows: repeat(3, 256px);
+  width: 768px;
+  height: 768px;
+}
+
+.inline-map-tile {
+  display: block;
+  width: 256px;
+  height: 256px;
+}
+
+.inline-map-pin {
+  position: absolute;
+  left: 50%;
+  top: 50%;
+  width: 42rpx;
+  height: 42rpx;
+  z-index: 2;
+  transform: translate(-50%, -100%) rotate(-45deg);
+  border-radius: 50% 50% 50% 0;
+  background: #ef4444;
+  box-shadow: 0 8rpx 18rpx rgba(127, 29, 29, 0.35);
+}
+
+.inline-map-pin-dot {
+  position: absolute;
+  left: 11rpx;
+  top: 11rpx;
+  width: 20rpx;
+  height: 20rpx;
+  border-radius: 50%;
+  background: #ffffff;
+}
+
+.inline-map-badge {
+  position: absolute;
+  left: 18rpx;
+  top: 18rpx;
+  z-index: 2;
+  padding: 8rpx 16rpx;
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.93);
+  color: #1f447a;
+  font-size: 22rpx;
+  font-weight: 800;
+  box-shadow: 0 10rpx 26rpx rgba(23, 32, 51, 0.12);
+}
+
+.inline-map-controls {
+  position: absolute;
+  right: 18rpx;
+  top: 18rpx;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(2, 56rpx);
+  gap: 8rpx;
+}
+
+.inline-map-control {
+  width: 56rpx;
+  height: 56rpx;
+  line-height: 56rpx;
+  padding: 0;
+  border: 1rpx solid rgba(148, 163, 184, 0.35);
+  border-radius: 14rpx;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1f2937;
+  font-size: 26rpx;
+  font-weight: 900;
+  box-shadow: 0 8rpx 18rpx rgba(15, 23, 42, 0.12);
+}
+
+.inline-map-meta {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 18rpx;
+}
+
+.inline-map-info {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 5rpx;
+}
+
+.inline-map-title {
+  color: #172033;
+  font-size: 27rpx;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.inline-map-coords {
+  color: #667085;
+  font-size: 21rpx;
+  font-family: monospace;
+}
+
+.inline-map-open {
+  flex: 0 0 auto;
+  height: 58rpx;
+  line-height: 58rpx;
+  padding: 0 16rpx;
+  border: none;
+  border-radius: 14rpx;
+  background: #edf4ff;
+  color: #1f447a;
+  font-size: 22rpx;
+  font-weight: 800;
+}
+
+.inline-map-hint {
+  display: block;
+  padding: 0 18rpx 18rpx;
+  color: #667085;
+  font-size: 22rpx;
+  line-height: 1.45;
+}
+
 .empty-state {
   min-height: 560rpx;
   display: flex;
@@ -1806,5 +2342,171 @@ onUnmounted(abortActiveStream)
   font-size: 24rpx;
   line-height: 52rpx;
   padding: 0;
+}
+
+@media (hover: hover) {
+  .tool-btn.subtle:hover,
+  .top-action:hover,
+  .picker-view:hover,
+  .artifact-action:hover,
+  .inline-map-control:hover,
+  .inline-map-open:hover,
+  .memory-close:hover {
+    background: rgba(31, 68, 122, 0.12);
+  }
+
+  .tool-btn.danger:hover,
+  .memory-delete:hover {
+    background: rgba(180, 35, 24, 0.14);
+  }
+}
+
+@media (prefers-color-scheme: dark) {
+  .chat-container {
+    background: #101722;
+  }
+
+  .app-top {
+    background: #0b1320;
+    border-bottom: 1rpx solid rgba(148, 163, 184, 0.18);
+  }
+
+  .back-button,
+  .top-action,
+  .picker-view,
+  .tool-btn.subtle {
+    background: rgba(148, 163, 184, 0.12);
+    border-color: rgba(148, 163, 184, 0.22);
+    color: #edf4ff;
+  }
+
+  .tool-btn.danger,
+  .memory-delete {
+    background: rgba(239, 68, 68, 0.12);
+    color: #fca5a5;
+  }
+
+  .assistant-avatar {
+    background: #162235;
+    color: #9ab8ff;
+  }
+
+  .assistant-bubble,
+  .operation-timeline,
+  .artifact-card,
+  .inline-map-card,
+  .memory-panel {
+    background: #172235;
+    color: #edf4ff;
+    border-color: rgba(148, 163, 184, 0.22);
+    box-shadow: 0 16rpx 34rpx rgba(0, 0, 0, 0.22);
+  }
+
+  .artifact-confirmation {
+    background: #132033;
+    border-color: rgba(91, 140, 255, 0.34);
+  }
+
+  .operation-title,
+  .artifact-title,
+  .artifact-field-value,
+  .markdown-body,
+  .markdown-body :deep(h1),
+  .markdown-body :deep(h2),
+  .markdown-body :deep(h3),
+  .markdown-body :deep(.entity-title),
+  .markdown-body :deep(.map-card-title),
+  .inline-map-title,
+  .memory-title,
+  .memory-content,
+  .empty-title {
+    color: #edf4ff;
+  }
+
+  .operation-detail,
+  .artifact-description,
+  .artifact-field-label,
+  .markdown-body :deep(.entity-subtitle),
+  .markdown-body :deep(.map-card-coords),
+  .inline-map-coords,
+  .inline-map-hint,
+  .memory-empty,
+  .empty-subtitle,
+  .status-text {
+    color: #94a3b8;
+  }
+
+  .operation-step + .operation-step,
+  .memory-header,
+  .memory-item {
+    border-color: rgba(148, 163, 184, 0.16);
+  }
+
+  .artifact-field,
+  .artifact-edit-input,
+  .input {
+    background: #101a2a;
+    border-color: rgba(148, 163, 184, 0.22);
+    color: #edf4ff;
+  }
+
+  .artifact-field.missing {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+  }
+
+  .artifact-action,
+  .inline-map-control,
+  .inline-map-open,
+  .memory-close,
+  .markdown-body :deep(.map-card-action),
+  .markdown-body :deep(.entity-link-card) {
+    background: #101a2a;
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #dbe7f8;
+  }
+
+  .artifact-action.primary,
+  .send-btn {
+    background: #3768d8;
+    border-color: #5b8cff;
+    color: #ffffff;
+  }
+
+  .artifact-action.ghost {
+    color: #94a3b8;
+  }
+
+  .markdown-body :deep(code) {
+    background: #101a2a;
+    color: #bfdbfe;
+  }
+
+  .markdown-body :deep(.entity-link-card),
+  .markdown-body :deep(.map-card) {
+    background: #172235;
+    border-color: rgba(148, 163, 184, 0.22);
+    box-shadow: 0 16rpx 34rpx rgba(0, 0, 0, 0.22);
+  }
+
+  .markdown-body :deep(.map-badge),
+  .inline-map-badge {
+    background: rgba(15, 23, 42, 0.86);
+    color: #bfdbfe;
+  }
+
+  .input-bar {
+    background: #0f1726;
+    border-top-color: rgba(148, 163, 184, 0.18);
+  }
+
+  .memory-mask {
+    background: rgba(0, 0, 0, 0.56);
+  }
+
+  .memory-tag {
+    background: #223554;
+    color: #bfdbfe;
+  }
 }
 </style>

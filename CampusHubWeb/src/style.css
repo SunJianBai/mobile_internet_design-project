@@ -1056,6 +1056,8 @@ select {
 }
 
 .order-item {
+  position: relative;
+  overflow: hidden;
   border-radius: 8px;
   color: var(--ch-text);
   transition:
@@ -1066,12 +1068,28 @@ select {
     color 0.18s ease;
 }
 
+.order-item::before {
+  content: "";
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0;
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.12), rgba(59, 130, 246, 0.1));
+  transition: opacity 0.2s ease;
+}
+
 .order-item:hover {
   border-color: rgba(20, 184, 166, 0.32);
-  background:
-    linear-gradient(135deg, rgba(20, 184, 166, 0.1), rgba(59, 130, 246, 0.08)),
-    color-mix(in srgb, var(--ch-surface-solid) 76%, transparent);
   box-shadow: 0 12px 32px rgba(15, 23, 42, 0.12);
+}
+
+.order-item:hover::before {
+  opacity: 1;
+}
+
+body .app-shell .order-item :is(.order-main, .order-status, .order-title, .order-meta) {
+  position: relative;
+  z-index: 1;
 }
 
 body .app-shell :is(

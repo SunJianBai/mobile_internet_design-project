@@ -38,6 +38,12 @@ from app.prompts import (
 logger = logging.getLogger(__name__)
 
 _event_sink: contextvars.ContextVar = contextvars.ContextVar("agent_event_sink", default=None)
+_delegation_state: contextvars.ContextVar = contextvars.ContextVar("agent_delegation_state", default=None)
+
+MAIN_AGENT_RECURSION_LIMIT = 12
+SUB_AGENT_RECURSION_LIMIT = 8
+MAX_MAIN_DELEGATIONS = 4
+MAX_DELEGATIONS_PER_AGENT = 2
 
 INTENT_ANALYSIS_PROMPT = """你是 CampusHub 的意图分析智能体。请基于用户消息、最近对话和用户信息判断请求类型。
 
@@ -85,6 +91,70 @@ DEFAULT_INTENT_ANALYSIS = {
     "suggested_agents": ["general"],
     "next_action": "ask_clarification",
 }
+
+INTENT_SEMANTIC_ROUTING_GUIDE = """
+Additional semantic routing guide:
+- A request to find, recommend, compare, route to, or look up stores/venues/places is a map.search read task, even when the user mentions a group size, time, budget, or says they want to go together.
+- Do not turn a recommendation/search request into content.create or order.create unless the user explicitly asks to publish, create, invite, organize, post, or place an order/activity in CampusHub.
+- For "我想要找3个人一起去洗脚按摩，有什么推荐的店吗", classify as:
+  {"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询并推荐适合多人前往的足疗按摩店","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}
+- For "附近有没有适合三个人吃饭的店", classify as map.search/read.
+- For "帮我发个动态找三个人一起去按摩", classify as content.create/write and require confirmation.
+- For "帮我创建一个三人按摩约伴订单", classify as order.create/write and require confirmation.
+- If the latest user message is editing an existing draft, keep the domain/action of that draft from recent context and use requires_confirmation=true.
+"""
+
+INTENT_ROUTER_PROMPT_V2 = """
+You are the CampusHub semantic intent router. Classify the user's latest request from meaning and recent context, not from simple keyword matching.
+
+Return JSON only. Do not use Markdown. The JSON schema is:
+{
+  "primary_intent": "order.search|order.create|order.manage|content.search|content.create|content.interact|map.search|weather.query|user.profile|memory.manage|chat.general|multi_step|unknown",
+  "domain": "order|content|map|weather|user|memory|general|multi",
+  "operation_type": "read|write|mixed|unknown",
+  "requires_confirmation": true,
+  "confidence": 0.0,
+  "summary": "one short Chinese sentence",
+  "missing_slots": [],
+  "suggested_agents": ["order_query|order_draft|content_query|content_draft|map_weather|user_profile|memory|general"],
+  "next_action": "direct_answer|ask_clarification|prepare_draft|execute_read_tools|wait_confirmation"
+}
+
+Decision principles:
+- Read tasks: search, browse, view, explain, recommend, compare, route planning, weather, place/store lookup. Execute read tools without confirmation.
+- Write tasks: create/publish/edit/delete/comment/like/apply/accept/complete/order/sign up. They require a confirmation draft before any database write.
+- A recommendation for stores, venues, routes, or nearby places is map.search/read, even if the user mentions people count, time, budget, or "一起".
+- Only classify as content.create/order.create when the user explicitly asks CampusHub to publish/create/organize/post an activity/order/dynamic.
+- If the user is editing a previous draft, preserve the draft's domain/action from context and require confirmation.
+
+High-priority examples:
+User: 我想要找3个人一起去洗脚按摩，有什么推荐的店吗
+Output: {"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.92,"summary":"用户想查询并推荐适合多人前往的足疗按摩店","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}
+
+User: 附近有没有适合三个人吃饭的店
+Output: {"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查找适合三人就餐的附近餐厅","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}
+
+User: 帮我发个动态找三个人一起去按摩
+Output: {"primary_intent":"content.create","domain":"content","operation_type":"write","requires_confirmation":true,"confidence":0.92,"summary":"用户想发布一条寻找同伴的校园动态","missing_slots":[],"suggested_agents":["content_draft"],"next_action":"prepare_draft"}
+
+User: 帮我创建一个三人按摩约伴订单
+Output: {"primary_intent":"order.create","domain":"order","operation_type":"write","requires_confirmation":true,"confidence":0.9,"summary":"用户想创建三人按摩约伴订单","missing_slots":["地点","时间"],"suggested_agents":["order_draft"],"next_action":"ask_clarification"}
+
+Previous router analysis:
+{previous_analysis}
+
+User info:
+{user_info}
+
+Long-term memories:
+{memories}
+
+Recent conversation:
+{history}
+
+Current user message:
+{user_message}
+"""
 
 INTENT_REVIEW_PROMPT = """You are the senior intent-review agent for CampusHub. The fast router may miss write operations, so review the request semantically.
 
@@ -246,6 +316,71 @@ async def _emit_event(event: str, payload: dict):
         await sink({"event": event, "data": _json_data(payload)})
 
 
+def _normalize_delegation_task(task: str) -> str:
+    normalized = " ".join(str(task or "").split()).lower()
+    return normalized[:500]
+
+
+def _get_delegation_state() -> dict:
+    state = _delegation_state.get()
+    if state is None:
+        state = {
+            "total": 0,
+            "counts": {},
+            "results": {},
+        }
+        _delegation_state.set(state)
+    return state
+
+
+async def _run_guarded_sub_agent(
+    agent_key: str,
+    agent_name: str,
+    system_prompt: str,
+    tools: list,
+    task: str,
+) -> str:
+    state = _get_delegation_state()
+    fingerprint = f"{agent_key}:{_normalize_delegation_task(task)}"
+
+    if fingerprint in state["results"]:
+        await _emit_event("agent_step", {
+            "phase": "delegation_guard",
+            "agent": agent_key,
+            "title": f"{agent_name}复用已有结果",
+            "detail": "检测到同一轮中重复委派了相同任务，已复用上一次结果以避免循环调用",
+            "state": "completed",
+        })
+        return state["results"][fingerprint]
+
+    agent_count = state["counts"].get(agent_key, 0)
+    if state["total"] >= MAX_MAIN_DELEGATIONS:
+        await _emit_event("agent_step", {
+            "phase": "delegation_guard",
+            "agent": agent_key,
+            "title": "已达到本轮委派上限",
+            "detail": "为避免智能体循环委派，本轮不再继续调用新的子智能体",
+            "state": "failed",
+        })
+        return "已达到本轮智能体委派上限。请基于已经获得的工具结果回复用户，或说明还需要用户补充信息。"
+
+    if agent_count >= MAX_DELEGATIONS_PER_AGENT:
+        await _emit_event("agent_step", {
+            "phase": "delegation_guard",
+            "agent": agent_key,
+            "title": f"{agent_name}调用次数受限",
+            "detail": "同一轮中该专家已被多次调用，为避免循环委派，本次调用被拦截",
+            "state": "failed",
+        })
+        return f"{agent_name}在本轮已达到调用次数上限。请不要继续重复委派该专家，改为总结已有结果或向用户追问。"
+
+    state["total"] += 1
+    state["counts"][agent_key] = agent_count + 1
+    result = await _run_sub_agent(agent_key, agent_name, system_prompt, tools, task)
+    state["results"][fingerprint] = result
+    return result
+
+
 def _safe_json_loads(text: str) -> dict:
     cleaned = (text or "").strip()
     if "```" in cleaned:
@@ -260,6 +395,27 @@ def _safe_json_loads(text: str) -> dict:
         cleaned = cleaned[start:end + 1]
     parsed = json.loads(cleaned)
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _render_intent_prompt(
+    previous_analysis,
+    user_info: dict,
+    memories: list,
+    history: list,
+    user_message: str,
+) -> str:
+    replacements = {
+        "{previous_analysis}": json.dumps(previous_analysis or {}, ensure_ascii=False)
+        if previous_analysis is not None else "null",
+        "{user_info}": json.dumps(user_info or {}, ensure_ascii=False),
+        "{memories}": json.dumps(memories or [], ensure_ascii=False),
+        "{history}": json.dumps((history or [])[-8:], ensure_ascii=False),
+        "{user_message}": user_message,
+    }
+    prompt = INTENT_ROUTER_PROMPT_V2
+    for placeholder, value in replacements.items():
+        prompt = prompt.replace(placeholder, value)
+    return prompt + "\n\n" + INTENT_SEMANTIC_ROUTING_GUIDE
 
 
 def _normalize_intent_analysis(value: dict) -> dict:
@@ -290,6 +446,7 @@ def _should_review_intent(analysis: dict) -> bool:
         confidence < 0.65
         or primary_intent == "unknown"
         or operation_type == "unknown"
+        or operation_type in {"write", "mixed"}
         or next_action == "direct_answer"
     )
 
@@ -307,13 +464,7 @@ async def review_intent(
         "detail": "快模型判断不够确定，正在调用主模型复核是否涉及写操作或子智能体调度",
         "state": "running",
     })
-    prompt = INTENT_REVIEW_PROMPT.format(
-        previous_analysis=json.dumps(previous_analysis or {}, ensure_ascii=False),
-        user_info=json.dumps(user_info or {}, ensure_ascii=False),
-        memories=json.dumps(memories or [], ensure_ascii=False),
-        history=json.dumps((history or [])[-8:], ensure_ascii=False),
-        user_message=user_message,
-    )
+    prompt = _render_intent_prompt(previous_analysis, user_info, memories, history, user_message)
     try:
         result = await _get_llm(streaming=False, temperature=0, max_tokens=700).ainvoke([HumanMessage(content=prompt)])
         reviewed = _normalize_intent_analysis(_safe_json_loads(result.content))
@@ -333,12 +484,7 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
         "detail": "正在用轻量模型判断任务类型、风险和需要的子智能体",
         "state": "running",
     })
-    prompt = INTENT_ANALYSIS_PROMPT.format(
-        user_info=json.dumps(user_info or {}, ensure_ascii=False),
-        memories=json.dumps(memories or [], ensure_ascii=False),
-        history=json.dumps((history or [])[-8:], ensure_ascii=False),
-        user_message=user_message,
-    )
+    prompt = _render_intent_prompt(None, user_info, memories, history, user_message)
     try:
         result = await _get_router_llm().ainvoke([HumanMessage(content=prompt)])
         analysis = _normalize_intent_analysis(_safe_json_loads(result.content))
@@ -478,12 +624,15 @@ async def _run_sub_agent(agent_key: str, agent_name: str, system_prompt: str, to
             "detail": task[:180],
             "state": "running",
         })
-        result = await agent.ainvoke({
-            "messages": [
-                SystemMessage(content=system_prompt),
-                HumanMessage(content=task),
-            ],
-        })
+        result = await agent.ainvoke(
+            {
+                "messages": [
+                    SystemMessage(content=system_prompt),
+                    HumanMessage(content=task),
+                ],
+            },
+            config={"recursion_limit": SUB_AGENT_RECURSION_LIMIT},
+        )
 
         # 提取最终 AI 回复
         for msg in reversed(result["messages"]):
@@ -519,7 +668,7 @@ async def call_order_agent(task: str) -> str:
     Args:
         task: 具体任务描述，需包含完整的参数信息。如"搜索良乡校区的篮球约伴活动"、"为用户ID=1创建篮球订单，良乡校区体育馆，2026-03-26 15:00:00"
     """
-    return await _run_sub_agent("order", "Order Agent", ORDER_AGENT_PROMPT, ORDER_TOOLS, task)
+    return await _run_guarded_sub_agent("order", "订单专家", ORDER_AGENT_PROMPT, ORDER_TOOLS, task)
 
 
 @tool
@@ -529,7 +678,7 @@ async def call_social_agent(task: str) -> str:
     Args:
         task: 具体任务描述。如"搜索关于篮球的动态"、"给动态#12点赞，用户ID=1"
     """
-    return await _run_sub_agent("content", "Content Agent", SOCIAL_AGENT_PROMPT, SOCIAL_TOOLS, task)
+    return await _run_guarded_sub_agent("content", "动态专家", SOCIAL_AGENT_PROMPT, SOCIAL_TOOLS, task)
 
 
 @tool
@@ -539,7 +688,7 @@ async def call_map_agent(task: str) -> str:
     Args:
         task: 具体任务描述。如"搜索北京理工大学良乡校区的位置"、"查询北京今天的天气"
     """
-    return await _run_sub_agent("map", "Map Agent", MAP_AGENT_PROMPT, MAP_TOOLS, task)
+    return await _run_guarded_sub_agent("map", "地图天气专家", MAP_AGENT_PROMPT, MAP_TOOLS, task)
 
 
 # 主 Agent 的工具列表（3 个子 Agent）
@@ -594,9 +743,20 @@ async def chat(
     llm = _get_llm(streaming=False)
     main_agent = create_react_agent(llm, MAIN_AGENT_TOOLS)
 
-    result = await main_agent.ainvoke({
-        "messages": [SystemMessage(content=system_prompt), _build_intent_system_message(intent_analysis)] + messages,
+    delegation_token = _delegation_state.set({
+        "total": 0,
+        "counts": {},
+        "results": {},
     })
+    try:
+        result = await main_agent.ainvoke(
+            {
+                "messages": [SystemMessage(content=system_prompt), _build_intent_system_message(intent_analysis)] + messages,
+            },
+            config={"recursion_limit": MAIN_AGENT_RECURSION_LIMIT},
+        )
+    finally:
+        _delegation_state.reset(delegation_token)
 
     tool_calls_log = []
     final_reply = ""

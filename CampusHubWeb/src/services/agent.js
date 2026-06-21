@@ -1,6 +1,9 @@
 import api from '../utils/axios'
 
 const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+const streamBaseUrl =
+  import.meta.env.VITE_STREAM_API_BASE_URL ||
+  (import.meta.env.DEV && !import.meta.env.VITE_API_BASE_URL ? 'http://localhost:8080/api/v1' : baseUrl)
 
 export default {
   createConversation() {
@@ -32,8 +35,15 @@ export default {
     const controller = new AbortController()
     const token = localStorage.getItem('token')
     const userId = localStorage.getItem('userId')
+    let doneCalled = false
 
-    fetch(`${baseUrl}/agent/conversations/${cid}/messages/stream`, {
+    const finish = () => {
+      if (doneCalled) return
+      doneCalled = true
+      onDone?.()
+    }
+
+    fetch(`${streamBaseUrl}/agent/conversations/${cid}/messages/stream`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -92,7 +102,7 @@ export default {
                 onEvent?.(eventName, data)
                 break
               case 'done':
-                onDone?.()
+                finish()
                 break
               case 'error':
                 onError?.(data)
@@ -105,7 +115,7 @@ export default {
         }
 
         // 流结束，如果没收到 done 事件也触发完成
-        onDone?.()
+        finish()
       })
       .catch((err) => {
         if (err.name !== 'AbortError') {

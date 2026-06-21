@@ -50,6 +50,8 @@ public class AgentStreamService {
     }
 
     private void doStream(SseEmitter emitter, Long userId, Long conversationId, String userMessage) throws Exception {
+        sendAgentStep(emitter, "gateway", "已收到消息", "正在准备会话上下文并连接智能体服务", "running");
+
         User user = userRepository.findById(userId)
                 .orElseThrow(() -> new ParamValidationFailedException("用户不存在"));
         AiConversation conv = conversationRepository.findByCidAndUser(conversationId, user)
@@ -68,6 +70,7 @@ public class AgentStreamService {
 
         // 构建历史
         List<Map<String, String>> history = agentService.buildHistory(allMessages);
+        sendAgentStep(emitter, "context", "上下文准备完成", "正在把历史消息和长期记忆发送给 AI 调度器", "completed");
 
         // 流式调用 Python Agent，逐 chunk 转发 SSE
         StringBuilder fullReply = new StringBuilder();
@@ -121,5 +124,47 @@ public class AgentStreamService {
                     }
                 }
         );
+    }
+
+    private void sendAgentStep(SseEmitter emitter, String phase, String title, String detail, String state) {
+        try {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("phase", phase);
+            payload.put("title", title);
+            payload.put("detail", detail);
+            payload.put("state", state);
+            emitter.send(SseEmitter.event().name("agent_step").data(toJson(payload)));
+        } catch (Exception e) {
+            log.warn("发送 SSE 状态失败: {}", e.getMessage());
+        }
+    }
+
+    private String toJson(Map<String, Object> payload) {
+        StringBuilder json = new StringBuilder("{");
+        Iterator<Map.Entry<String, Object>> iterator = payload.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<String, Object> entry = iterator.next();
+            json.append('"').append(escapeJson(entry.getKey())).append("\":");
+            Object value = entry.getValue();
+            if (value == null) {
+                json.append("null");
+            } else {
+                json.append('"').append(escapeJson(String.valueOf(value))).append('"');
+            }
+            if (iterator.hasNext()) {
+                json.append(',');
+            }
+        }
+        json.append('}');
+        return json.toString();
+    }
+
+    private String escapeJson(String value) {
+        return value
+                .replace("\\", "\\\\")
+                .replace("\"", "\\\"")
+                .replace("\n", "\\n")
+                .replace("\r", "\\r")
+                .replace("\t", "\\t");
     }
 }

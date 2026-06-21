@@ -58,7 +58,7 @@
 
         <!-- 对话区域 -->
         <section v-else class="chat-area">
-          <div class="messages-container" ref="chatContainer" @click="handleChatClick">
+          <div class="messages-container" ref="chatContainer" @click="handleChatClick" @pointerdown="handleChatPointerDown">
             <div v-if="messages.length === 0" class="chat-empty-state">
               <div class="chat-empty-icon">
                 <svg viewBox="0 0 24 24" width="30" height="30"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2zm0 14H5.17L4 17.17V4h16v12z" fill="currentColor"/></svg>
@@ -105,7 +105,7 @@
                               <div v-if="artifact.description" class="artifact-description">{{ artifact.description }}</div>
                             </div>
                           </div>
-                          <div v-if="artifact.fields?.length" class="artifact-fields">
+                          <div v-if="artifact.fields?.length && !artifact.editing" class="artifact-fields">
                             <div
                               v-for="(field, fieldIndex) in artifact.fields"
                               :key="fieldIndex"
@@ -115,16 +115,36 @@
                               <span class="artifact-field-value">{{ formatArtifactValue(field.value) }}</span>
                             </div>
                           </div>
+                          <div v-if="artifact.editing" class="artifact-editor">
+                            <label
+                              v-for="(field, fieldIndex) in artifact.fields"
+                              :key="`edit-${fieldIndex}`"
+                              class="artifact-edit-field"
+                            >
+                              <span>{{ field.label }}</span>
+                              <textarea v-model="field.editValue" rows="2" :placeholder="field.missing ? '补充这个信息' : '修改内容'"></textarea>
+                            </label>
+                          </div>
                           <div v-if="artifact.type === 'confirmation'" class="artifact-actions">
-                            <button class="artifact-action primary" :disabled="sending" @click="handleArtifactAction(artifact, 'confirm')">
-                              确认执行
-                            </button>
-                            <button class="artifact-action" :disabled="sending" @click="handleArtifactAction(artifact, 'edit')">
-                              修改草稿
-                            </button>
-                            <button class="artifact-action ghost" :disabled="sending" @click="handleArtifactAction(artifact, 'cancel')">
-                              取消
-                            </button>
+                            <template v-if="artifact.editing">
+                              <button class="artifact-action primary" :disabled="sending" @click="handleArtifactAction(artifact, 'confirm-edited')">
+                                保存并确认
+                              </button>
+                              <button class="artifact-action ghost" :disabled="sending" @click="handleArtifactAction(artifact, 'cancel-edit')">
+                                退出编辑
+                              </button>
+                            </template>
+                            <template v-else>
+                              <button class="artifact-action primary" :disabled="sending" @click="handleArtifactAction(artifact, 'confirm')">
+                                确认执行
+                              </button>
+                              <button class="artifact-action" :disabled="sending" @click="handleArtifactAction(artifact, 'edit')">
+                                修改草稿
+                              </button>
+                              <button class="artifact-action ghost" :disabled="sending" @click="handleArtifactAction(artifact, 'cancel')">
+                                取消
+                              </button>
+                            </template>
                           </div>
                         </div>
                       </div>
@@ -190,6 +210,7 @@ import { ref, onMounted, onBeforeUnmount, nextTick, computed, watch } from 'vue'
 import { useRouter } from 'vue-router'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import agentService from '../services/agent'
+import { readAgentStreamStates, subscribeAgentStreamStates, writeAgentStreamStates } from '../services/agentStreamState'
 
 const router = useRouter()
 
@@ -205,6 +226,9 @@ const sidebarCollapsed = ref(false)
 const showMemoryPanel = ref(false)
 const memories = ref([])
 const wasMobileViewport = ref(false)
+let activeStreamController = null
+let streamStateUnsubscribe = null
+let streamStateReloading = false
 
 const AGENT_EVENT_TITLES = {
   agent_step: '智能体执行中',
@@ -260,10 +284,106 @@ function normalizeArtifact(eventName, data) {
     ...payload,
     type,
     fields: fields.map(field => {
-      if (field && typeof field === 'object') return field
-      return { label: '信息', value: field }
-    })
+      const normalized = field && typeof field === 'object' ? field : { label: '信息', value: field }
+      return {
+        ...normalized,
+        editValue: formatArtifactValue(normalized.value) === '未填写' ? '' : formatArtifactValue(normalized.value)
+      }
+    }),
+    editing: false
   }
+}
+
+function readStreamStates() {
+  return readAgentStreamStates()
+}
+
+function writeStreamStates(states) {
+  writeAgentStreamStates(states)
+}
+
+function getStoredStreamState(cid) {
+  if (!cid) return null
+  return readStreamStates()[String(cid)] || null
+}
+
+function toPlainStreamValue(value, fallback) {
+  try {
+    return JSON.parse(JSON.stringify(value ?? fallback))
+  } catch (e) {
+    return fallback
+  }
+}
+
+function snapshotAssistantMessage(message, state = 'running') {
+  return {
+    mid: message.mid,
+    localId: message.localId,
+    role: 'assistant',
+    content: message.content || '',
+    status: message.status || '',
+    loading: state === 'running',
+    operations: toPlainStreamValue(message.operations, []),
+    artifacts: toPlainStreamValue(message.artifacts, [])
+  }
+}
+
+function saveStreamState(cid, assistantMsg, userText, state = 'running') {
+  if (!cid || !assistantMsg) return
+  const states = readStreamStates()
+  states[String(cid)] = {
+    cid,
+    state,
+    userText,
+    updatedAt: Date.now(),
+    assistant: snapshotAssistantMessage(assistantMsg, state)
+  }
+  writeStreamStates(states)
+}
+
+function clearStreamState(cid) {
+  if (!cid) return
+  const states = readStreamStates()
+  delete states[String(cid)]
+  writeStreamStates(states)
+}
+
+function appendStoredStreamMessage(cid) {
+  const stored = getStoredStreamState(cid)
+  if (!stored?.assistant) return false
+
+  const restoredMessage = {
+    ...stored.assistant,
+    loading: stored.state === 'running',
+    restored: true
+  }
+  const index = messages.value.findIndex(item =>
+    (restoredMessage.mid && item.mid === restoredMessage.mid) ||
+    (restoredMessage.localId && item.localId === restoredMessage.localId) ||
+    (item.restored && item.role === 'assistant')
+  )
+  if (index >= 0) {
+    Object.assign(messages.value[index], restoredMessage)
+  } else {
+    messages.value.push(restoredMessage)
+  }
+  nextTick(scrollToBottom)
+  return true
+}
+
+function handleStreamStateChange() {
+  const cid = currentConvId.value
+  if (!cid) return
+
+  if (appendStoredStreamMessage(cid)) return
+
+  const needsFinalRefresh = messages.value.some(item => item.restored && item.loading)
+  if (!needsFinalRefresh || streamStateReloading) return
+
+  streamStateReloading = true
+  switchConversation(cid).finally(() => {
+    streamStateReloading = false
+  })
 }
 
 function applyAgentArtifact(message, eventName, data) {
@@ -311,12 +431,36 @@ async function sendMessageText(text) {
 
 function handleArtifactAction(artifact, action) {
   const title = artifact?.title || '这个草稿'
+  if (action === 'edit') {
+    artifact.editing = true
+    artifact.fields = (artifact.fields || []).map(field => ({
+      ...field,
+      editValue: field.editValue ?? (formatArtifactValue(field.value) === '未填写' ? '' : formatArtifactValue(field.value))
+    }))
+    return
+  }
+  if (action === 'cancel-edit') {
+    artifact.editing = false
+    return
+  }
   const messages = {
     confirm: artifact?.confirmMessage || `我确认执行这个草稿：${title}`,
-    edit: artifact?.editMessage || `我想修改这个草稿：${title}`,
+    'confirm-edited': buildEditedArtifactMessage(artifact),
     cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
   }
   sendMessageText(messages[action])
+}
+
+function buildEditedArtifactMessage(artifact) {
+  const title = artifact?.title || '这个草稿'
+  const fields = (artifact?.fields || [])
+    .map(field => {
+      const value = String(field.editValue ?? '').trim()
+      return value ? `${field.label}: ${value}` : ''
+    })
+    .filter(Boolean)
+  const fieldText = fields.length ? `\n${fields.join('\n')}` : ''
+  return `我确认按修改后的内容执行这个草稿：${title}${fieldText}`
 }
 
 const syncSidebarForViewport = () => {
@@ -364,6 +508,15 @@ async function switchConversation(cid) {
     const resp = await agentService.getMessages(cid)
     const rawMessages = resp.data?.data || []
     messages.value = rawMessages.map(m => ({ ...m, loading: false }))
+    const stored = getStoredStreamState(cid)
+    const latestSaved = rawMessages[rawMessages.length - 1]
+    if (stored && latestSaved?.role === 'assistant' && latestSaved?.content) {
+      clearStreamState(cid)
+    } else if (stored && Date.now() - Number(stored.updatedAt || 0) < 10 * 60 * 1000) {
+      appendStoredStreamMessage(cid)
+    } else if (stored) {
+      clearStreamState(cid)
+    }
     scrollToBottom()
   } catch (e) {
     ElMessage.error('加载消息失败')
@@ -404,26 +557,37 @@ async function handleSendMessage() {
 
   const aiMsg = { mid: Date.now() + 1, role: 'assistant', content: '', loading: true, operations: [], artifacts: [] }
   messages.value.push(aiMsg)
+  applyAgentEvent(aiMsg, 'agent_step', JSON.stringify({
+    phase: 'client',
+    title: '已发送消息',
+    detail: '正在建立 AI 流式连接并等待智能体调度',
+    state: 'running'
+  }))
+  saveStreamState(currentConvId.value, aiMsg, msgText)
   scrollToBottom()
 
   sending.value = true
   let doneReceived = false
 
-  agentService.streamMessage(currentConvId.value, msgText, {
+  const streamCid = currentConvId.value
+  activeStreamController = agentService.streamMessage(streamCid, msgText, {
     onDelta(text) {
       if (aiMsg.loading) aiMsg.loading = false
       if (aiMsg.status) aiMsg.status = ''  // 收到实际内容后清除 status
       aiMsg.content += text
+      saveStreamState(streamCid, aiMsg, msgText)
       scrollToBottom()
     },
     onStatus(statusText) {
       if (aiMsg.loading) aiMsg.loading = false
       applyAgentEvent(aiMsg, 'status', statusText)
+      saveStreamState(streamCid, aiMsg, msgText)
       scrollToBottom()
     },
     onEvent(eventName, data) {
       if (aiMsg.loading) aiMsg.loading = false
       applyAgentEvent(aiMsg, eventName, data)
+      saveStreamState(streamCid, aiMsg, msgText)
       scrollToBottom()
     },
     async onDone() {
@@ -432,13 +596,20 @@ async function handleSendMessage() {
       aiMsg.loading = false
       if (!aiMsg.content) aiMsg.content = '抱歉，AI 未返回有效内容。'
       sending.value = false
+      activeStreamController = null
+      clearStreamState(streamCid)
       scrollToBottom()
       await loadConversations()
+      if (currentConvId.value === streamCid) {
+        await switchConversation(streamCid)
+      }
     },
     onError(errMsg) {
       aiMsg.loading = false
       aiMsg.content = `错误：${errMsg}`
       sending.value = false
+      activeStreamController = null
+      saveStreamState(streamCid, aiMsg, msgText, 'error')
       scrollToBottom()
     }
   })
@@ -513,8 +684,11 @@ const escapeHtml = (unsafe) => {
 
 const parseMapAttrs = (attrs = '') => {
   const props = {}
-  attrs.replace(/(\w+)=("[^"]*"|'[^']*'|[^\s}]+)/g, (match, key, value) => {
-    props[key] = value.replace(/^["']|["']$/g, '')
+  const normalizedAttrs = String(attrs || '')
+    .replace(/\s*(lng|lat|zoom|title|name)=/g, ' $1=')
+    .trim()
+  normalizedAttrs.replace(/(\w+)=("[^"]*"|'[^']*'|.*?)(?=\s+\w+=|$)/g, (match, key, value) => {
+    props[key] = String(value || '').replace(/^["']|["']$/g, '').trim()
     return match
   })
   ;['lng', 'lat', 'zoom'].forEach((key) => {
@@ -546,13 +720,7 @@ const getAmapTileUrl = (x, y, z) => {
   return `https://webrd0${server}.is.autonavi.com/appmaptile?lang=zh_cn&size=1&scale=1&style=7&x=${x}&y=${y}&z=${z}`
 }
 
-const renderMapCard = (props = {}) => {
-  const lng = Number.parseFloat(props.lng)
-  const lat = Number.parseFloat(props.lat)
-  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return ''
-
-  const zoom = clampNumber(Number.parseInt(props.zoom || '15', 10) || 15, 3, 18)
-  const title = props.title || props.name || '位置'
+const buildMapTileGrid = (lng, lat, zoom) => {
   const tilePoint = lngLatToTilePoint(lng, lat, zoom)
   const baseX = Math.floor(tilePoint.x)
   const baseY = Math.floor(tilePoint.y)
@@ -566,18 +734,38 @@ const renderMapCard = (props = {}) => {
     for (let col = 0; col < 3; col += 1) {
       const x = startX + col
       const y = startY + row
-      tiles.push(`<img class="map-tile" alt="" loading="lazy" src="${getAmapTileUrl(x, y, zoom)}" />`)
+      tiles.push(`<img class="map-tile" alt="" loading="lazy" draggable="false" src="${getAmapTileUrl(x, y, zoom)}" />`)
     }
   }
 
+  return { tiles: tiles.join(''), pointX, pointY }
+}
+
+const renderMapCard = (props = {}) => {
+  const lng = Number.parseFloat(props.lng)
+  const lat = Number.parseFloat(props.lat)
+  if (!Number.isFinite(lng) || !Number.isFinite(lat)) return ''
+
+  const zoom = clampNumber(Number.parseInt(props.zoom || '15', 10) || 15, 3, 18)
+  const title = props.title || props.name || '位置'
+  const grid = buildMapTileGrid(lng, lat, zoom)
+
   const markerUrl = `https://uri.amap.com/marker?position=${lng},${lat}&name=${encodeURIComponent(title)}&coordinate=gaode&callnative=0`
-  return `<div class="map-card">` +
-    `<div class="map-tile-stage" aria-label="${escapeHtml(title)}地图预览">` +
-      `<div class="map-tile-grid" style="left:calc(50% - ${pointX}px);top:calc(50% - ${pointY}px);">${tiles.join('')}</div>` +
+  return `<div class="map-card" data-lng="${lng}" data-lat="${lat}" data-zoom="${zoom}" data-title="${escapeHtml(title)}">` +
+    `<div class="map-tile-stage" aria-label="${escapeHtml(title)}地图预览" data-map-stage="true">` +
+      `<div class="map-tile-grid" style="left:calc(50% - ${grid.pointX}px);top:calc(50% - ${grid.pointY}px);">${grid.tiles}</div>` +
       `<div class="map-pin" title="${escapeHtml(title)}">` +
         `<svg viewBox="0 0 24 24" width="30" height="30" aria-hidden="true"><path d="M12 2C8.42 2 5.5 4.92 5.5 8.5c0 4.88 6.5 13.5 6.5 13.5s6.5-8.62 6.5-13.5C18.5 4.92 15.58 2 12 2zm0 8.8a2.3 2.3 0 1 1 0-4.6 2.3 2.3 0 0 1 0 4.6z" fill="currentColor"/></svg>` +
       `</div>` +
       `<div class="map-badge">高德地图预览</div>` +
+      `<div class="map-controls" aria-label="地图控制">` +
+        `<button type="button" class="map-control" data-map-action="zoom-in" title="放大">+</button>` +
+        `<button type="button" class="map-control" data-map-action="zoom-out" title="缩小">-</button>` +
+        `<button type="button" class="map-control" data-map-action="north" title="向上">↑</button>` +
+        `<button type="button" class="map-control" data-map-action="south" title="向下">↓</button>` +
+        `<button type="button" class="map-control" data-map-action="west" title="向左">←</button>` +
+        `<button type="button" class="map-control" data-map-action="east" title="向右">→</button>` +
+      `</div>` +
     `</div>` +
     `<div class="map-card-meta">` +
       `<div class="map-card-info">` +
@@ -586,6 +774,7 @@ const renderMapCard = (props = {}) => {
       `</div>` +
       `<a href="${escapeHtml(markerUrl)}" target="_blank" rel="noopener noreferrer" class="map-card-action">打开高德地图</a>` +
     `</div>` +
+    `<div class="map-card-hint">可拖拽地图，也可以使用缩放和平移按钮。</div>` +
   `</div>`
 }
 
@@ -647,7 +836,7 @@ const renderMarkdown = (md) => {
   if (!md) return ''
 
   const mapBlocks = []
-  md = md.replace(/:::map\{([^}]+)\}/g, (match, attrs) => {
+  md = md.replace(/:{2,}map\{([^}]+)\}/g, (match, attrs) => {
     const idx = mapBlocks.length
     mapBlocks.push(parseMapAttrs(attrs))
     return `@@MAP_BLOCK_${idx}@@`
@@ -715,11 +904,19 @@ const formatContent = (text) => {
   // 清除可能混入的 status 前缀（历史数据兼容）
   cleaned = cleaned.replace(/^正在思考\.{0,3}/g, '')
   // 如果文本中有不完整的 :::map{ 语法（流式拼接中），显示加载提示
-  cleaned = cleaned.replace(/:::map\{[^}]*$/g, '<p style="color:#9ca3af">正在加载地图...</p>')
+  cleaned = cleaned.replace(/:{2,}map\{[^}]*$/g, '<p style="color:#9ca3af">正在加载地图...</p>')
   return renderMarkdown(cleaned.trim())
 }
 
 function handleChatClick(e) {
+  const control = e.target.closest('.map-control')
+  if (control) {
+    e.preventDefault()
+    const card = control.closest('.map-card')
+    updateMapCardByAction(card, control.dataset.mapAction)
+    return
+  }
+
   const link = e.target.closest('.app-link')
   if (link) {
     e.preventDefault()
@@ -728,11 +925,106 @@ function handleChatClick(e) {
   }
 }
 
+function tilePointToLngLat(x, y, zoom) {
+  const scale = 2 ** zoom
+  const lng = (x / scale) * 360 - 180
+  const n = Math.PI - (2 * Math.PI * y) / scale
+  const lat = (180 / Math.PI) * Math.atan(0.5 * (Math.exp(n) - Math.exp(-n)))
+  return { lng, lat }
+}
+
+function setMapCardView(card, lng, lat, zoom) {
+  if (!card || !Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(zoom)) return
+  const nextZoom = clampNumber(Math.round(zoom), 3, 18)
+  const nextLng = clampNumber(lng, -180, 180)
+  const nextLat = clampNumber(lat, -85, 85)
+  const grid = buildMapTileGrid(nextLng, nextLat, nextZoom)
+  const gridEl = card.querySelector('.map-tile-grid')
+  const coordsEl = card.querySelector('.map-card-coords')
+  const actionEl = card.querySelector('.map-card-action')
+  const title = card.dataset.title || '位置'
+
+  card.dataset.lng = String(nextLng)
+  card.dataset.lat = String(nextLat)
+  card.dataset.zoom = String(nextZoom)
+  if (gridEl) {
+    gridEl.innerHTML = grid.tiles
+    gridEl.style.left = `calc(50% - ${grid.pointX}px)`
+    gridEl.style.top = `calc(50% - ${grid.pointY}px)`
+  }
+  if (coordsEl) {
+    coordsEl.textContent = `${nextLng.toFixed(6)}, ${nextLat.toFixed(6)} · zoom ${nextZoom}`
+  }
+  if (actionEl) {
+    actionEl.href = `https://uri.amap.com/marker?position=${nextLng},${nextLat}&name=${encodeURIComponent(title)}&coordinate=gaode&callnative=0`
+  }
+}
+
+function updateMapCardByAction(card, action) {
+  if (!card || !action) return
+  const lng = Number.parseFloat(card.dataset.lng)
+  const lat = Number.parseFloat(card.dataset.lat)
+  const zoom = Number.parseInt(card.dataset.zoom || '15', 10)
+  if (!Number.isFinite(lng) || !Number.isFinite(lat) || !Number.isFinite(zoom)) return
+
+  if (action === 'zoom-in') return setMapCardView(card, lng, lat, zoom + 1)
+  if (action === 'zoom-out') return setMapCardView(card, lng, lat, zoom - 1)
+
+  const point = lngLatToTilePoint(lng, lat, zoom)
+  const step = 0.45
+  const moves = {
+    north: { x: 0, y: -step },
+    south: { x: 0, y: step },
+    west: { x: -step, y: 0 },
+    east: { x: step, y: 0 }
+  }
+  const move = moves[action]
+  if (!move) return
+  const next = tilePointToLngLat(point.x + move.x, point.y + move.y, zoom)
+  setMapCardView(card, next.lng, next.lat, zoom)
+}
+
+function handleChatPointerDown(e) {
+  const stage = e.target.closest('.map-tile-stage')
+  if (!stage) return
+  const card = stage.closest('.map-card')
+  if (!card) return
+  e.preventDefault()
+
+  const startX = e.clientX
+  const startY = e.clientY
+  const startLng = Number.parseFloat(card.dataset.lng)
+  const startLat = Number.parseFloat(card.dataset.lat)
+  const zoom = Number.parseInt(card.dataset.zoom || '15', 10)
+  if (!Number.isFinite(startLng) || !Number.isFinite(startLat) || !Number.isFinite(zoom)) return
+  const startPoint = lngLatToTilePoint(startLng, startLat, zoom)
+  stage.classList.add('dragging')
+
+  const handleMove = (moveEvent) => {
+    const dx = (moveEvent.clientX - startX) / 256
+    const dy = (moveEvent.clientY - startY) / 256
+    const next = tilePointToLngLat(startPoint.x - dx, startPoint.y - dy, zoom)
+    setMapCardView(card, next.lng, next.lat, zoom)
+  }
+
+  const handleUp = () => {
+    stage.classList.remove('dragging')
+    window.removeEventListener('pointermove', handleMove)
+    window.removeEventListener('pointerup', handleUp)
+    window.removeEventListener('pointercancel', handleUp)
+  }
+
+  window.addEventListener('pointermove', handleMove)
+  window.addEventListener('pointerup', handleUp, { once: true })
+  window.addEventListener('pointercancel', handleUp, { once: true })
+}
+
 // ==================== 生命周期 ====================
 
 onMounted(async () => {
   syncSidebarForViewport()
   window.addEventListener('resize', syncSidebarForViewport)
+  streamStateUnsubscribe = subscribeAgentStreamStates(handleStreamStateChange)
   await loadConversations()
   if (conversations.value.length > 0) {
     await switchConversation(conversations.value[0].cid)
@@ -742,6 +1034,10 @@ onMounted(async () => {
 onBeforeUnmount(() => {
   if (typeof window === 'undefined') return
   window.removeEventListener('resize', syncSidebarForViewport)
+  if (streamStateUnsubscribe) {
+    streamStateUnsubscribe()
+    streamStateUnsubscribe = null
+  }
 })
 </script>
 
@@ -1052,9 +1348,50 @@ onBeforeUnmount(() => {
 .artifact-action.ghost {
   color: #64748b;
 }
+.artifact-action:hover:not(:disabled) {
+  background: #f8fafc;
+  border-color: #94a3b8;
+}
+.artifact-action.primary:hover:not(:disabled) {
+  background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+.artifact-action.ghost:hover:not(:disabled) {
+  background: #fff7ed;
+  border-color: #fed7aa;
+  color: #b45309;
+}
 .artifact-action:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+.artifact-editor {
+  display: grid;
+  gap: 10px;
+  margin-top: 12px;
+}
+.artifact-edit-field {
+  display: grid;
+  gap: 6px;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 700;
+}
+.artifact-edit-field textarea {
+  width: 100%;
+  min-height: 54px;
+  resize: vertical;
+  border: 1px solid #cbd5e1;
+  border-radius: 8px;
+  padding: 8px 10px;
+  background: #f8fafc;
+  color: #0f172a;
+  line-height: 1.45;
+}
+.artifact-edit-field textarea:focus {
+  outline: none;
+  border-color: #2563eb;
+  box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
 
 /* Markdown 样式 */
@@ -1221,6 +1558,43 @@ onBeforeUnmount(() => {
   text-decoration: none;
 }
 .markdown-body :deep(.map-card-action:hover) { background: #dbeafe; text-decoration: none; }
+.markdown-body :deep(.map-tile-stage) {
+  cursor: grab;
+  user-select: none;
+  touch-action: none;
+}
+.markdown-body :deep(.map-tile-stage.dragging) { cursor: grabbing; }
+.markdown-body :deep(.map-controls) {
+  position: absolute;
+  right: 12px;
+  top: 12px;
+  z-index: 3;
+  display: grid;
+  grid-template-columns: repeat(2, 32px);
+  gap: 6px;
+}
+.markdown-body :deep(.map-control) {
+  width: 32px;
+  height: 32px;
+  border: 1px solid rgba(148, 163, 184, 0.35);
+  border-radius: 9px;
+  background: rgba(255, 255, 255, 0.92);
+  color: #1e293b;
+  cursor: pointer;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.12);
+}
+.markdown-body :deep(.map-control:hover) {
+  background: #eff6ff;
+  color: #1d4ed8;
+}
+.markdown-body :deep(.map-card-hint) {
+  padding: 0 14px 12px;
+  color: #64748b;
+  font-size: 12px;
+}
 
 /* ==================== 输入区域 ==================== */
 .input-area {
@@ -1269,6 +1643,290 @@ onBeforeUnmount(() => {
 .memory-content { flex: 1; font-size: 13px; color: #333; line-height: 1.5; }
 .memory-delete { border: none; background: transparent; color: #ccc; cursor: pointer; padding: 2px; flex-shrink: 0; }
 .memory-delete:hover { color: #ef4444; }
+
+/* ==================== 暗色模式 ==================== */
+:global(:root[data-theme='dark']) .ai-view,
+:global(:root[data-theme='dark']) .chat-main {
+  background: #101722;
+}
+
+:global(:root[data-theme='dark']) .sidebar {
+  background: #0b1320;
+  color: #e5edf8;
+  border-right-color: rgba(148, 163, 184, 0.18);
+}
+
+:global(:root[data-theme='dark']) .btn-new-chat,
+:global(:root[data-theme='dark']) .btn-expand,
+:global(:root[data-theme='dark']) .btn-start,
+:global(:root[data-theme='dark']) .input-wrapper {
+  background: #172235;
+  color: #e5edf8;
+  border-color: rgba(148, 163, 184, 0.22);
+}
+
+:global(:root[data-theme='dark']) .btn-new-chat:hover,
+:global(:root[data-theme='dark']) .conv-item:hover,
+:global(:root[data-theme='dark']) .btn-memory:hover,
+:global(:root[data-theme='dark']) .btn-toggle:hover,
+:global(:root[data-theme='dark']) .btn-start:hover {
+  background: #1f2d44;
+  color: #f8fbff;
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+:global(:root[data-theme='dark']) .conv-item {
+  color: #aebbd0;
+}
+
+:global(:root[data-theme='dark']) .conv-item.active {
+  background: #24334d;
+  color: #f8fbff;
+}
+
+:global(:root[data-theme='dark']) .sidebar-footer {
+  border-top-color: rgba(148, 163, 184, 0.18);
+}
+
+:global(:root[data-theme='dark']) .btn-memory,
+:global(:root[data-theme='dark']) .btn-toggle,
+:global(:root[data-theme='dark']) .empty-state,
+:global(:root[data-theme='dark']) .empty-subtitle,
+:global(:root[data-theme='dark']) .operation-detail,
+:global(:root[data-theme='dark']) .artifact-description {
+  color: #94a3b8;
+}
+
+:global(:root[data-theme='dark']) .empty-title,
+:global(:root[data-theme='dark']) .assistant-content,
+:global(:root[data-theme='dark']) .operation-title {
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .assistant-avatar {
+  background: #162235;
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #9ab8ff;
+}
+
+:global(:root[data-theme='dark']) .operation-timeline,
+:global(:root[data-theme='dark']) .artifact-card,
+:global(:root[data-theme='dark']) .markdown-body :deep(.entity-link-card),
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card) {
+  background: #172235;
+  border-color: rgba(148, 163, 184, 0.22);
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24);
+}
+
+:global(:root[data-theme='dark']) .artifact-confirmation {
+  background: linear-gradient(180deg, #172235 0%, #132033 100%);
+  border-color: rgba(91, 140, 255, 0.34);
+}
+
+:global(:root[data-theme='dark']) .artifact-title,
+:global(:root[data-theme='dark']) .artifact-field-value,
+:global(:root[data-theme='dark']) .markdown-body :deep(.entity-title),
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-title),
+:global(:root[data-theme='dark']) .memory-content {
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .artifact-field,
+:global(:root[data-theme='dark']) .artifact-edit-field textarea {
+  background: #101a2a;
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .artifact-field.missing {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+}
+
+:global(:root[data-theme='dark']) .artifact-field-label,
+:global(:root[data-theme='dark']) .artifact-edit-field,
+:global(:root[data-theme='dark']) .markdown-body :deep(.entity-subtitle),
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-coords),
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-hint) {
+  color: #94a3b8;
+}
+
+:global(:root[data-theme='dark']) .artifact-action {
+  background: #101a2a;
+  color: #dbe7f8;
+  border-color: rgba(148, 163, 184, 0.28);
+}
+
+:global(:root[data-theme='dark']) .artifact-action:hover:not(:disabled),
+:global(:root[data-theme='dark']) .markdown-body :deep(.entity-link-card:hover) {
+  background: #1f2d44;
+  border-color: rgba(154, 184, 255, 0.38);
+  color: #f8fbff;
+}
+
+:global(:root[data-theme='dark']) .artifact-action.primary {
+  background: #3768d8;
+  border-color: #5b8cff;
+  color: #ffffff;
+}
+
+:global(:root[data-theme='dark']) .artifact-action.primary:hover:not(:disabled) {
+  background: #4c7df0;
+  border-color: #9ab8ff;
+}
+
+:global(:root[data-theme='dark']) .artifact-action.ghost:hover:not(:disabled) {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.32);
+  color: #fbbf24;
+}
+
+:global(:root[data-theme='dark']) .markdown-body :deep(code) {
+  background: #101a2a;
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-action),
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-control),
+:global(:root[data-theme='dark']) .memory-tag {
+  background: #223554;
+  color: #bfdbfe;
+  border-color: rgba(148, 163, 184, 0.24);
+}
+
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-action:hover),
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-control:hover) {
+  background: #2d4470;
+  color: #f8fbff;
+}
+
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-badge) {
+  background: rgba(15, 23, 42, 0.86);
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .input-wrapper textarea {
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .memory-item {
+  border-bottom-color: rgba(148, 163, 184, 0.16);
+}
+
+:global(:root[data-theme='dark']) :deep(.el-drawer) {
+  background: #101722;
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) :deep(.el-drawer__header) {
+  color: #edf4ff;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18);
+  margin-bottom: 12px;
+}
+
+:global(:root[data-theme='dark']) :deep(.el-drawer__body) {
+  background: #101722;
+}
+
+/* v-html 注入的卡片不会携带 scoped attribute，暗色覆盖必须用纯全局选择器。 */
+:global(html[data-theme='dark'] .markdown-body .entity-link-card),
+:global(html[data-theme='dark'] .markdown-body .map-card) {
+  background: #172235 !important;
+  color: #edf4ff !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .entity-link-card:hover) {
+  background: #1f2d44 !important;
+  border-color: rgba(154, 184, 255, 0.38) !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .entity-title),
+:global(html[data-theme='dark'] .markdown-body .map-card-title) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .entity-subtitle),
+:global(html[data-theme='dark'] .markdown-body .map-card-coords),
+:global(html[data-theme='dark'] .markdown-body .map-card-hint) {
+  color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .map-card-action),
+:global(html[data-theme='dark'] .markdown-body .map-control) {
+  background: #223554 !important;
+  color: #bfdbfe !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .map-card-action:hover),
+:global(html[data-theme='dark'] .markdown-body .map-control:hover) {
+  background: #2d4470 !important;
+  color: #f8fbff !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .map-badge) {
+  background: rgba(15, 23, 42, 0.86) !important;
+  color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .btn-new-chat),
+:global(html[data-theme='dark'] .ai-view .btn-memory),
+:global(html[data-theme='dark'] .ai-view .btn-toggle),
+:global(html[data-theme='dark'] .ai-view .btn-start) {
+  background: #182333 !important;
+  color: #edf4ff !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .btn-new-chat:hover),
+:global(html[data-theme='dark'] .ai-view .btn-memory:hover),
+:global(html[data-theme='dark'] .ai-view .btn-toggle:hover),
+:global(html[data-theme='dark'] .ai-view .btn-start:hover),
+:global(html[data-theme='dark'] .ai-view .conv-item:hover) {
+  background: #1f2d44 !important;
+  color: #f8fbff !important;
+  border-color: rgba(154, 184, 255, 0.38) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-edit-field textarea),
+:global(html[data-theme='dark'] .ai-view .artifact-edit-input) {
+  background: #101a2a !important;
+  color: #edf4ff !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-card) {
+  background: #172235 !important;
+  background-image: none !important;
+  color: #edf4ff !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-confirmation) {
+  background: linear-gradient(180deg, #172235 0%, #132033 100%) !important;
+  border-color: rgba(91, 140, 255, 0.34) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-timeline) {
+  background: #172235 !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-step + .operation-step) {
+  border-top-color: rgba(148, 163, 184, 0.16) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-title) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-detail) {
+  color: #94a3b8 !important;
+}
 
 /* ==================== 响应式 ==================== */
 @media (max-width: 768px) {
