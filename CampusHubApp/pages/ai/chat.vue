@@ -71,6 +71,16 @@
                     <text v-if="artifact.description" class="artifact-description">{{ artifact.description }}</text>
                   </view>
                 </view>
+                <view v-if="getArtifactHighlights(artifact).length" class="artifact-highlights">
+                  <view
+                    v-for="(highlight, highlightIndex) in getArtifactHighlights(artifact)"
+                    :key="`${artifactIndex}-highlight-${highlightIndex}`"
+                    class="artifact-highlight"
+                  >
+                    <text>{{ highlight.label }}</text>
+                    <text class="artifact-highlight-value">{{ highlight.value }}</text>
+                  </view>
+                </view>
                 <view v-if="artifact.type === 'plan' && artifact.steps && artifact.steps.length" class="plan-step-list">
                   <view
                     v-for="(step, stepIndex) in artifact.steps"
@@ -122,6 +132,26 @@
                     <button class="artifact-action" :disabled="loading" @click="handleArtifactAction(artifact, 'edit')">修改草稿</button>
                     <button class="artifact-action ghost" :disabled="loading" @click="handleArtifactAction(artifact, 'cancel')">取消</button>
                   </template>
+                </view>
+                <view
+                  v-else-if="artifact.actions && artifact.actions.length"
+                  class="artifact-actions artifact-prompt-actions"
+                  :class="{ 'guide-action-grid': isActionCardArtifact(artifact) }"
+                >
+                  <button
+                    v-for="(action, actionIndex) in artifact.actions"
+                    :key="`${artifactIndex}-action-${actionIndex}`"
+                    class="artifact-action"
+                    :class="{ primary: action.primary, 'guide-action-card': isActionCardArtifact(artifact) }"
+                    :disabled="loading"
+                    @click="handleArtifactPromptAction(action)"
+                  >
+                    <template v-if="isActionCardArtifact(artifact)">
+                      <text class="guide-action-label">{{ action.label || '执行' }}</text>
+                      <text v-if="action.prompt" class="guide-action-hint">{{ getGuideActionHint(action.prompt) }}</text>
+                    </template>
+                    <template v-else>{{ action.label || '执行' }}</template>
+                  </button>
                 </view>
               </view>
             </view>
@@ -330,6 +360,26 @@ const getArtifactIcon = (artifact) => {
   if (artifact?.type === 'order') return '约'
   if (artifact?.type === 'content') return '动'
   return 'i'
+}
+
+const isActionCardArtifact = (artifact) => ['guide', 'weather', 'order', 'content'].includes(artifact?.type)
+
+const truncateArtifactValue = (value, maxLength = 18) => {
+  const text = String(value || '')
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+const getArtifactHighlights = (artifact) => {
+  if (!['guide', 'weather', 'order', 'content', 'plan'].includes(artifact?.type)) return []
+  const lowPriorityLabels = ['安全策略', '写操作保护', '摘要', '建议', '下一步']
+  const fields = (artifact?.fields || [])
+    .filter(field => field && field.label && !field.missing && !['未填写', '待补充'].includes(formatArtifactValue(field.value)))
+  const primaryFields = fields.filter(field => !lowPriorityLabels.includes(String(field.label)))
+  const selected = (primaryFields.length ? primaryFields : fields).slice(0, 3)
+  return selected.map(field => ({
+    label: field.label,
+    value: truncateArtifactValue(formatArtifactValue(field.value))
+  }))
 }
 
 const readStreamStates = () => {
@@ -658,6 +708,30 @@ const handleArtifactAction = (artifact, action) => {
     cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
   }
   sendMessageText(messages[action])
+}
+
+const handleArtifactPromptAction = (action) => {
+  const route = String(action?.route || '').trim()
+  if (route) {
+    const appRoute = mapWebRouteToApp(route)
+    if (appRoute) {
+      if (appRoute.type === 'tab') {
+        uni.switchTab({ url: appRoute.url })
+      } else {
+        uni.navigateTo({ url: appRoute.url })
+      }
+      return
+    }
+  }
+  const prompt = String(action?.prompt || '').trim()
+  if (prompt) {
+    sendMessageText(prompt)
+  }
+}
+
+const getGuideActionHint = (prompt) => {
+  const text = String(prompt || '').replace(/\s+/g, ' ').trim()
+  return text.length > 32 ? `${text.slice(0, 32)}...` : text
 }
 
 const buildEditedArtifactMessage = (artifact) => {
@@ -1510,8 +1584,9 @@ onUnmounted(detachActiveStream)
 
 .assistant-bubble {
   max-width: calc(100% - 70rpx);
-  background: #ffffff;
+  background: rgba(255, 255, 255, 0.94) !important;
   color: #263244;
+  border: 1rpx solid rgba(214, 226, 240, 0.92) !important;
   border-bottom-left-radius: 4rpx;
   box-shadow: 0 8rpx 22rpx rgba(22, 34, 51, 0.06);
 }
@@ -1611,6 +1686,42 @@ onUnmounted(detachActiveStream)
   background: #4f46e5;
 }
 
+.artifact-guide {
+  border-color: #a7f3d0;
+  background: #f0fdfa;
+}
+
+.artifact-guide .artifact-icon {
+  background: #0f766e;
+}
+
+.artifact-weather {
+  border-color: #b8d4ff;
+  background: #eef6ff;
+}
+
+.artifact-weather .artifact-icon {
+  background: #2563eb;
+}
+
+.artifact-order {
+  border-color: #bbf7d0;
+  background: #f0fdf4;
+}
+
+.artifact-order .artifact-icon {
+  background: #16a34a;
+}
+
+.artifact-content {
+  border-color: #ddd6fe;
+  background: #f5f3ff;
+}
+
+.artifact-content .artifact-icon {
+  background: #7c3aed;
+}
+
 .artifact-header {
   display: flex;
   align-items: flex-start;
@@ -1649,6 +1760,45 @@ onUnmounted(detachActiveStream)
   color: #667085;
   font-size: 23rpx;
   line-height: 1.45;
+}
+
+.artifact-highlights {
+  display: flex;
+  flex-direction: row;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 14rpx;
+}
+
+.artifact-highlight {
+  min-width: 136rpx;
+  max-width: 100%;
+  padding: 10rpx 12rpx;
+  border: 1rpx solid rgba(148, 163, 184, 0.22);
+  border-radius: 12rpx;
+  background: rgba(255, 255, 255, 0.68);
+  box-sizing: border-box;
+}
+
+.artifact-highlight text:first-child {
+  display: block;
+  color: #667085;
+  font-size: 19rpx;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.artifact-highlight-value {
+  display: block;
+  max-width: 220rpx;
+  margin-top: 4rpx;
+  overflow: hidden;
+  color: #172033;
+  font-size: 22rpx;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .plan-step-list {
@@ -1764,6 +1914,16 @@ onUnmounted(detachActiveStream)
   flex-wrap: wrap;
 }
 
+.artifact-prompt-actions {
+  padding-top: 16rpx;
+  border-top: 1rpx solid rgba(203, 213, 225, 0.76);
+}
+
+.guide-action-grid {
+  display: flex;
+  flex-direction: column;
+}
+
 .artifact-action {
   width: auto;
   min-width: 138rpx;
@@ -1778,10 +1938,47 @@ onUnmounted(detachActiveStream)
   font-weight: 800;
 }
 
+.guide-action-card {
+  width: 100%;
+  min-height: 96rpx;
+  height: auto;
+  line-height: 1.3;
+  padding: 16rpx 18rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 6rpx;
+  text-align: left;
+  white-space: normal;
+  background: rgba(248, 251, 255, 0.92);
+  border-color: #bfdbfe;
+  box-shadow: 0 8rpx 18rpx rgba(37, 99, 235, 0.08);
+}
+
+.guide-action-label {
+  color: inherit;
+  font-size: 24rpx;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.guide-action-hint {
+  color: #667085;
+  font-size: 21rpx;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
 .artifact-action.primary {
   border-color: #1f447a;
   background: #1f447a;
   color: #ffffff;
+}
+
+.guide-action-card.primary .guide-action-hint {
+  color: rgba(255, 255, 255, 0.78);
 }
 
 .artifact-action.ghost {
@@ -2504,10 +2701,10 @@ onUnmounted(detachActiveStream)
   .artifact-card,
   .inline-map-card,
   .memory-panel {
-    background: #172235;
-    color: #edf4ff;
-    border-color: rgba(148, 163, 184, 0.22);
-    box-shadow: 0 16rpx 34rpx rgba(0, 0, 0, 0.22);
+    background: #172235 !important;
+    color: #edf4ff !important;
+    border-color: rgba(148, 163, 184, 0.22) !important;
+    box-shadow: 0 16rpx 34rpx rgba(0, 0, 0, 0.22) !important;
   }
 
   .artifact-confirmation {
@@ -2545,6 +2742,7 @@ onUnmounted(detachActiveStream)
   .operation-detail,
   .artifact-description,
   .artifact-field-label,
+  .artifact-highlight text:first-child,
   .plan-step-detail,
   .markdown-body :deep(.entity-subtitle),
   .markdown-body :deep(.map-card-coords),
@@ -2563,6 +2761,7 @@ onUnmounted(detachActiveStream)
   }
 
   .artifact-field,
+  .artifact-highlight,
   .plan-step,
   .artifact-edit-input,
   .input {
@@ -2574,6 +2773,10 @@ onUnmounted(detachActiveStream)
   .artifact-field.missing {
     background: rgba(245, 158, 11, 0.12);
     border-color: rgba(245, 158, 11, 0.35);
+  }
+
+  .artifact-highlight-value {
+    color: #edf4ff;
   }
 
   .plan-step-index {

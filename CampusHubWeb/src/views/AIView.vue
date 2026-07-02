@@ -158,6 +158,16 @@
                               <div v-if="artifact.description" class="artifact-description">{{ artifact.description }}</div>
                             </div>
                           </div>
+                          <div v-if="getArtifactHighlights(artifact).length" class="artifact-highlights">
+                            <div
+                              v-for="(highlight, highlightIndex) in getArtifactHighlights(artifact)"
+                              :key="`${artifactIndex}-highlight-${highlightIndex}`"
+                              class="artifact-highlight"
+                            >
+                              <span>{{ highlight.label }}</span>
+                              <strong>{{ highlight.value }}</strong>
+                            </div>
+                          </div>
                           <div v-if="artifact.type === 'plan' && artifact.steps?.length" class="plan-step-list">
                             <div
                               v-for="(step, stepIndex) in artifact.steps"
@@ -905,6 +915,24 @@ function getArtifactIcon(artifact) {
 
 function isActionCardArtifact(artifact) {
   return ['guide', 'weather', 'order', 'content'].includes(artifact?.type)
+}
+
+function getArtifactHighlights(artifact) {
+  if (!['guide', 'weather', 'order', 'content', 'plan'].includes(artifact?.type)) return []
+  const lowPriorityLabels = new Set(['安全策略', '写操作保护', '摘要', '建议', '下一步'])
+  const fields = (artifact?.fields || [])
+    .filter(field => field && field.label && !isArtifactFieldMissing(field))
+  const primaryFields = fields.filter(field => !lowPriorityLabels.has(String(field.label)))
+  const selected = (primaryFields.length ? primaryFields : fields).slice(0, 3)
+  return selected.map(field => ({
+    label: field.label,
+    value: truncateArtifactValue(formatArtifactValue(field.value), 30)
+  }))
+}
+
+function truncateArtifactValue(value, maxLength = 30) {
+  const text = String(value || '')
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
 }
 
 function isArtifactFieldMissing(field) {
@@ -2267,6 +2295,38 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
+}
+.artifact-highlights {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.artifact-highlight {
+  min-width: 96px;
+  max-width: 100%;
+  padding: 6px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.22);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+  line-height: 1.25;
+}
+.artifact-highlight span {
+  display: block;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 800;
+}
+.artifact-highlight strong {
+  display: block;
+  max-width: 160px;
+  margin-top: 2px;
+  overflow: hidden;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 900;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .plan-step-list {
   display: grid;
@@ -3739,6 +3799,19 @@ onBeforeUnmount(() => {
 
 :global(html[data-theme='dark'] .ai-view .artifact-field-label) {
   color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-highlight) {
+  background: rgba(15, 23, 42, 0.72) !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-highlight span) {
+  color: #8aa3c2 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-highlight strong) {
+  color: #edf4ff !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .plan-step-detail) {
