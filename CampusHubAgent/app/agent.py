@@ -688,6 +688,202 @@ def _detect_general_help_shortcut(user_message: str) -> dict | None:
     }
 
 
+def _detect_read_intent_shortcut(user_message: str) -> dict | None:
+    """Fast path for unambiguous read-only requests that should not wait on LLM routing."""
+    text = " ".join(str(user_message or "").split())
+    lowered = text.lower()
+    if not text:
+        return None
+
+    hard_write_cues = (
+        "发布动态",
+        "发一条动态",
+        "发个动态",
+        "发动态",
+        "创建",
+        "发起",
+        "报名",
+        "申请加入",
+        "加入订单",
+        "加入活动",
+        "评论",
+        "点赞",
+        "记住",
+        "接受申请",
+        "完成订单",
+    )
+    read_only_overrides = (
+        "不要创建",
+        "别创建",
+        "不用创建",
+        "不要发布",
+        "别发布",
+        "不用发布",
+        "不要发",
+        "别发",
+        "先只",
+        "只推荐",
+        "先推荐",
+        "先看看",
+        "先查",
+        "只是",
+        "仅",
+    )
+    if _has_any(text, hard_write_cues) and not _has_any(text, read_only_overrides):
+        return None
+
+    weather_read_cues = ("天气", "下雨", "气温", "温度", "适不适合", "适合不适合")
+    if _has_any(text, weather_read_cues) and _has_any(text, ("查", "查询", "看看", "今天", "明天", "北京", "户外", "跑步")):
+        return {
+            "primary_intent": "weather.query",
+            "domain": "weather",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.86,
+            "summary": "用户想查询天气并获得出行或活动建议",
+            "missing_slots": [],
+            "suggested_agents": ["map_weather"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "read_shortcut": True,
+            "router_timeout": False,
+        }
+
+    generic_read_cues = (
+        "搜",
+        "搜索",
+        "找",
+        "看看",
+        "查询",
+        "查一下",
+        "列出来",
+        "有哪些",
+        "有没有",
+        "主页",
+        "资料",
+        "信息",
+    )
+    if _has_any(text, generic_read_cues) and _has_any(text, ("用户", "主页", "资料")):
+        return {
+            "primary_intent": "user.profile",
+            "domain": "user",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.84,
+            "summary": "用户想查看用户主页或资料信息",
+            "missing_slots": [],
+            "suggested_agents": ["user_profile"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "read_shortcut": True,
+            "router_timeout": False,
+        }
+
+    if _has_any(text, generic_read_cues) and _has_any(text, ("动态", "帖子", "评论区", "校园圈")):
+        return {
+            "primary_intent": "content.search",
+            "domain": "content",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.84,
+            "summary": "用户想搜索或查看校园动态内容",
+            "missing_slots": [],
+            "suggested_agents": ["content_query"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "read_shortcut": True,
+            "router_timeout": False,
+        }
+
+    negated_order_write = _has_any(text, ("不要创建订单", "别创建订单", "不用创建订单", "不要发订单", "别发订单"))
+    has_positive_order_context = (
+        ("订单" in text and not negated_order_write)
+        or _has_any(text, ("约伴", "我发布过", "我参加过", "报名记录", "申请记录"))
+    )
+    has_order_activity_context = "活动" in text and _has_any(text, ("约伴", "报名", "加入", "我发布过", "我参加过"))
+    if (
+        _has_any(text, generic_read_cues)
+        and (has_positive_order_context or has_order_activity_context)
+        and not (negated_order_write and not has_positive_order_context)
+    ):
+        return {
+            "primary_intent": "order.search",
+            "domain": "order",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.84,
+            "summary": "用户想搜索或查看约伴活动订单",
+            "missing_slots": [],
+            "suggested_agents": ["order_query"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "read_shortcut": True,
+            "router_timeout": False,
+        }
+
+    map_read_cues = (
+        "找",
+        "推荐",
+        "看看",
+        "查询",
+        "查一下",
+        "附近",
+        "有没有",
+        "哪里",
+        "怎么走",
+        "路线",
+        "地图",
+        "地址",
+        "导航",
+        "比较",
+    )
+    place_cues = (
+        "店",
+        "地方",
+        "地点",
+        "商家",
+        "场",
+        "馆",
+        "餐厅",
+        "吃饭",
+        "饭",
+        "按摩",
+        "洗脚",
+        "足疗",
+        "推拿",
+        "spa",
+        "头疗",
+        "玩",
+        "电影院",
+        "影院",
+        "咖啡",
+        "奶茶",
+        "超市",
+        "药店",
+        "医院",
+        "ktv",
+        "酒吧",
+        "公园",
+    )
+    if _has_any(lowered, map_read_cues) and _has_any(lowered, place_cues):
+        return {
+            "primary_intent": "map.search",
+            "domain": "map",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.86,
+            "summary": "用户想查询、推荐或比较附近地点",
+            "missing_slots": [],
+            "suggested_agents": ["map_weather"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "read_shortcut": True,
+            "router_timeout": False,
+        }
+
+    return None
+
+
 def _detect_draft_edit_shortcut(history: list, user_message: str) -> dict | None:
     """Keep draft edits in the original write domain without another slow router round."""
     text = " ".join(str(user_message or "").split())
@@ -1083,6 +1279,25 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
             "phase": "intent_general_help",
             "title": "识别普通帮助请求",
             "detail": "这是低风险能力介绍或闲聊请求，无需调用业务工具或等待写操作确认",
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
+    read_shortcut_analysis = _detect_read_intent_shortcut(user_message)
+    if read_shortcut_analysis:
+        analysis = _normalize_intent_analysis(read_shortcut_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_read",
+            "title": "识别明确只读请求",
+            "detail": "这是查询、推荐、路线或天气类请求，无需等待写操作确认",
             "state": "completed",
         })
         await _emit_event("intent", {

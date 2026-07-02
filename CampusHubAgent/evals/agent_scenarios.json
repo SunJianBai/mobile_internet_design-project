@@ -16,7 +16,8 @@
         "domain": "map",
         "operation_type": "read",
         "requires_confirmation": false,
-        "next_action": "execute_read_tools"
+        "next_action": "execute_read_tools",
+        "max_duration_ms": 1000
       }
     },
     {
@@ -27,7 +28,8 @@
         "primary_intent": "map.search",
         "domain": "map",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -38,7 +40,8 @@
         "primary_intent": "map.search",
         "domain": "map",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -49,7 +52,8 @@
         "primary_intent": "weather.query",
         "domain": "weather",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -60,7 +64,8 @@
         "primary_intent": "order.search",
         "domain": "order",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -71,7 +76,8 @@
         "primary_intent_any": ["order.search", "order.manage"],
         "domain": "order",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -120,7 +126,8 @@
         "primary_intent": "content.search",
         "domain": "content",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -168,7 +175,8 @@
         "primary_intent": "user.profile",
         "domain": "user",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -230,7 +238,8 @@
         "primary_intent": "map.search",
         "domain": "map",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {
@@ -241,7 +250,20 @@
         "primary_intent": "map.search",
         "domain": "map",
         "operation_type": "read",
-        "requires_confirmation": false
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
+      }
+    },
+    {
+      "id": "map_activity_venue_not_order",
+      "category": "guardrail",
+      "message": "附近有没有适合办社团活动的场馆推荐，先只看看地图，不要创建订单",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
       }
     },
     {

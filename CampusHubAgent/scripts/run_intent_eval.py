@@ -50,7 +50,7 @@ def expected_values(expect: dict[str, Any], key: str) -> list[Any] | None:
     return None
 
 
-def check_expectation(actual: dict[str, Any], expect: dict[str, Any]) -> list[str]:
+def check_expectation(actual: dict[str, Any], expect: dict[str, Any], duration_ms: int | None = None) -> list[str]:
     failures: list[str] = []
     for key in ("primary_intent", "domain", "operation_type", "next_action"):
         allowed = expected_values(expect, key)
@@ -78,6 +78,10 @@ def check_expectation(actual: dict[str, Any], expect: dict[str, Any]) -> list[st
         confidence = actual.get("confidence")
         if not isinstance(confidence, (int, float)) or confidence < min_confidence:
             failures.append(f"confidence: expected >= {min_confidence}, got {confidence!r}")
+
+    max_duration_ms = expect.get("max_duration_ms")
+    if max_duration_ms is not None and duration_ms is not None and duration_ms > int(max_duration_ms):
+        failures.append(f"duration_ms: expected <= {max_duration_ms}, got {duration_ms}")
 
     return failures
 
@@ -121,13 +125,17 @@ async def run_scenario(
             ),
             timeout=timeout_seconds,
         )
+        duration_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
         actual = dict(actual)
+        actual["duration_ms"] = duration_ms
         actual["confirmation_gate"] = _requires_confirmation_gate(actual)
-        failures = check_expectation(actual, scenario["expect"])
+        failures = check_expectation(actual, scenario["expect"], duration_ms)
     except asyncio.TimeoutError:
+        duration_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
         actual = {"error": f"timed out after {timeout_seconds:g}s"}
         failures = [actual["error"]]
     except Exception as exc:  # pragma: no cover - eval runner should report environment issues.
+        duration_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
         actual = {"error": str(exc)}
         failures = [f"scenario raised {exc.__class__.__name__}: {exc}"]
 
@@ -135,7 +143,7 @@ async def run_scenario(
         scenario_id=scenario["id"],
         category=scenario["category"],
         ok=not failures,
-        duration_ms=int((asyncio.get_running_loop().time() - started_at) * 1000),
+        duration_ms=duration_ms,
         failures=failures,
         expected=scenario["expect"],
         actual=actual,
