@@ -1,0 +1,245 @@
+{
+  "version": 1,
+  "description": "CampusHub agent intent-routing scenarios that mimic real student requests.",
+  "default_user": {
+    "uid": 4,
+    "nickname": "Codex QA",
+    "campus": "LIANGXIANG"
+  },
+  "scenarios": [
+    {
+      "id": "map_recommend_foot_massage_group",
+      "category": "map_read",
+      "message": "我想要找3个人一起去洗脚按摩，有什么推荐的店吗",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "map_restaurant_for_three",
+      "category": "map_read",
+      "message": "良乡校区附近有没有适合三个人吃饭的店，预算人均50左右",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "map_route_to_cinema",
+      "category": "map_read",
+      "message": "从北理工良乡校区到最近的电影院怎么走，顺便给我地图",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "weather_outdoor_advice",
+      "category": "weather_read",
+      "message": "查一下今天北京天气，适不适合晚上去操场跑步",
+      "expect": {
+        "primary_intent": "weather.query",
+        "domain": "weather",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "order_search_basketball",
+      "category": "order_read",
+      "message": "帮我看看良乡校区今天有没有篮球约伴活动",
+      "expect": {
+        "primary_intent": "order.search",
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "order_search_my_orders",
+      "category": "order_read",
+      "message": "我最近发布过哪些约伴订单，帮我列出来",
+      "expect": {
+        "primary_intent_any": ["order.search", "order.manage"],
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "order_create_missing_slots",
+      "category": "order_write",
+      "message": "帮我创建一个明天下午打羽毛球的约伴",
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "next_action_any": ["ask_clarification", "prepare_draft"]
+      }
+    },
+    {
+      "id": "order_create_full_draft",
+      "category": "order_write",
+      "message": "帮我创建一个明晚7点良乡体育馆的篮球约伴，最多4个人，男女不限",
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "order_apply_write",
+      "category": "order_write",
+      "message": "帮我报名加入订单 12",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true
+      }
+    },
+    {
+      "id": "content_search_study",
+      "category": "content_read",
+      "message": "搜一下最近有没有人在动态里约图书馆自习",
+      "expect": {
+        "primary_intent": "content.search",
+        "domain": "content",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "content_create_dynamic",
+      "category": "content_write",
+      "message": "帮我发一条动态：今晚七点图书馆二楼自习，欢迎同学一起加入",
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "content_comment_write",
+      "category": "content_write",
+      "message": "帮我给动态 8 评论：我也想参加",
+      "expect": {
+        "primary_intent": "content.interact",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true
+      }
+    },
+    {
+      "id": "content_like_write",
+      "category": "content_write",
+      "message": "给动态 5 点个赞",
+      "expect": {
+        "primary_intent": "content.interact",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true
+      }
+    },
+    {
+      "id": "user_profile_read",
+      "category": "user_read",
+      "message": "帮我看看用户 3 的主页信息",
+      "expect": {
+        "primary_intent": "user.profile",
+        "domain": "user",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "memory_preference_save",
+      "category": "memory_write",
+      "message": "记住我以后优先推荐良乡校区附近、预算不太贵的店",
+      "expect": {
+        "primary_intent": "memory.manage",
+        "domain": "memory",
+        "operation_type_any": ["write", "mixed"],
+        "requires_confirmation": true
+      }
+    },
+    {
+      "id": "multi_step_find_then_create",
+      "category": "multi_step",
+      "message": "先帮我找附近适合三个人吃饭的地方，如果不错再帮我创建约饭订单",
+      "expect": {
+        "primary_intent_any": ["multi_step", "map.search"],
+        "domain_any": ["multi", "map"],
+        "operation_type": "mixed",
+        "requires_confirmation": true
+      }
+    },
+    {
+      "id": "ambiguous_join_people_not_publish",
+      "category": "guardrail",
+      "message": "想找几个人一起出去玩，先看看附近有什么地方推荐",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "ambiguous_publish_dynamic",
+      "category": "guardrail",
+      "message": "帮我发个动态找几个人一起出去玩",
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true
+      }
+    },
+    {
+      "id": "draft_edit_context",
+      "category": "draft_followup",
+      "message": "把时间改成晚上八点，地点改成三楼",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我发一条动态：今晚七点图书馆二楼自习"
+        },
+        {
+          "role": "assistant",
+          "content": "已生成发布动态确认草稿，请确认或修改。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true
+      }
+    },
+    {
+      "id": "casual_chat",
+      "category": "general",
+      "message": "你能做什么，给我几个例子",
+      "expect": {
+        "primary_intent": "chat.general",
+        "domain": "general",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    }
+  ]
+}

@@ -50,6 +50,21 @@
           </div>
           <h2 class="empty-title">CampusHub AI 助手</h2>
           <p class="empty-subtitle">我可以帮你搜索约伴活动、查看天气、搜索地点等</p>
+          <div class="prompt-gallery" aria-label="快捷任务">
+            <button
+              v-for="item in promptStarters"
+              :key="item.title"
+              class="prompt-card"
+              type="button"
+              @click="startSuggestedPrompt(item.prompt)"
+            >
+              <span class="prompt-icon">{{ item.icon }}</span>
+              <span class="prompt-main">
+                <strong>{{ item.title }}</strong>
+                <small>{{ item.description }}</small>
+              </span>
+            </button>
+          </div>
           <button class="btn-start" @click="handleNewConversation">
             <svg viewBox="0 0 24 24" width="16" height="16"><path d="M19 13h-6v6h-2v-6H5v-2h6V5h2v6h6v2z" fill="currentColor"/></svg>
             开始新对话
@@ -65,6 +80,17 @@
               </div>
               <h3>新的对话</h3>
               <p>输入活动、天气、地点或校园服务问题，CampusHub 会帮你继续查找。</p>
+              <div class="quick-prompts" aria-label="建议问题">
+                <button
+                  v-for="item in promptStarters"
+                  :key="`quick-${item.title}`"
+                  class="quick-prompt"
+                  type="button"
+                  @click="startSuggestedPrompt(item.prompt)"
+                >
+                  {{ item.title }}
+                </button>
+              </div>
             </div>
             <div v-else class="messages-inner">
               <div v-for="message in messages" :key="message.mid" :class="['message-item', message.role]">
@@ -229,6 +255,33 @@ const wasMobileViewport = ref(false)
 let activeStreamController = null
 let streamStateUnsubscribe = null
 let streamStateReloading = false
+
+const promptStarters = [
+  {
+    icon: '约',
+    title: '找约伴活动',
+    description: '按校区、时间和运动类型筛选',
+    prompt: '帮我看看良乡校区今天有没有适合加入的篮球或羽毛球约伴活动'
+  },
+  {
+    icon: '图',
+    title: '附近推荐',
+    description: '找店铺、地点并展示地图',
+    prompt: '我想找适合三个人一起去的按摩店，请推荐附近店铺并展示地图'
+  },
+  {
+    icon: '稿',
+    title: '发布草稿',
+    description: '先生成确认卡片再执行',
+    prompt: '帮我发一条动态：今晚七点图书馆二楼自习，欢迎同学一起加入'
+  },
+  {
+    icon: '天',
+    title: '天气建议',
+    description: '结合天气判断是否适合出行',
+    prompt: '查一下今天北京天气，适不适合晚上去操场跑步'
+  }
+]
 
 const AGENT_EVENT_TITLES = {
   agent_step: '智能体执行中',
@@ -499,6 +552,13 @@ async function handleNewConversation() {
   } catch (e) {
     ElMessage.error('创建会话失败')
   }
+}
+
+async function startSuggestedPrompt(prompt) {
+  if (!prompt || sending.value) return
+  inputMessage.value = prompt
+  await nextTick()
+  await handleSendMessage()
 }
 
 async function switchConversation(cid) {
@@ -1107,11 +1167,67 @@ onBeforeUnmount(() => {
 
 .empty-state {
   flex: 1; display: flex; flex-direction: column; align-items: center;
-  justify-content: center; gap: 12px; color: #6b7280;
+  justify-content: center; gap: 14px; color: #6b7280;
+  padding: 28px;
 }
 .empty-logo { opacity: 0.4; }
 .empty-title { margin: 0; font-size: 22px; font-weight: 600; color: #111; }
 .empty-subtitle { margin: 0; font-size: 14px; color: #9ca3af; }
+.prompt-gallery {
+  width: min(720px, 100%);
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 8px 0 2px;
+}
+.prompt-card {
+  min-height: 86px;
+  display: flex;
+  align-items: flex-start;
+  gap: 12px;
+  padding: 14px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: #ffffff;
+  color: #111827;
+  text-align: left;
+  cursor: pointer;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.prompt-card:hover {
+  border-color: #bfdbfe;
+  background: #f8fbff;
+  transform: translateY(-1px);
+  box-shadow: 0 10px 24px rgba(15, 23, 42, 0.08);
+}
+.prompt-icon {
+  width: 34px;
+  height: 34px;
+  flex: 0 0 34px;
+  border-radius: 8px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #eff6ff;
+  color: #2563eb;
+  font-weight: 700;
+}
+.prompt-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.prompt-main strong {
+  font-size: 14px;
+  line-height: 1.35;
+  color: #111827;
+}
+.prompt-main small {
+  font-size: 12px;
+  line-height: 1.45;
+  color: #6b7280;
+}
 .btn-start {
   display: flex; align-items: center; gap: 6px;
   padding: 10px 20px; border: 1px solid #d1d5db; border-radius: 20px;
@@ -1162,6 +1278,30 @@ onBeforeUnmount(() => {
   color: var(--ch-muted, #6b7280);
   font-size: 14px;
   line-height: 1.6;
+}
+.quick-prompts {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+  max-width: 560px;
+  margin-top: 4px;
+}
+.quick-prompt {
+  min-height: 34px;
+  padding: 7px 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.quick-prompt:hover {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
 }
 
 .message-item { margin-bottom: 24px; }
@@ -1659,6 +1799,8 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .btn-new-chat,
 :global(:root[data-theme='dark']) .btn-expand,
 :global(:root[data-theme='dark']) .btn-start,
+:global(:root[data-theme='dark']) .prompt-card,
+:global(:root[data-theme='dark']) .quick-prompt,
 :global(:root[data-theme='dark']) .input-wrapper {
   background: #172235;
   color: #e5edf8;
@@ -1669,7 +1811,9 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .conv-item:hover,
 :global(:root[data-theme='dark']) .btn-memory:hover,
 :global(:root[data-theme='dark']) .btn-toggle:hover,
-:global(:root[data-theme='dark']) .btn-start:hover {
+:global(:root[data-theme='dark']) .btn-start:hover,
+:global(:root[data-theme='dark']) .prompt-card:hover,
+:global(:root[data-theme='dark']) .quick-prompt:hover {
   background: #1f2d44;
   color: #f8fbff;
   border-color: rgba(148, 163, 184, 0.28);
@@ -1699,8 +1843,18 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .empty-title,
 :global(:root[data-theme='dark']) .assistant-content,
-:global(:root[data-theme='dark']) .operation-title {
+:global(:root[data-theme='dark']) .operation-title,
+:global(:root[data-theme='dark']) .prompt-main strong {
   color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .prompt-main small {
+  color: #94a3b8;
+}
+
+:global(:root[data-theme='dark']) .prompt-icon {
+  background: #223554;
+  color: #bfdbfe;
 }
 
 :global(:root[data-theme='dark']) .assistant-avatar {
@@ -1951,5 +2105,9 @@ onBeforeUnmount(() => {
   .user-message-text { max-width: 85%; }
   .messages-inner { padding: 16px 12px; }
   .input-area { padding: 12px; }
+  .empty-state { justify-content: flex-start; padding-top: 44px; }
+  .prompt-gallery { grid-template-columns: 1fr; }
+  .prompt-card { min-height: 74px; }
+  .quick-prompts { max-width: 100%; }
 }
 </style>
