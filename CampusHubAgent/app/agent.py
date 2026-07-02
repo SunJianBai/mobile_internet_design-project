@@ -1265,6 +1265,64 @@ async def build_confirmation_artifact(
     return artifact
 
 
+async def build_general_help_response(intent_analysis: dict) -> dict:
+    """Return a fast, structured answer for low-risk product-help prompts."""
+    await _emit_event("agent_step", {
+        "phase": "general_help",
+        "title": "整理助手能力",
+        "detail": "这是普通帮助请求，直接展示可用能力和示例入口",
+        "state": "completed",
+    })
+
+    artifact = {
+        "type": "guide",
+        "title": "CampusHub AI 可以帮你做什么",
+        "description": "选择一个入口直接试用；涉及创建、发布、报名、评论、点赞和记忆写入时都会先生成确认草稿。",
+        "fields": [
+            {"label": "地图推荐", "value": "找店铺、路线、附近地点，并直接展示可操作地图"},
+            {"label": "约伴活动", "value": "查询可加入活动，或整理新的约伴订单草稿"},
+            {"label": "校园动态", "value": "搜索动态、整理发布草稿、评论和点赞前先确认"},
+            {"label": "天气规划", "value": "查询天气并给出户外/室内备选安排"},
+            {"label": "长期记忆", "value": "在你确认后记住偏好，用于后续推荐"},
+        ],
+        "actions": [
+            {
+                "label": "找三人按摩店",
+                "prompt": "我想找适合三个人一起去的按摩店，请推荐附近店铺并展示地图",
+                "primary": True,
+            },
+            {
+                "label": "查可加入约伴",
+                "prompt": "帮我看看良乡校区今天有没有适合加入的篮球或羽毛球约伴活动",
+            },
+            {
+                "label": "写动态草稿",
+                "prompt": "帮我发一条动态：今晚七点图书馆二楼自习，欢迎同学一起加入",
+            },
+            {
+                "label": "查天气建议",
+                "prompt": "查一下今天北京天气，适不适合晚上去操场跑步",
+            },
+        ],
+        "state": "completed",
+    }
+
+    await _emit_event("artifact", artifact)
+    reply = (
+        "我可以帮你把校园里的查询、推荐和发布准备工作串起来。\n\n"
+        "- **查信息**：约伴活动、校园动态、用户主页、天气和附近地点。\n"
+        "- **做规划**：根据地点/天气/人数给出下一步建议。\n"
+        "- **生成草稿**：订单、动态、评论、报名和记忆写入都会先让你确认，不会直接发布。\n\n"
+        "下面的能力卡可以直接点一个入口开始。"
+    )
+    return {
+        "reply": reply,
+        "tool_calls": [],
+        "intent": intent_analysis,
+        "artifacts": [artifact],
+    }
+
+
 # ==================== 子 Agent 执行器 ====================
 
 async def _run_sub_agent(agent_key: str, agent_name: str, system_prompt: str, tools: list, task: str) -> str:
@@ -1397,6 +1455,12 @@ async def chat(
             "intent": intent_analysis,
             "artifacts": [artifact],
         }
+
+    if (
+        (intent_analysis.get("primary_intent") or "").lower() == "chat.general"
+        and (intent_analysis.get("next_action") or "").lower() == "direct_answer"
+    ):
+        return await build_general_help_response(intent_analysis)
 
     await _emit_event("agent_step", {
         "phase": "planning",

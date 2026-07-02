@@ -179,6 +179,17 @@
                               </button>
                             </template>
                           </div>
+                          <div v-else-if="artifact.actions?.length" class="artifact-actions artifact-prompt-actions">
+                            <button
+                              v-for="(action, actionIndex) in artifact.actions"
+                              :key="`${artifactIndex}-action-${actionIndex}`"
+                              :class="['artifact-action', { primary: action.primary }]"
+                              :disabled="sending"
+                              @click="handleArtifactPromptAction(action)"
+                            >
+                              {{ action.label || '执行' }}
+                            </button>
+                          </div>
                         </div>
                       </div>
                       <div v-if="message.loading" class="loading-dots">
@@ -288,6 +299,7 @@ let streamStateReloading = false
 const COMPLETED_UI_STATE_KEY = 'campushub_ai_completed_ui_states'
 const COMPLETED_UI_STATE_TTL = 24 * 60 * 60 * 1000
 const COMPLETED_UI_STATE_LIMIT = 30
+const COMPLETED_UI_ITEMS_PER_CONVERSATION = 8
 
 const promptStarters = [
   {
@@ -424,6 +436,7 @@ function normalizeArtifact(eventName, data) {
   const payload = parseAgentEventData(data)
   const type = payload.type || (eventName === 'confirm_required' ? 'confirmation' : 'generic')
   const fields = Array.isArray(payload.fields) ? payload.fields : []
+  const actions = Array.isArray(payload.actions) ? payload.actions : []
   return {
     ...payload,
     type,
@@ -434,6 +447,9 @@ function normalizeArtifact(eventName, data) {
         editValue: formatArtifactValue(normalized.value) === '未填写' ? '' : formatArtifactValue(normalized.value)
       }
     }),
+    actions: actions
+      .map(action => action && typeof action === 'object' ? action : { label: String(action || ''), prompt: String(action || '') })
+      .filter(action => action.label || action.prompt),
     editing: false
   }
 }
@@ -532,8 +548,17 @@ function saveCompletedUiState(cid, assistantMsg, userText) {
   if (!operations.length && !artifacts.length) return
 
   const states = readCompletedUiStates()
-  states[String(cid)] = {
-    cid,
+  const key = String(cid)
+  const previous = states[key] || {}
+  const previousItems = Array.isArray(previous.items)
+    ? previous.items
+    : (previous.assistant ? [{
+        userText: previous.userText,
+        updatedAt: previous.updatedAt,
+        assistant: previous.assistant
+      }] : [])
+
+  const item = {
     userText,
     updatedAt: Date.now(),
     assistant: {
@@ -541,6 +566,19 @@ function saveCompletedUiState(cid, assistantMsg, userText) {
       artifacts,
       contentPreview: String(assistantMsg.content || '').slice(0, 120)
     }
+  }
+  const itemKey = `${String(userText || '')}::${item.assistant.contentPreview}`
+  const items = [
+    item,
+    ...previousItems.filter(existing =>
+      `${String(existing?.userText || '')}::${String(existing?.assistant?.contentPreview || '')}` !== itemKey
+    )
+  ].slice(0, COMPLETED_UI_ITEMS_PER_CONVERSATION)
+
+  states[key] = {
+    cid,
+    updatedAt: item.updatedAt,
+    items
   }
   const trimmed = Object.fromEntries(
     Object.entries(states)
@@ -552,32 +590,41 @@ function saveCompletedUiState(cid, assistantMsg, userText) {
 
 function mergeCompletedUiState(cid) {
   const state = readCompletedUiStates()[String(cid)]
-  const assistant = state?.assistant
-  if (!assistant) return false
+  const items = Array.isArray(state?.items)
+    ? state.items
+    : (state?.assistant ? [{
+        userText: state.userText,
+        updatedAt: state.updatedAt,
+        assistant: state.assistant
+      }] : [])
+  if (!items.length) return false
 
-  const targetIndex = [...messages.value]
-    .map((message, index) => ({ message, index }))
-    .reverse()
-    .find(item => item.message.role === 'assistant')?.index
-  if (targetIndex === undefined) return false
-
-  const previousUser = [...messages.value]
-    .slice(0, targetIndex)
-    .reverse()
-    .find(message => message.role === 'user')
-  if (state.userText && previousUser?.content && previousUser.content !== state.userText) {
-    return false
-  }
-
-  const target = messages.value[targetIndex]
-  if (assistant.operations?.length && !target.operations?.length) {
-    target.operations = toPlainStreamValue(assistant.operations, [])
-  }
-  if (assistant.artifacts?.length && !target.artifacts?.length) {
-    target.artifacts = toPlainStreamValue(assistant.artifacts, [])
-  }
-  target.uiRestored = true
-  return true
+  let applied = 0
+  messages.value.forEach((target, targetIndex) => {
+    if (target.role !== 'assistant') return
+    const previousUser = [...messages.value]
+      .slice(0, targetIndex)
+      .reverse()
+      .find(message => message.role === 'user')
+    const matched = items.find(item => {
+      const assistant = item?.assistant || {}
+      const preview = String(assistant.contentPreview || '')
+      const userMatches = !item.userText || !previousUser?.content || previousUser.content === item.userText
+      const contentMatches = !preview || String(target.content || '').startsWith(preview)
+      return userMatches && contentMatches
+    })
+    const assistant = matched?.assistant
+    if (!assistant) return
+    if (assistant.operations?.length && !target.operations?.length) {
+      target.operations = toPlainStreamValue(assistant.operations, [])
+    }
+    if (assistant.artifacts?.length && !target.artifacts?.length) {
+      target.artifacts = toPlainStreamValue(assistant.artifacts, [])
+    }
+    target.uiRestored = true
+    applied += 1
+  })
+  return applied > 0
 }
 
 function clearStreamState(cid) {
@@ -688,6 +735,12 @@ function handleArtifactAction(artifact, action) {
     cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
   }
   sendMessageText(messages[action])
+}
+
+function handleArtifactPromptAction(action) {
+  const prompt = String(action?.prompt || '').trim()
+  if (!prompt) return
+  sendMessageText(prompt)
 }
 
 function buildEditedArtifactMessage(artifact) {
@@ -1636,6 +1689,13 @@ onBeforeUnmount(() => {
   border-color: #bfdbfe;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
+.artifact-guide {
+  border-color: #bae6fd;
+  background: linear-gradient(180deg, #ffffff 0%, #f0f9ff 100%);
+}
+.artifact-guide .artifact-icon {
+  background: #0f766e;
+}
 .artifact-header {
   display: flex;
   gap: 10px;
@@ -1703,6 +1763,10 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   gap: 8px;
   margin-top: 12px;
+}
+.artifact-prompt-actions {
+  padding-top: 12px;
+  border-top: 1px solid #e2e8f0;
 }
 .artifact-action {
   height: 32px;
@@ -2252,6 +2316,16 @@ onBeforeUnmount(() => {
   border-color: rgba(91, 140, 255, 0.34);
 }
 
+:global(:root[data-theme='dark']) .artifact-guide {
+  background: linear-gradient(180deg, #172235 0%, #102534 100%);
+  border-color: rgba(45, 212, 191, 0.28);
+}
+
+:global(:root[data-theme='dark']) .artifact-guide .artifact-icon {
+  background: #0f766e;
+  color: #ccfbf1;
+}
+
 :global(:root[data-theme='dark']) .artifact-title,
 :global(:root[data-theme='dark']) .artifact-field-value,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-title),
@@ -2284,6 +2358,10 @@ onBeforeUnmount(() => {
   background: #101a2a;
   color: #dbe7f8;
   border-color: rgba(148, 163, 184, 0.28);
+}
+
+:global(:root[data-theme='dark']) .artifact-prompt-actions {
+  border-top-color: rgba(148, 163, 184, 0.16);
 }
 
 :global(:root[data-theme='dark']) .artifact-action:hover:not(:disabled),
