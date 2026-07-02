@@ -111,6 +111,7 @@ async def run_scenario(
     scenario: dict[str, Any],
     default_user: dict[str, Any],
     timeout_seconds: float,
+    semantic_only: bool = False,
 ) -> ScenarioResult:
     from app.agent import analyze_intent, _requires_confirmation_gate
 
@@ -128,6 +129,8 @@ async def run_scenario(
         duration_ms = int((asyncio.get_running_loop().time() - started_at) * 1000)
         actual = dict(actual)
         actual["duration_ms"] = duration_ms
+        if semantic_only:
+            actual["semantic_only"] = True
         actual["confirmation_gate"] = _requires_confirmation_gate(actual)
         failures = check_expectation(actual, scenario["expect"], duration_ms)
     except asyncio.TimeoutError:
@@ -189,6 +192,11 @@ async def main() -> int:
     parser.add_argument("--limit", type=int)
     parser.add_argument("--timeout", type=float, default=30.0, help="seconds per scenario")
     parser.add_argument("--schema-only", action="store_true")
+    parser.add_argument(
+        "--semantic-only",
+        action="store_true",
+        help="Temporarily disable local shortcut routers so scenarios exercise the LLM semantic router.",
+    )
     parser.add_argument("--json", action="store_true", dest="json_output")
     args = parser.parse_args()
 
@@ -204,9 +212,37 @@ async def main() -> int:
         print(f"Scenario schema OK: {len(scenarios)} selected / {len(suite['scenarios'])} total")
         return 0
 
-    results = []
-    for scenario in scenarios:
-        results.append(await run_scenario(scenario, suite.get("default_user", {}), args.timeout))
+    if args.semantic_only:
+        from app import agent as agent_module
+
+        original_shortcuts = {
+            "_detect_safety_intent_shortcut": agent_module._detect_safety_intent_shortcut,
+            "_detect_draft_edit_shortcut": agent_module._detect_draft_edit_shortcut,
+            "_detect_general_help_shortcut": agent_module._detect_general_help_shortcut,
+            "_detect_read_intent_shortcut": agent_module._detect_read_intent_shortcut,
+        }
+        agent_module._intent_cache.clear()
+        agent_module._detect_safety_intent_shortcut = lambda _message: None
+        agent_module._detect_draft_edit_shortcut = lambda _history, _message: None
+        agent_module._detect_general_help_shortcut = lambda _message: None
+        agent_module._detect_read_intent_shortcut = lambda _message: None
+
+    try:
+        results = []
+        for scenario in scenarios:
+            results.append(
+                await run_scenario(
+                    scenario,
+                    suite.get("default_user", {}),
+                    args.timeout,
+                    semantic_only=args.semantic_only,
+                )
+            )
+    finally:
+        if args.semantic_only:
+            for name, original in original_shortcuts.items():
+                setattr(agent_module, name, original)
+            agent_module._intent_cache.clear()
 
     if args.json_output:
         print(json.dumps([result.__dict__ for result in results], ensure_ascii=False, indent=2))

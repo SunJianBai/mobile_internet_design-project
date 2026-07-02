@@ -7,12 +7,15 @@
 ```powershell
 python scripts/run_intent_eval.py --timeout 10
 python scripts/run_intent_eval.py --suite evals/persona_scenarios.json --timeout 12
+python scripts/run_intent_eval.py --suite evals/semantic_scenarios.json --semantic-only --timeout 30
 python scripts/run_direct_read_eval.py
 python scripts/run_delegation_guard_eval.py
 python scripts/run_router_fallback_eval.py
 ```
 
 `persona_scenarios.json` 覆盖更接近真人表达的请求，例如先查地图再创建草稿、否定发布动态、草稿追改、记忆偏好、评论/点赞确认等，用来防止意图分析在自然语言场景里退化。
+
+`semantic_scenarios.json` 建议配合 `--semantic-only` 使用。该模式会临时关闭本地快捷路由，让请求进入轻量大模型语义路由，用来验证“不是单纯关键词匹配”的复杂表达和上下文追改能力。
 
 `run_direct_read_eval.py` 使用假地图/天气工具结果验证直读响应，确保地图推荐会返回可渲染地图和下一步引导卡片，同时不访问外部接口。
 

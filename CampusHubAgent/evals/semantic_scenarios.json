@@ -1,0 +1,139 @@
+{
+  "version": 1,
+  "description": "Semantic-only intent scenarios. Run with --semantic-only to exercise the LLM router without local shortcut classifiers.",
+  "default_user": {
+    "uid": 4,
+    "nickname": "Codex QA",
+    "campus": "LIANGXIANG"
+  },
+  "scenarios": [
+    {
+      "id": "semantic_map_relax_place",
+      "category": "semantic_map_read",
+      "message": "三个人想去做肩颈放松，先帮我找附近评价好一点的地方就行",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "semantic_order_companion_not_place",
+      "category": "semantic_order_read",
+      "message": "我不是找店，想看看今晚有没有人一起打羽毛球",
+      "expect": {
+        "primary_intent": "order.search",
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "semantic_read_then_write_later",
+      "category": "semantic_multi_step",
+      "message": "先看看附近安静咖啡馆，如果环境合适我再约几个人去自习",
+      "expect": {
+        "primary_intent_any": ["multi_step", "map.search"],
+        "domain_any": ["multi", "map"],
+        "operation_type": "mixed",
+        "requires_confirmation": true,
+        "next_action": "execute_read_tools",
+        "confirmation_gate": false
+      }
+    },
+    {
+      "id": "semantic_order_draft_followup",
+      "category": "semantic_draft_followup",
+      "message": "人数换成四个，标题别太正式，时间还是刚才那个",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我创建一个按摩约伴订单草稿"
+        },
+        {
+          "role": "assistant",
+          "content": "已生成约伴订单确认草稿，请确认或修改后再执行。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "semantic_content_campus_post",
+      "category": "semantic_content_write",
+      "message": "帮我写一条发校园圈的话：今晚九点操场慢跑，想来的同学一起",
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "semantic_memory_dining_preference",
+      "category": "semantic_memory_write",
+      "message": "以后推荐吃饭的地方时记得我不吃辣，太吵的店也尽量避开",
+      "expect": {
+        "primary_intent": "memory.manage",
+        "domain": "memory",
+        "operation_type_any": ["write", "mixed"],
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "semantic_user_profile_colloquial",
+      "category": "semantic_user_read",
+      "message": "那个 12 号同学的主页给我瞅瞅，他以前发过啥",
+      "expect": {
+        "primary_intent": "user.profile",
+        "domain": "user",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "semantic_weather_plan",
+      "category": "semantic_weather_read",
+      "message": "明晚操场会不会不太适合跑步，要是下雨我就改室内",
+      "expect": {
+        "primary_intent": "weather.query",
+        "domain": "weather",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "semantic_guardrail_recommend_not_publish",
+      "category": "semantic_guardrail",
+      "message": "想找几个朋友周末出去玩，但这轮只要地点建议，别替我发东西",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "semantic_order_manage_accept",
+      "category": "semantic_order_write",
+      "message": "订单 18 里小王的申请我同意，不过执行前先给我确认一下",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    }
+  ]
+}

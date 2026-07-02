@@ -108,10 +108,19 @@ DEFAULT_INTENT_ANALYSIS = {
 INTENT_SEMANTIC_ROUTING_GUIDE = """
 Additional semantic routing guide:
 - A request to find, recommend, compare, route to, or look up stores/venues/places is a map.search read task, even when the user mentions a group size, time, budget, or says they want to go together.
+- If the user explicitly says they are not looking for stores/places and instead want people, partners, classmates, or "搭子", classify as order.search/read.
+- If the user asks to first inspect places/options and only later invite people, organize, publish, or create an activity, classify as multi_step/mixed with next_action=execute_read_tools. Do not jump directly to a write confirmation before the read step.
+- If the latest message edits a previous order/content confirmation draft, preserve the original create action from context. Editing an order draft is order.create, not order.manage.
+- "主页", "个人主页", "资料", "号同学", or asking what a user has posted means user.profile/read.
+- "记住", "以后推荐时记得", "以后优先", or durable preference updates mean memory.manage/write and domain=memory.
+- Weather-based planning such as "如果下雨我就改室内" is still weather.query/read unless the user asks CampusHub to create, publish, update, or apply for something.
 - Do not turn a recommendation/search request into content.create or order.create unless the user explicitly asks to publish, create, invite, organize, post, or place an order/activity in CampusHub.
 - For "我想要找3个人一起去洗脚按摩，有什么推荐的店吗", classify as:
   {"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询并推荐适合多人前往的足疗按摩店","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}
 - For "附近有没有适合三个人吃饭的店", classify as map.search/read.
+- For "我不是找店，想看看今晚有没有人一起打羽毛球", classify as order.search/read.
+- For "先看看附近安静咖啡馆，如果环境合适我再约几个人去自习", classify as multi_step/mixed and run read tools first.
+- For "明晚操场会不会不太适合跑步，要是下雨我就改室内", classify as weather.query/read.
 - For "帮我发个动态找三个人一起去按摩", classify as content.create/write and require confirmation.
 - For "帮我创建一个三人按摩约伴订单", classify as order.create/write and require confirmation.
 - If the latest user message is editing an existing draft, keep the domain/action of that draft from recent context and use requires_confirmation=true.
@@ -137,8 +146,13 @@ Decision principles:
 - Read tasks: search, browse, view, explain, recommend, compare, route planning, weather, place/store lookup. Execute read tools without confirmation.
 - Write tasks: create/publish/edit/delete/comment/like/apply/accept/complete/order/sign up. They require a confirmation draft before any database write.
 - A recommendation for stores, venues, routes, or nearby places is map.search/read, even if the user mentions people count, time, budget, or "一起".
+- If the user says they are not looking for a store/place and wants people/classmates/partners instead, choose order.search/read.
 - Only classify as content.create/order.create when the user explicitly asks CampusHub to publish/create/organize/post an activity/order/dynamic.
 - If the user is editing a previous draft, preserve the draft's domain/action from context and require confirmation.
+- Editing a previous order creation draft remains order.create, not order.manage.
+- Asking to remember a durable preference is memory.manage/write with domain=memory.
+- Asking to view a user's homepage/profile or posted content is user.profile/read.
+- Weather or suitability questions remain weather.query/read when the user is only deciding their own plan, even if they mention a fallback like "改室内".
 
 High-priority examples:
 User: 我想要找3个人一起去洗脚按摩，有什么推荐的店吗
@@ -161,6 +175,21 @@ Output: {"primary_intent":"order.create","domain":"order","operation_type":"writ
 
 User: 先帮我找附近适合三个人吃饭的地方，如果不错再帮我创建约饭订单
 Output: {"primary_intent":"multi_step","domain":"multi","operation_type":"mixed","requires_confirmation":true,"confidence":0.9,"summary":"用户想先查询适合三人吃饭的地点，再基于结果创建约饭订单草稿","missing_slots":[],"suggested_agents":["map_weather","order_draft"],"next_action":"execute_read_tools"}
+
+User: 我不是找店，想看看今晚有没有人一起打羽毛球
+Output: {"primary_intent":"order.search","domain":"order","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询今晚可一起打羽毛球的约伴机会","missing_slots":[],"suggested_agents":["order_query"],"next_action":"execute_read_tools"}
+
+User: 先看看附近安静咖啡馆，如果环境合适我再约几个人去自习
+Output: {"primary_intent":"multi_step","domain":"multi","operation_type":"mixed","requires_confirmation":true,"confidence":0.9,"summary":"用户想先查询适合自习的咖啡馆，再根据结果决定是否组织约伴","missing_slots":[],"suggested_agents":["map_weather","order_draft"],"next_action":"execute_read_tools"}
+
+User: 那个 12 号同学的主页给我瞅瞅，他以前发过啥
+Output: {"primary_intent":"user.profile","domain":"user","operation_type":"read","requires_confirmation":false,"confidence":0.88,"summary":"用户想查看指定同学主页和历史内容","missing_slots":[],"suggested_agents":["user_profile"],"next_action":"execute_read_tools"}
+
+User: 以后推荐吃饭的地方时记得我不吃辣
+Output: {"primary_intent":"memory.manage","domain":"memory","operation_type":"write","requires_confirmation":true,"confidence":0.9,"summary":"用户想让 AI 记住饮食偏好","missing_slots":[],"suggested_agents":["memory"],"next_action":"prepare_draft"}
+
+User: 明晚操场会不会不太适合跑步，要是下雨我就改室内
+Output: {"primary_intent":"weather.query","domain":"weather","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询天气并判断是否适合户外跑步","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}
 
 Previous router analysis:
 {previous_analysis}
@@ -186,6 +215,11 @@ Rules:
 - A write classification does not mean immediate execution. If enough information is present, use next_action=prepare_draft and requires_confirmation=true. If required fields are missing, use next_action=ask_clarification and requires_confirmation=true.
 - If one request combines read-first work with a possible later create/publish/apply action, classify it as mixed and keep requires_confirmation=true.
 - Read-only search, browse, explain, recommend, route, weather, and place lookup tasks are read operations.
+- If the user is not looking for stores/places and instead wants people, classmates, partners, or "搭子", classify as order.search/read.
+- If the user is editing a previous creation draft, preserve the original create action from context. Do not convert draft edits into order.manage.
+- Durable preference updates such as "以后推荐时记得..." are memory.manage/write with domain=memory.
+- Homepage/profile requests are user.profile/read, even when the user asks what that person has posted.
+- Weather suitability and personal fallback planning are weather.query/read unless the user asks CampusHub to modify or create a platform object.
 - Return JSON only. No Markdown. No explanation.
 
 Examples:
@@ -212,6 +246,21 @@ Output: {{"primary_intent":"map.search","domain":"map","operation_type":"read","
 
 User: 帮我发个动态找三个人一起去按摩
 Output: {{"primary_intent":"content.create","domain":"content","operation_type":"write","requires_confirmation":true,"confidence":0.92,"summary":"用户想发布一条寻找同伴的校园动态","missing_slots":[],"suggested_agents":["content_draft"],"next_action":"prepare_draft"}}
+
+User: 我不是找店，想看看今晚有没有人一起打羽毛球
+Output: {{"primary_intent":"order.search","domain":"order","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询今晚可一起打羽毛球的约伴机会","missing_slots":[],"suggested_agents":["order_query"],"next_action":"execute_read_tools"}}
+
+User: 先看看附近安静咖啡馆，如果环境合适我再约几个人去自习
+Output: {{"primary_intent":"multi_step","domain":"multi","operation_type":"mixed","requires_confirmation":true,"confidence":0.9,"summary":"用户想先查询适合自习的咖啡馆，再根据结果决定是否组织约伴","missing_slots":[],"suggested_agents":["map_weather","order_draft"],"next_action":"execute_read_tools"}}
+
+User: 那个 12 号同学的主页给我瞅瞅，他以前发过啥
+Output: {{"primary_intent":"user.profile","domain":"user","operation_type":"read","requires_confirmation":false,"confidence":0.88,"summary":"用户想查看指定同学主页和历史内容","missing_slots":[],"suggested_agents":["user_profile"],"next_action":"execute_read_tools"}}
+
+User: 以后推荐吃饭的地方时记得我不吃辣
+Output: {{"primary_intent":"memory.manage","domain":"memory","operation_type":"write","requires_confirmation":true,"confidence":0.9,"summary":"用户想让 AI 记住饮食偏好","missing_slots":[],"suggested_agents":["memory"],"next_action":"prepare_draft"}}
+
+User: 明晚操场会不会不太适合跑步，要是下雨我就改室内
+Output: {{"primary_intent":"weather.query","domain":"weather","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询天气并判断是否适合户外跑步","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}}
 
 JSON fields:
 {{
@@ -534,6 +583,38 @@ def _normalize_intent_analysis(value: dict) -> dict:
     primary_intent = (result.get("primary_intent") or "").lower()
     operation_type = (result.get("operation_type") or "").lower()
     next_action = (result.get("next_action") or "").lower()
+    intent_domains = {
+        "order.search": "order",
+        "order.create": "order",
+        "order.manage": "order",
+        "content.search": "content",
+        "content.create": "content",
+        "content.interact": "content",
+        "map.search": "map",
+        "weather.query": "weather",
+        "user.profile": "user",
+        "memory.manage": "memory",
+        "multi_step": "multi",
+        "chat.general": "general",
+    }
+    intent_agents = {
+        "order.search": ["order_query"],
+        "order.create": ["order_draft"],
+        "order.manage": ["order_draft"],
+        "content.search": ["content_query"],
+        "content.create": ["content_draft"],
+        "content.interact": ["content_draft"],
+        "map.search": ["map_weather"],
+        "weather.query": ["map_weather"],
+        "user.profile": ["user_profile"],
+        "memory.manage": ["memory"],
+        "multi_step": ["map_weather", "order_draft"],
+        "chat.general": ["general"],
+    }
+    if primary_intent in intent_domains:
+        result["domain"] = intent_domains[primary_intent]
+        if not result.get("suggested_agents") or result.get("suggested_agents") == ["general"]:
+            result["suggested_agents"] = intent_agents[primary_intent]
     if operation_type in {"write", "mixed"} and next_action in {"ask_clarification", "prepare_draft", "wait_confirmation"}:
         result["requires_confirmation"] = True
     if (
@@ -558,12 +639,47 @@ def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bo
         return False
     read_cues = ("先", "找", "推荐", "看看", "查询", "附近", "有没有")
     transition_cues = ("再", "然后", "之后", "如果", "合适", "不错")
-    write_cues = ("创建", "发布", "发个动态", "发一条", "报名", "申请加入", "下单", "约饭订单", "约伴订单")
+    write_cues = (
+        "创建",
+        "发布",
+        "发个动态",
+        "发一条",
+        "报名",
+        "申请加入",
+        "下单",
+        "约饭订单",
+        "约伴订单",
+        "发起",
+        "组织",
+        "约人",
+        "约几个",
+        "约几个人",
+        "约同学",
+        "拉几个人",
+    )
     return (
         any(cue in text for cue in read_cues)
         and any(cue in text for cue in transition_cues)
         and any(cue in text for cue in write_cues)
     )
+
+
+def _looks_like_companion_place_conflict(user_message: str, analysis: dict) -> bool:
+    """Trigger model review when place routing conflicts with explicit companion intent."""
+    if (analysis.get("primary_intent") or "").lower() != "map.search":
+        return False
+    text = " ".join(str(user_message or "").split())
+    place_negation = ("不是找店", "不找店", "别给我店铺", "不是查店", "不是找地方", "不用店铺")
+    people_cues = ("搭子", "有没有人", "有没有同学", "找人", "找同学", "一起打", "一起去")
+    return _has_any(text, place_negation) and _has_any(text, people_cues)
+
+
+def _looks_like_profile_review_needed(user_message: str, analysis: dict) -> bool:
+    """Trigger model review for colloquial profile requests misrouted as content search."""
+    if (analysis.get("primary_intent") or "").lower() == "user.profile":
+        return False
+    text = " ".join(str(user_message or "").split())
+    return _has_any(text, ("主页", "个人主页", "资料", "号同学")) and _has_any(text, ("看看", "瞅瞅", "发过", "以前发"))
 
 
 def _has_any(text: str, cues: tuple[str, ...]) -> bool:
@@ -1332,6 +1448,8 @@ def _should_review_intent(analysis: dict, user_message: str = "") -> bool:
         or operation_type in {"write", "mixed"}
         or next_action == "direct_answer"
         or _looks_like_read_then_write_request(user_message, analysis)
+        or _looks_like_companion_place_conflict(user_message, analysis)
+        or _looks_like_profile_review_needed(user_message, analysis)
     )
 
 
