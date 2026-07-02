@@ -65,10 +65,24 @@
                 :class="`artifact-${artifact.type || 'generic'}`"
               >
                 <view class="artifact-header">
-                  <view class="artifact-icon">{{ artifact.type === 'confirmation' ? '!' : 'i' }}</view>
+                  <view class="artifact-icon">{{ getArtifactIcon(artifact) }}</view>
                   <view class="artifact-heading">
                     <text class="artifact-title">{{ artifact.title || '结果卡片' }}</text>
                     <text v-if="artifact.description" class="artifact-description">{{ artifact.description }}</text>
+                  </view>
+                </view>
+                <view v-if="artifact.type === 'plan' && artifact.steps && artifact.steps.length" class="plan-step-list">
+                  <view
+                    v-for="(step, stepIndex) in artifact.steps"
+                    :key="`plan-${artifactIndex}-${stepIndex}`"
+                    class="plan-step"
+                    :class="step.state || 'pending'"
+                  >
+                    <view class="plan-step-index">{{ stepIndex + 1 }}</view>
+                    <view class="plan-step-main">
+                      <text class="plan-step-title">{{ step.title || '执行步骤' }}</text>
+                      <text v-if="step.detail" class="plan-step-detail">{{ step.detail }}</text>
+                    </view>
                   </view>
                 </view>
                 <view v-if="artifact.fields && artifact.fields.length && !artifact.editing" class="artifact-fields">
@@ -289,6 +303,7 @@ const normalizeArtifact = (eventName, data) => {
   const payload = parseAgentEventData(data)
   const type = payload.type || (eventName === 'confirm_required' ? 'confirmation' : 'generic')
   const fields = Array.isArray(payload.fields) ? payload.fields : []
+  const steps = Array.isArray(payload.steps) ? payload.steps : []
   return {
     ...payload,
     type,
@@ -300,8 +315,21 @@ const normalizeArtifact = (eventName, data) => {
         editValue: displayValue === '未填写' ? '' : displayValue
       }
     }),
+    steps: steps
+      .map(step => step && typeof step === 'object' ? step : { title: String(step || '') })
+      .filter(step => step.title || step.detail),
     editing: false
   }
+}
+
+const getArtifactIcon = (artifact) => {
+  if (artifact?.type === 'confirmation') return '!'
+  if (artifact?.type === 'plan') return '计'
+  if (artifact?.type === 'weather') return '天'
+  if (artifact?.type === 'guide') return '行'
+  if (artifact?.type === 'order') return '约'
+  if (artifact?.type === 'content') return '动'
+  return 'i'
 }
 
 const readStreamStates = () => {
@@ -516,7 +544,7 @@ const switchConversation = async (cid) => {
   await loadMessages(cid)
 }
 
-const loadConversations = async (selectFirst = false) => {
+const loadConversations = async (selectFirst = false, { reloadCurrent = true } = {}) => {
   if (!ensureLogin()) return
 
   const list = await aiApi.listConversations()
@@ -524,7 +552,9 @@ const loadConversations = async (selectFirst = false) => {
 
   const currentExists = conversations.value.some(item => item.cid === currentCid.value)
   if (currentCid.value && currentExists) {
-    await loadMessages(currentCid.value)
+    if (reloadCurrent) {
+      await loadMessages(currentCid.value)
+    }
     return
   }
 
@@ -762,8 +792,7 @@ const sendMessage = async () => {
       clearStreamState(sentCid)
     }
 
-    await loadConversations(false)
-    await switchConversation(sentCid)
+    await loadConversations(false, { reloadCurrent: false })
   } catch (error) {
     assistantMsg.loading = false
     assistantMsg.status = ''
@@ -1573,6 +1602,15 @@ onUnmounted(detachActiveStream)
   background: #f8fbff;
 }
 
+.artifact-plan {
+  border-color: #c7d2fe;
+  background: #f5f7ff;
+}
+
+.artifact-plan .artifact-icon {
+  background: #4f46e5;
+}
+
 .artifact-header {
   display: flex;
   align-items: flex-start;
@@ -1611,6 +1649,76 @@ onUnmounted(detachActiveStream)
   color: #667085;
   font-size: 23rpx;
   line-height: 1.45;
+}
+
+.plan-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  margin-top: 16rpx;
+}
+
+.plan-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 12rpx;
+  padding: 14rpx;
+  border: 1rpx solid #e5e7eb;
+  border-radius: 14rpx;
+  background: rgba(255, 255, 255, 0.78);
+}
+
+.plan-step-index {
+  width: 38rpx;
+  height: 38rpx;
+  border-radius: 999rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 38rpx;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-size: 21rpx;
+  font-weight: 900;
+  line-height: 38rpx;
+}
+
+.plan-step.running .plan-step-index {
+  background: #dbeafe;
+  color: #2563eb;
+  box-shadow: 0 0 0 6rpx rgba(37, 99, 235, 0.1);
+}
+
+.plan-step.completed .plan-step-index {
+  background: #dcfce7;
+  color: #15803d;
+}
+
+.plan-step.pending .plan-step-index {
+  background: #fef3c7;
+  color: #b45309;
+}
+
+.plan-step-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.plan-step-title {
+  color: #172033;
+  font-size: 24rpx;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.plan-step-detail {
+  color: #667085;
+  font-size: 22rpx;
+  line-height: 1.45;
+  word-break: break-word;
 }
 
 .artifact-fields {
@@ -2407,9 +2515,20 @@ onUnmounted(detachActiveStream)
     border-color: rgba(91, 140, 255, 0.34);
   }
 
+  .artifact-plan {
+    background: #191f3a;
+    border-color: rgba(129, 140, 248, 0.32);
+  }
+
+  .artifact-plan .artifact-icon {
+    background: #4f46e5;
+    color: #e0e7ff;
+  }
+
   .operation-title,
   .artifact-title,
   .artifact-field-value,
+  .plan-step-title,
   .markdown-body,
   .markdown-body :deep(h1),
   .markdown-body :deep(h2),
@@ -2426,6 +2545,7 @@ onUnmounted(detachActiveStream)
   .operation-detail,
   .artifact-description,
   .artifact-field-label,
+  .plan-step-detail,
   .markdown-body :deep(.entity-subtitle),
   .markdown-body :deep(.map-card-coords),
   .inline-map-coords,
@@ -2443,6 +2563,7 @@ onUnmounted(detachActiveStream)
   }
 
   .artifact-field,
+  .plan-step,
   .artifact-edit-input,
   .input {
     background: #101a2a;
@@ -2453,6 +2574,26 @@ onUnmounted(detachActiveStream)
   .artifact-field.missing {
     background: rgba(245, 158, 11, 0.12);
     border-color: rgba(245, 158, 11, 0.35);
+  }
+
+  .plan-step-index {
+    background: rgba(129, 140, 248, 0.18);
+    color: #c7d2fe;
+  }
+
+  .plan-step.running .plan-step-index {
+    background: rgba(96, 165, 250, 0.2);
+    color: #bfdbfe;
+  }
+
+  .plan-step.completed .plan-step-index {
+    background: rgba(34, 197, 94, 0.18);
+    color: #bbf7d0;
+  }
+
+  .plan-step.pending .plan-step-index {
+    background: rgba(245, 158, 11, 0.18);
+    color: #fde68a;
   }
 
   .artifact-action,

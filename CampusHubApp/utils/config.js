@@ -34,9 +34,10 @@ const envMode = uni.getStorageSync('env') || 'auto'
 
 let isDev
 // #ifdef H5
-// H5 默认也直接连接远程服务器，避免运行到浏览器时连到本地 localhost:8080。
-// 需要调试本地后端时，在浏览器控制台执行：uni.setStorageSync('env', 'dev')
-isDev = envMode === 'dev'
+const h5Host = typeof window !== 'undefined' ? window.location.hostname : ''
+const isLocalH5 = ['localhost', '127.0.0.1', '::1'].includes(h5Host)
+// H5 本地 dev server 默认连本地后端，线上 H5 默认连公网入口；可用 env 强制切换。
+isDev = envMode === 'dev' || (envMode === 'auto' && isLocalH5)
 // #endif
 
 // #ifndef H5
