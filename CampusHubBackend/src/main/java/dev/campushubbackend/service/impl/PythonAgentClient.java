@@ -29,6 +29,8 @@ import java.util.function.Consumer;
 @RequiredArgsConstructor
 public class PythonAgentClient {
 
+    private static final int MAX_MEMORIES_FOR_AGENT_CONTEXT = 24;
+
     private final AiMemoryRepository memoryRepository;
     private final ObjectMapper objectMapper;
 
@@ -151,6 +153,8 @@ public class PythonAgentClient {
         // 用户记忆
         List<AiMemory> memoryEntities = memoryRepository.findByUserOrderByUpdatedAtDesc(user);
         List<Map<String, String>> memories = memoryEntities.stream()
+                .filter(m -> m.getCategory() != null && m.getContent() != null && !m.getContent().isBlank())
+                .limit(MAX_MEMORIES_FOR_AGENT_CONTEXT)
                 .map(m -> Map.of("category", m.getCategory(), "content", m.getContent()))
                 .toList();
 

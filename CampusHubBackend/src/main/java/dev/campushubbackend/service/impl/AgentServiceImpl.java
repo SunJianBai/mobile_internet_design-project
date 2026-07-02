@@ -12,6 +12,7 @@ import org.springframework.transaction.annotation.Transactional;
 
 import java.time.LocalDateTime;
 import java.util.*;
+import java.util.regex.Pattern;
 
 /**
  * Agent 服务实现 —— 会话/消息/记忆的持久化 + 代理到 Python LangChain Agent。
@@ -28,6 +29,26 @@ public class AgentServiceImpl implements AgentService {
     private final PythonAgentClient pythonAgentClient;
 
     private static final int MAX_HISTORY_MESSAGES = 40;
+    static final int MAX_AUTO_MEMORIES_PER_TURN = 2;
+    private static final int MIN_MEMORY_CONTENT_LENGTH = 6;
+    private static final int MAX_MEMORY_CONTENT_LENGTH = 120;
+    private static final Pattern COORDINATE_PATTERN = Pattern.compile("\\d{2,3}\\.\\d{3,}\\s*[,，]\\s*\\d{1,3}\\.\\d{3,}");
+    private static final List<String> STRICT_TRANSIENT_MEMORY_MARKERS = List.of(
+            "坐标", "经纬度", "地图", "导航", "路线", "草稿", "尚未提供", "工具返回", "查询结果", "搜索结果"
+    );
+    private static final List<String> SOFT_TRANSIENT_MEMORY_MARKERS = List.of(
+            "当前", "目前", "这次", "本次", "此次", "刚才", "刚刚", "今天", "今晚", "明天", "后天",
+            "正在", "查询", "搜索", "寻找", "想找", "想要找", "附近", "周边", "这家", "店铺", "会所"
+    );
+    private static final List<String> DURABLE_MEMORY_MARKERS = List.of(
+            "喜欢", "偏好", "倾向", "习惯", "经常", "常去", "不喜欢", "讨厌", "过敏", "默认", "以后", "长期", "就读", "住在"
+    );
+    private static final List<String> STABLE_FACT_MARKERS = List.of(
+            "专业", "年级", "学院", "学校", "校区", "来自", "手机号", "邮箱"
+    );
+    private static final List<String> ONE_OFF_INTENT_PREFIXES = List.of(
+            "用户想", "用户正在", "用户需要", "用户询问", "用户查找", "用户搜索", "用户提供", "用户计划", "用户准备"
+    );
 
     // ==================== 会话管理 ====================
 
@@ -138,28 +159,201 @@ public class AgentServiceImpl implements AgentService {
 
             List<AiMemory> existing = memoryRepository.findByUserOrderByUpdatedAtDesc(user);
 
-            for (Map<String, String> m : extracted) {
-                String category = m.get("category");
-                String content = m.get("content");
-                if (category == null || content == null) continue;
+            List<Map<String, String>> filtered = filterAutoExtractedMemories(
+                    extracted,
+                    existing,
+                    userMessage,
+                    assistantReply
+            );
 
-                // 去重：内容互包含则跳过
-                boolean isDuplicate = existing.stream().anyMatch(e ->
-                        e.getCategory().equals(category) &&
-                                (e.getContent().contains(content) || content.contains(e.getContent()))
-                );
-                if (isDuplicate) continue;
-
+            for (Map<String, String> m : filtered) {
                 AiMemory memory = new AiMemory();
                 memory.setUser(user);
-                memory.setCategory(category);
-                memory.setContent(content);
+                memory.setCategory(m.get("category"));
+                memory.setContent(m.get("content"));
                 memory.setSource("auto-extracted");
                 memoryRepository.save(memory);
             }
         } catch (Exception e) {
             log.warn("记忆提取失败: {}", e.getMessage());
         }
+    }
+
+    static List<Map<String, String>> filterAutoExtractedMemories(
+            List<Map<String, String>> extracted,
+            List<AiMemory> existing,
+            String userMessage,
+            String assistantReply
+    ) {
+        if (extracted == null || extracted.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> seen = new HashSet<>();
+        for (AiMemory memory : Optional.ofNullable(existing).orElse(List.of())) {
+            String normalized = normalizeMemoryText(memory.getContent());
+            if (!normalized.isBlank()) {
+                seen.add(normalized);
+            }
+        }
+
+        List<Map<String, String>> filtered = new ArrayList<>();
+        for (Map<String, String> item : extracted) {
+            if (filtered.size() >= MAX_AUTO_MEMORIES_PER_TURN) {
+                break;
+            }
+            if (item == null) {
+                continue;
+            }
+
+            String category = normalizeMemoryCategory(item.get("category"));
+            String content = sanitizeMemoryContent(item.get("content"));
+            if (!shouldKeepAutoMemory(category, content, userMessage, assistantReply)) {
+                continue;
+            }
+
+            String normalized = normalizeMemoryText(content);
+            if (isDuplicateMemory(normalized, seen)) {
+                continue;
+            }
+
+            seen.add(normalized);
+            filtered.add(Map.of("category", category, "content", content));
+        }
+        return filtered;
+    }
+
+    static boolean shouldKeepAutoMemory(
+            String category,
+            String content,
+            String userMessage,
+            String assistantReply
+    ) {
+        if (category == null || category.isBlank() || content == null || content.isBlank()) {
+            return false;
+        }
+        if (content.length() < MIN_MEMORY_CONTENT_LENGTH || content.length() > MAX_MEMORY_CONTENT_LENGTH) {
+            return false;
+        }
+        if (COORDINATE_PATTERN.matcher(content).find()) {
+            return false;
+        }
+
+        String compact = compactForPolicy(content);
+        if (compact.isBlank()) {
+            return false;
+        }
+        if (containsAny(compact, STRICT_TRANSIENT_MEMORY_MARKERS)) {
+            return false;
+        }
+        if (startsWithAny(compact, ONE_OFF_INTENT_PREFIXES)) {
+            return false;
+        }
+        if (containsAny(compact, SOFT_TRANSIENT_MEMORY_MARKERS) && !containsAny(compact, DURABLE_MEMORY_MARKERS)) {
+            return false;
+        }
+
+        String userCompact = compactForPolicy(userMessage);
+        String assistantCompact = compactForPolicy(assistantReply);
+        boolean looksLikeToolResult = !assistantCompact.isBlank()
+                && assistantCompact.contains(compact)
+                && !userCompact.contains(compact);
+        if (looksLikeToolResult && !containsAny(compact, DURABLE_MEMORY_MARKERS)) {
+            return false;
+        }
+
+        return containsAny(compact, DURABLE_MEMORY_MARKERS)
+                || ("fact".equals(category) && containsAny(compact, STABLE_FACT_MARKERS));
+    }
+
+    static String normalizeMemoryCategory(String category) {
+        String value = Optional.ofNullable(category).orElse("").trim().toLowerCase(Locale.ROOT);
+        if (value.contains("preference") || value.contains("偏好")) {
+            return "preference";
+        }
+        if (value.contains("behavior") || value.contains("habit") || value.contains("行为") || value.contains("习惯")) {
+            return "behavior";
+        }
+        if (value.contains("fact") || value.contains("事实")) {
+            return "fact";
+        }
+        return "";
+    }
+
+    static String sanitizeMemoryContent(String content) {
+        return Optional.ofNullable(content)
+                .orElse("")
+                .replaceAll("\\s+", " ")
+                .trim();
+    }
+
+    static String normalizeMemoryText(String content) {
+        String value = compactForPolicy(content);
+        return value
+                .replace("用户", "")
+                .replace("偏好", "喜欢")
+                .replace("倾向于", "喜欢")
+                .replace("倾向", "喜欢")
+                .replace("进行", "")
+                .replace("选择", "")
+                .replace("一个", "")
+                .replace("一种", "")
+                .replace("的", "");
+    }
+
+    private static boolean isDuplicateMemory(String normalized, Set<String> seen) {
+        if (normalized.isBlank()) {
+            return true;
+        }
+        for (String existing : seen) {
+            if (existing.length() >= MIN_MEMORY_CONTENT_LENGTH
+                    && (existing.contains(normalized) || normalized.contains(existing))) {
+                return true;
+            }
+            if (charBigramSimilarity(existing, normalized) >= 0.72) {
+                return true;
+            }
+        }
+        return false;
+    }
+
+    private static double charBigramSimilarity(String left, String right) {
+        Set<String> leftBigrams = charBigrams(left);
+        Set<String> rightBigrams = charBigrams(right);
+        if (leftBigrams.isEmpty() || rightBigrams.isEmpty()) {
+            return 0;
+        }
+        Set<String> intersection = new HashSet<>(leftBigrams);
+        intersection.retainAll(rightBigrams);
+        Set<String> union = new HashSet<>(leftBigrams);
+        union.addAll(rightBigrams);
+        return (double) intersection.size() / union.size();
+    }
+
+    private static Set<String> charBigrams(String value) {
+        if (value == null || value.length() < 2) {
+            return Set.of();
+        }
+        Set<String> bigrams = new HashSet<>();
+        for (int i = 0; i < value.length() - 1; i++) {
+            bigrams.add(value.substring(i, i + 2));
+        }
+        return bigrams;
+    }
+
+    private static String compactForPolicy(String value) {
+        return Optional.ofNullable(value)
+                .orElse("")
+                .toLowerCase(Locale.ROOT)
+                .replaceAll("[\\s\\p{Punct}，。！？；：、“”‘’（）()【】《》「」『』·]+", "");
+    }
+
+    private static boolean containsAny(String value, List<String> markers) {
+        return markers.stream().anyMatch(value::contains);
+    }
+
+    private static boolean startsWithAny(String value, List<String> prefixes) {
+        return prefixes.stream().anyMatch(value::startsWith);
     }
 
     // ==================== 辅助方法 ====================
