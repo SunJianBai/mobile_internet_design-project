@@ -2385,6 +2385,44 @@ def _format_map_direct_reply(keyword: str, center_name: str, pois: list[dict]) -
     return "\n".join(lines).strip()
 
 
+def _build_map_followup_artifact(keyword: str, center_name: str, pois: list[dict], intent_analysis: dict) -> dict:
+    first = pois[0] if pois else {}
+    first_name = str(first.get("name") or "第一个地点")
+    first_location = str(first.get("location") or "")
+    first_prompt = f"基于地图里的「{first_name}」创建一个约伴订单草稿"
+    if first_location:
+        first_prompt += f"，地点坐标：{first_location}"
+    first_prompt += "。如果还缺少必要信息，请先让我补充；不要直接发布。"
+    is_multi_step = (intent_analysis.get("primary_intent") or "").lower() == "multi_step"
+
+    return {
+        "type": "guide",
+        "title": "接下来可以怎么做",
+        "description": "这些都是下一步入口；涉及创建订单时只会先生成确认草稿，不会直接发布。",
+        "fields": [
+            {"label": "当前搜索", "value": f"{center_name}周边 · {keyword}"},
+            {"label": "可选地点", "value": f"{len(pois)} 个可渲染地图结果"},
+            {"label": "写操作保护", "value": "创建、发布、报名等操作都会先确认"},
+        ],
+        "actions": [
+            {
+                "label": "用第一家创建约伴草稿",
+                "prompt": first_prompt,
+                "primary": is_multi_step,
+            },
+            {
+                "label": "换一批附近推荐",
+                "prompt": f"换一批{center_name}附近的{keyword}推荐，并继续展示地图",
+            },
+            {
+                "label": "先查天气再决定",
+                "prompt": "查一下北京天气，并告诉我是否适合安排这个活动",
+            },
+        ],
+        "state": "completed",
+    }
+
+
 def _format_weather_direct_reply(weather_text: str) -> str:
     data = _safe_json_object(weather_text)
     forecasts = data.get("forecasts") if isinstance(data.get("forecasts"), list) else []
@@ -2473,6 +2511,8 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
     reply = _format_map_direct_reply(keyword, center_name, resolved)
     if not reply:
         return None
+    followup_artifact = _build_map_followup_artifact(keyword, center_name, resolved, intent_analysis)
+    await _emit_event("artifact", followup_artifact)
     await _emit_event("agent_step", {
         "phase": "map_direct",
         "title": "地图推荐完成",
@@ -2492,6 +2532,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
             {"name": "maps_geo", "args": {"limit": 3}},
         ],
         "intent": intent_analysis,
+        "artifacts": [followup_artifact],
     }
 
 
