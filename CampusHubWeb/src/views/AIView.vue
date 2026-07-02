@@ -220,15 +220,31 @@
                               </button>
                             </template>
                           </div>
-                          <div v-else-if="artifact.actions?.length" class="artifact-actions artifact-prompt-actions">
+                          <div
+                            v-else-if="artifact.actions?.length"
+                            :class="[
+                              'artifact-actions',
+                              'artifact-prompt-actions',
+                              { 'guide-action-grid': artifact.type === 'guide' }
+                            ]"
+                          >
                             <button
                               v-for="(action, actionIndex) in artifact.actions"
                               :key="`${artifactIndex}-action-${actionIndex}`"
-                              :class="['artifact-action', { primary: action.primary }]"
+                              :class="[
+                                'artifact-action',
+                                { primary: action.primary, 'guide-action-card': artifact.type === 'guide' }
+                              ]"
                               :disabled="sending"
                               @click="handleArtifactPromptAction(action)"
                             >
-                              {{ action.label || '执行' }}
+                              <template v-if="artifact.type === 'guide'">
+                                <span class="guide-action-label">{{ action.label || '执行' }}</span>
+                                <span v-if="action.prompt" class="guide-action-hint">{{ getGuideActionHint(action.prompt) }}</span>
+                              </template>
+                              <template v-else>
+                                {{ action.label || '执行' }}
+                              </template>
                             </button>
                           </div>
                         </div>
@@ -907,6 +923,12 @@ function handleArtifactPromptAction(action) {
   const prompt = String(action?.prompt || '').trim()
   if (!prompt) return
   sendMessageText(prompt)
+}
+
+function getGuideActionHint(prompt) {
+  const text = String(prompt || '').replace(/\s+/g, ' ').trim()
+  if (!text) return ''
+  return text.length > 42 ? `${text.slice(0, 42)}...` : text
 }
 
 function buildArtifactConfirmMessage(artifact, edited = false) {
@@ -2152,6 +2174,11 @@ onBeforeUnmount(() => {
   padding-top: 12px;
   border-top: 1px solid #e2e8f0;
 }
+.guide-action-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+  align-items: stretch;
+}
 .artifact-action {
   height: 32px;
   padding: 0 12px;
@@ -2162,6 +2189,43 @@ onBeforeUnmount(() => {
   cursor: pointer;
   font-size: 13px;
   font-weight: 700;
+}
+.guide-action-card {
+  min-height: 68px;
+  height: auto;
+  padding: 10px 12px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: center;
+  gap: 4px;
+  text-align: left;
+  white-space: normal;
+  background: #f8fbff;
+  border-color: #dbeafe;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
+}
+.guide-action-card.primary {
+  background: linear-gradient(135deg, #2563eb 0%, #1d4ed8 100%);
+  border-color: #2563eb;
+}
+.guide-action-label {
+  display: block;
+  color: inherit;
+  font-size: 13px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.guide-action-hint {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 600;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.guide-action-card.primary .guide-action-hint {
+  color: rgba(255, 255, 255, 0.78);
 }
 .artifact-action.primary {
   border-color: #2563eb;
@@ -2175,8 +2239,17 @@ onBeforeUnmount(() => {
   background: #f8fafc;
   border-color: #94a3b8;
 }
+.guide-action-card:hover:not(:disabled) {
+  background: #eef6ff;
+  border-color: #93c5fd;
+  box-shadow: 0 10px 22px rgba(37, 99, 235, 0.12);
+}
 .artifact-action.primary:hover:not(:disabled) {
   background: #1d4ed8;
+  border-color: #1d4ed8;
+}
+.guide-action-card.primary:hover:not(:disabled) {
+  background: linear-gradient(135deg, #1d4ed8 0%, #1e40af 100%);
   border-color: #1d4ed8;
 }
 .artifact-action.ghost:hover:not(:disabled) {
@@ -2918,12 +2991,32 @@ onBeforeUnmount(() => {
   border-top-color: rgba(148, 163, 184, 0.16);
 }
 
+:global(:root[data-theme='dark']) .guide-action-card {
+  background: #142033;
+  border-color: rgba(96, 165, 250, 0.24);
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18);
+}
+
+:global(:root[data-theme='dark']) .guide-action-hint {
+  color: #8aa3c2;
+}
+
+:global(:root[data-theme='dark']) .guide-action-card.primary .guide-action-hint {
+  color: rgba(255, 255, 255, 0.76);
+}
+
 :global(:root[data-theme='dark']) .artifact-action:hover:not(:disabled),
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-link-card:hover),
 :global(:root[data-theme='dark']) .markdown-body :deep(.execution-result-card:hover) {
   background: #1f2d44;
   border-color: rgba(154, 184, 255, 0.38);
   color: #f8fbff;
+}
+
+:global(:root[data-theme='dark']) .guide-action-card:hover:not(:disabled) {
+  background: #1f2d44;
+  border-color: rgba(154, 184, 255, 0.38);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22);
 }
 
 :global(:root[data-theme='dark']) .artifact-action.primary {
@@ -2933,6 +3026,11 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .artifact-action.primary:hover:not(:disabled) {
+  background: #4c7df0;
+  border-color: #9ab8ff;
+}
+
+:global(:root[data-theme='dark']) .guide-action-card.primary:hover:not(:disabled) {
   background: #4c7df0;
   border-color: #9ab8ff;
 }
@@ -3213,6 +3311,24 @@ onBeforeUnmount(() => {
   border-color: rgba(154, 184, 255, 0.38) !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .guide-action-card) {
+  background: #142033 !important;
+  color: #dbe7f8 !important;
+  border-color: rgba(96, 165, 250, 0.24) !important;
+  box-shadow: 0 10px 22px rgba(0, 0, 0, 0.18) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .guide-action-hint) {
+  color: #8aa3c2 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .guide-action-card:hover:not(:disabled)) {
+  background: #1f2d44 !important;
+  color: #f8fbff !important;
+  border-color: rgba(154, 184, 255, 0.38) !important;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.22) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .artifact-action.primary) {
   background: #3768d8 !important;
   color: #ffffff !important;
@@ -3222,6 +3338,10 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-action.primary:hover:not(:disabled)) {
   background: #4c7df0 !important;
   border-color: #9ab8ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .guide-action-card.primary .guide-action-hint) {
+  color: rgba(255, 255, 255, 0.76) !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-action.ghost:hover:not(:disabled)) {
