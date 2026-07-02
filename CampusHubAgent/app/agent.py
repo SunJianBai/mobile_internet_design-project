@@ -47,8 +47,9 @@ MAIN_AGENT_RECURSION_LIMIT = 12
 SUB_AGENT_RECURSION_LIMIT = 8
 MAX_MAIN_DELEGATIONS = 4
 MAX_DELEGATIONS_PER_AGENT = 2
-ROUTER_TIMEOUT_SECONDS = 18
-INTENT_REVIEW_TIMEOUT_SECONDS = 25
+ROUTER_TIMEOUT_SECONDS = 14
+INTENT_REVIEW_TIMEOUT_SECONDS = 15
+INTENT_TOTAL_BUDGET_SECONDS = 29
 INTENT_CACHE_TTL_SECONDS = 10 * 60
 INTENT_CACHE_MAX_SIZE = 128
 
@@ -140,6 +141,9 @@ High-priority examples:
 User: 我想要找3个人一起去洗脚按摩，有什么推荐的店吗
 Output: {"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.92,"summary":"用户想查询并推荐适合多人前往的足疗按摩店","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}
 
+User: 帮我看看良乡校区今天有没有篮球约伴活动
+Output: {"primary_intent":"order.search","domain":"order","operation_type":"read","requires_confirmation":false,"confidence":0.92,"summary":"用户想搜索今天良乡校区的篮球约伴活动","missing_slots":[],"suggested_agents":["order_query"],"next_action":"execute_read_tools"}
+
 User: 附近有没有适合三个人吃饭的店
 Output: {"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查找适合三人就餐的附近餐厅","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}
 
@@ -148,6 +152,12 @@ Output: {"primary_intent":"content.create","domain":"content","operation_type":"
 
 User: 帮我创建一个三人按摩约伴订单
 Output: {"primary_intent":"order.create","domain":"order","operation_type":"write","requires_confirmation":true,"confidence":0.9,"summary":"用户想创建三人按摩约伴订单","missing_slots":["地点","时间"],"suggested_agents":["order_draft"],"next_action":"ask_clarification"}
+
+User: 帮我创建一个明晚7点良乡体育馆的篮球约伴，最多4个人，男女不限
+Output: {"primary_intent":"order.create","domain":"order","operation_type":"write","requires_confirmation":true,"confidence":0.92,"summary":"用户想创建一个信息较完整的篮球约伴活动草稿","missing_slots":[],"suggested_agents":["order_draft"],"next_action":"prepare_draft"}
+
+User: 先帮我找附近适合三个人吃饭的地方，如果不错再帮我创建约饭订单
+Output: {"primary_intent":"multi_step","domain":"multi","operation_type":"mixed","requires_confirmation":true,"confidence":0.9,"summary":"用户想先查询适合三人吃饭的地点，再基于结果创建约饭订单草稿","missing_slots":[],"suggested_agents":["map_weather","order_draft"],"next_action":"execute_read_tools"}
 
 Previous router analysis:
 {previous_analysis}
@@ -171,6 +181,7 @@ Rules:
 - Do not rely on simple keyword matching. Infer the user's real goal from the message and recent context.
 - If the user wants the system to create, publish, edit, delete, comment, like, apply, accept, or complete something, classify it as write or mixed.
 - A write classification does not mean immediate execution. If enough information is present, use next_action=prepare_draft and requires_confirmation=true. If required fields are missing, use next_action=ask_clarification and requires_confirmation=true.
+- If one request combines read-first work with a possible later create/publish/apply action, classify it as mixed and keep requires_confirmation=true.
 - Read-only search, browse, explain, recommend, route, weather, and place lookup tasks are read operations.
 - Return JSON only. No Markdown. No explanation.
 
@@ -181,8 +192,17 @@ Output: {{"primary_intent":"content.create","domain":"content","operation_type":
 User: 帮我创建一个明天下午三点的篮球活动
 Output: {{"primary_intent":"order.create","domain":"order","operation_type":"write","requires_confirmation":true,"confidence":0.9,"summary":"用户想创建约伴活动","missing_slots":["地点","参与人数"],"suggested_agents":["order_draft"],"next_action":"ask_clarification"}}
 
+User: 帮我创建一个明晚7点良乡体育馆的篮球约伴，最多4个人，男女不限
+Output: {{"primary_intent":"order.create","domain":"order","operation_type":"write","requires_confirmation":true,"confidence":0.92,"summary":"用户想创建一个信息较完整的篮球约伴活动草稿","missing_slots":[],"suggested_agents":["order_draft"],"next_action":"prepare_draft"}}
+
+User: 先帮我找附近适合三个人吃饭的地方，如果不错再帮我创建约饭订单
+Output: {{"primary_intent":"multi_step","domain":"multi","operation_type":"mixed","requires_confirmation":true,"confidence":0.9,"summary":"用户想先查询适合三人吃饭的地点，再基于结果创建约饭订单草稿","missing_slots":[],"suggested_agents":["map_weather","order_draft"],"next_action":"execute_read_tools"}}
+
 User: 帮我找附近的篮球场
 Output: {{"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询附近篮球场","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}}
+
+User: 帮我看看良乡校区今天有没有篮球约伴活动
+Output: {{"primary_intent":"order.search","domain":"order","operation_type":"read","requires_confirmation":false,"confidence":0.92,"summary":"用户想搜索今天良乡校区的篮球约伴活动","missing_slots":[],"suggested_agents":["order_query"],"next_action":"execute_read_tools"}}
 
 User: 我想要找3个人一起去洗脚按摩，有什么推荐的店吗
 Output: {{"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.92,"summary":"用户想查询并推荐适合多人前往的足疗按摩店","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}}
@@ -329,6 +349,23 @@ async def _emit_event(event: str, payload: dict):
     sink = _event_sink.get()
     if sink:
         await sink({"event": event, "data": _json_data(payload)})
+
+
+def _consume_background_task_result(task: asyncio.Task) -> None:
+    try:
+        task.result()
+    except BaseException:
+        pass
+
+
+async def _await_with_soft_timeout(coro, timeout_seconds: float):
+    task = asyncio.create_task(coro)
+    done, _ = await asyncio.wait({task}, timeout=timeout_seconds)
+    if task in done:
+        return task.result()
+    task.cancel()
+    task.add_done_callback(_consume_background_task_result)
+    raise asyncio.TimeoutError()
 
 
 def _normalize_delegation_task(task: str) -> str:
@@ -491,14 +528,40 @@ def _normalize_intent_analysis(value: dict) -> dict:
     except (TypeError, ValueError):
         result["confidence"] = 0.0
     result["requires_confirmation"] = bool(result.get("requires_confirmation", True))
+    primary_intent = (result.get("primary_intent") or "").lower()
     operation_type = (result.get("operation_type") or "").lower()
     next_action = (result.get("next_action") or "").lower()
     if operation_type in {"write", "mixed"} and next_action in {"ask_clarification", "prepare_draft", "wait_confirmation"}:
         result["requires_confirmation"] = True
+    if (
+        operation_type in {"write", "mixed"}
+        and next_action == "ask_clarification"
+        and not result.get("missing_slots")
+        and primary_intent in {"order.create", "order.manage", "content.create", "content.interact", "memory.manage"}
+    ):
+        result["next_action"] = "prepare_draft"
     return result
 
 
-def _should_review_intent(analysis: dict) -> bool:
+def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bool:
+    # This only triggers a senior-model review; it is not the final intent classifier.
+    text = " ".join(str(user_message or "").split()).lower()
+    if not text:
+        return False
+    operation_type = (analysis.get("operation_type") or "").lower()
+    if operation_type in {"write", "mixed"}:
+        return False
+    read_cues = ("先", "找", "推荐", "看看", "查询", "附近", "有没有")
+    transition_cues = ("再", "然后", "之后", "如果", "合适", "不错")
+    write_cues = ("创建", "发布", "发个动态", "发一条", "报名", "申请加入", "下单", "约饭订单", "约伴订单")
+    return (
+        any(cue in text for cue in read_cues)
+        and any(cue in text for cue in transition_cues)
+        and any(cue in text for cue in write_cues)
+    )
+
+
+def _should_review_intent(analysis: dict, user_message: str = "") -> bool:
     confidence = analysis.get("confidence", 0.0)
     primary_intent = (analysis.get("primary_intent") or "").lower()
     operation_type = (analysis.get("operation_type") or "").lower()
@@ -509,6 +572,7 @@ def _should_review_intent(analysis: dict) -> bool:
         or operation_type == "unknown"
         or operation_type in {"write", "mixed"}
         or next_action == "direct_answer"
+        or _looks_like_read_then_write_request(user_message, analysis)
     )
 
 
@@ -518,6 +582,7 @@ async def review_intent(
     history: list,
     user_message: str,
     previous_analysis: dict,
+    timeout_seconds: float = INTENT_REVIEW_TIMEOUT_SECONDS,
 ) -> dict:
     await _emit_event("agent_step", {
         "phase": "intent_review",
@@ -527,9 +592,9 @@ async def review_intent(
     })
     prompt = _render_intent_prompt(previous_analysis, user_info, memories, history, user_message)
     try:
-        result = await asyncio.wait_for(
+        result = await _await_with_soft_timeout(
             _get_llm(streaming=False, temperature=0, max_tokens=700).ainvoke([HumanMessage(content=prompt)]),
-            timeout=INTENT_REVIEW_TIMEOUT_SECONDS,
+            timeout_seconds,
         )
         reviewed = _normalize_intent_analysis(_safe_json_loads(result.content))
         reviewed["reviewed"] = True
@@ -568,9 +633,9 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
     })
     prompt = _render_intent_prompt(None, user_info, memories, history, user_message)
     try:
-        result = await asyncio.wait_for(
+        result = await _await_with_soft_timeout(
             _get_router_llm().ainvoke([HumanMessage(content=prompt)]),
-            timeout=ROUTER_TIMEOUT_SECONDS,
+            ROUTER_TIMEOUT_SECONDS,
         )
         analysis = _normalize_intent_analysis(_safe_json_loads(result.content))
         analysis["router_timeout"] = False
@@ -583,8 +648,21 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
         analysis["router_timeout"] = isinstance(e, asyncio.TimeoutError)
         analysis["router_error"] = e.__class__.__name__
 
-    if _should_review_intent(analysis):
-        analysis = await review_intent(user_info, memories, history, user_message, analysis)
+    if _should_review_intent(analysis, user_message):
+        elapsed_seconds = time.perf_counter() - started_at
+        remaining_seconds = INTENT_TOTAL_BUDGET_SECONDS - elapsed_seconds
+        if remaining_seconds >= 3:
+            analysis = await review_intent(
+                user_info,
+                memories,
+                history,
+                user_message,
+                analysis,
+                timeout_seconds=min(INTENT_REVIEW_TIMEOUT_SECONDS, remaining_seconds),
+            )
+        else:
+            analysis["review_skipped"] = True
+            analysis["review_skip_reason"] = "intent_budget_exhausted"
 
     analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
     analysis["cache_hit"] = False
