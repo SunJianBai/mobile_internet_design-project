@@ -109,6 +109,26 @@
                         v-if="message.operations?.length"
                         :class="['operation-timeline', { completed: !message.loading && message.content }]"
                       >
+                        <div
+                          v-for="overview in [getOperationOverview(message)]"
+                          :key="`${message.mid || message.localId || 'msg'}-overview`"
+                          :class="['operation-overview', overview.state]"
+                        >
+                          <div class="operation-overview-main">
+                            <span :class="['overview-status-dot', overview.state]"></span>
+                            <div class="overview-copy">
+                              <div class="overview-kicker">{{ overview.kicker }}</div>
+                              <div class="overview-title">{{ overview.title }}</div>
+                              <div v-if="overview.detail" class="overview-detail">{{ overview.detail }}</div>
+                            </div>
+                          </div>
+                          <div class="overview-metrics" aria-label="执行概览">
+                            <span v-for="metric in overview.metrics" :key="metric.label" class="overview-metric">
+                              <small>{{ metric.label }}</small>
+                              <strong>{{ metric.value }}</strong>
+                            </span>
+                          </div>
+                        </div>
                         <div v-if="!message.loading && message.content" class="operation-summary-head">
                           <span>执行摘要</span>
                           <span>{{ message.operations.length }} 步</span>
@@ -418,6 +438,32 @@ const AGENT_EVENT_TITLES = {
   status: '处理中'
 }
 
+const OPERATION_PHASE_LABELS = {
+  intent: '意图',
+  router: '路由',
+  planning: '规划',
+  order: '订单',
+  content: '动态',
+  map: '地图',
+  weather: '天气',
+  memory: '记忆',
+  response: '回复',
+  delegation_guard: '防循环',
+  tool_call: '工具',
+  tool_start: '工具',
+  tool_result: '工具',
+  artifact: '卡片',
+  confirm_required: '确认',
+  status: '状态'
+}
+
+const OPERATION_STATE_LABELS = {
+  running: '执行中',
+  pending: '待确认',
+  completed: '已完成',
+  failed: '异常'
+}
+
 function parseAgentEventData(data) {
   if (!data) return {}
   if (typeof data !== 'string') return data
@@ -449,7 +495,51 @@ function normalizeAgentOperation(eventName, data) {
     phase: payload.phase || payload.domain || eventName,
     title,
     detail,
-    state: payload.state || (eventName === 'confirm_required' ? 'pending' : 'running')
+    state: payload.state || (eventName === 'confirm_required' ? 'pending' : 'running'),
+    meta: {
+      primaryIntent: payload.primary_intent,
+      domain: payload.domain,
+      operationType: payload.operation_type,
+      confidence: payload.confidence,
+      requiresConfirmation: payload.requires_confirmation
+    }
+  }
+}
+
+function getOperationPhaseLabel(phase) {
+  const key = String(phase || '').toLowerCase()
+  return OPERATION_PHASE_LABELS[key] || phase || '执行'
+}
+
+function getOperationOverview(message) {
+  const operations = Array.isArray(message?.operations) ? message.operations : []
+  const latestActive = [...operations].reverse().find(item => ['running', 'pending'].includes(item.state))
+  const latest = latestActive || operations[operations.length - 1] || {}
+  const intentOperation = operations.find(item => item.eventName === 'intent' || item.meta?.primaryIntent)
+  const failedCount = operations.filter(item => item.state === 'failed').length
+  const pendingCount = operations.filter(item => item.state === 'pending').length
+  const completedCount = operations.filter(item => (item.state || 'running') === 'completed').length
+  const needsConfirmation = pendingCount > 0 || (message?.artifacts || []).some(item => item.type === 'confirmation')
+  const state = failedCount
+    ? 'failed'
+    : (needsConfirmation ? 'pending' : (message?.loading ? 'running' : 'completed'))
+  const intentLabel = intentOperation?.meta?.primaryIntent || intentOperation?.phase || '识别中'
+  const confidence = intentOperation?.meta?.confidence
+  const metrics = [
+    { label: '阶段', value: getOperationPhaseLabel(latest.phase || latest.eventName) },
+    { label: '进度', value: `${completedCount}/${operations.length || 1}` }
+  ]
+  if (intentLabel) metrics.push({ label: '意图', value: intentLabel })
+  if (typeof confidence === 'number') metrics.push({ label: '置信度', value: `${Math.round(confidence * 100)}%` })
+  if (needsConfirmation) metrics.push({ label: '确认', value: '需要用户确认' })
+  if (failedCount) metrics.push({ label: '异常', value: `${failedCount} 步` })
+
+  return {
+    state,
+    kicker: OPERATION_STATE_LABELS[state] || '执行中',
+    title: latest.title || (message?.loading ? '正在处理你的请求' : '执行已完成'),
+    detail: latest.detail || (needsConfirmation ? '请检查确认卡片后再决定是否执行。' : ''),
+    metrics: metrics.slice(0, 5)
   }
 }
 
@@ -1803,6 +1893,115 @@ onBeforeUnmount(() => {
   padding: 8px 10px;
   background: #f8fafc;
 }
+.operation-overview {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  padding: 10px 12px;
+  margin-bottom: 8px;
+  border: 1px solid #dbeafe;
+  border-radius: 9px;
+  background: linear-gradient(135deg, #eff6ff 0%, #f8fbff 100%);
+}
+.operation-overview.completed {
+  border-color: #bbf7d0;
+  background: linear-gradient(135deg, #ecfdf5 0%, #f8fffb 100%);
+}
+.operation-overview.pending {
+  border-color: #fed7aa;
+  background: linear-gradient(135deg, #fff7ed 0%, #fffaf5 100%);
+}
+.operation-overview.failed {
+  border-color: #fecaca;
+  background: linear-gradient(135deg, #fef2f2 0%, #fffafa 100%);
+}
+.operation-overview-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+}
+.overview-status-dot {
+  width: 10px;
+  height: 10px;
+  margin-top: 6px;
+  border-radius: 50%;
+  background: #2563eb;
+  box-shadow: 0 0 0 5px rgba(37, 99, 235, 0.12);
+  flex: 0 0 10px;
+}
+.overview-status-dot.completed {
+  background: #16a34a;
+  box-shadow: 0 0 0 5px rgba(22, 163, 74, 0.12);
+}
+.overview-status-dot.pending {
+  background: #d97706;
+  box-shadow: 0 0 0 5px rgba(217, 119, 6, 0.12);
+}
+.overview-status-dot.failed {
+  background: #dc2626;
+  box-shadow: 0 0 0 5px rgba(220, 38, 38, 0.12);
+}
+.overview-copy {
+  min-width: 0;
+}
+.overview-kicker {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.operation-overview.completed .overview-kicker { color: #15803d; }
+.operation-overview.pending .overview-kicker { color: #b45309; }
+.operation-overview.failed .overview-kicker { color: #b91c1c; }
+.overview-title {
+  margin-top: 2px;
+  color: #172033;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.overview-detail {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
+}
+.overview-metrics {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  max-width: 52%;
+  flex: 0 0 auto;
+}
+.overview-metric {
+  min-width: 54px;
+  padding: 5px 7px;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  line-height: 1.2;
+}
+.overview-metric small {
+  display: block;
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 750;
+}
+.overview-metric strong {
+  display: block;
+  max-width: 120px;
+  overflow: hidden;
+  color: #172033;
+  font-size: 11px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .operation-summary-head {
   display: flex;
   align-items: center;
@@ -2602,6 +2801,57 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24);
 }
 
+:global(:root[data-theme='dark']) .operation-overview {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.18) 0%, rgba(23, 34, 53, 0.96) 100%);
+  border-color: rgba(96, 165, 250, 0.28);
+}
+
+:global(:root[data-theme='dark']) .operation-overview.completed {
+  background: linear-gradient(135deg, rgba(22, 163, 74, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%);
+  border-color: rgba(74, 222, 128, 0.24);
+}
+
+:global(:root[data-theme='dark']) .operation-overview.pending {
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%);
+  border-color: rgba(251, 191, 36, 0.26);
+}
+
+:global(:root[data-theme='dark']) .operation-overview.failed {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%);
+  border-color: rgba(248, 113, 113, 0.26);
+}
+
+:global(:root[data-theme='dark']) .overview-kicker {
+  color: #93c5fd;
+}
+
+:global(:root[data-theme='dark']) .operation-overview.completed .overview-kicker {
+  color: #86efac;
+}
+
+:global(:root[data-theme='dark']) .operation-overview.pending .overview-kicker {
+  color: #fbbf24;
+}
+
+:global(:root[data-theme='dark']) .operation-overview.failed .overview-kicker {
+  color: #fca5a5;
+}
+
+:global(:root[data-theme='dark']) .overview-title,
+:global(:root[data-theme='dark']) .overview-metric strong {
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .overview-detail,
+:global(:root[data-theme='dark']) .overview-metric small {
+  color: #94a3b8;
+}
+
+:global(:root[data-theme='dark']) .overview-metric {
+  background: rgba(15, 23, 42, 0.48);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
 :global(:root[data-theme='dark']) .operation-summary-head {
   color: #c7d8f4;
   border-bottom-color: rgba(148, 163, 184, 0.16);
@@ -2858,6 +3108,41 @@ onBeforeUnmount(() => {
   color: #bfdbfe !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .operation-overview) {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.18) 0%, rgba(23, 34, 53, 0.96) 100%) !important;
+  border-color: rgba(96, 165, 250, 0.28) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-overview.completed) {
+  background: linear-gradient(135deg, rgba(22, 163, 74, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%) !important;
+  border-color: rgba(74, 222, 128, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-overview.pending) {
+  background: linear-gradient(135deg, rgba(217, 119, 6, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%) !important;
+  border-color: rgba(251, 191, 36, 0.26) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-overview.failed) {
+  background: linear-gradient(135deg, rgba(220, 38, 38, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%) !important;
+  border-color: rgba(248, 113, 113, 0.26) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .overview-title),
+:global(html[data-theme='dark'] .ai-view .overview-metric strong) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .overview-detail),
+:global(html[data-theme='dark'] .ai-view .overview-metric small) {
+  color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .overview-metric) {
+  background: rgba(15, 23, 42, 0.48) !important;
+  border-color: rgba(148, 163, 184, 0.2) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .btn-new-chat),
 :global(html[data-theme='dark'] .ai-view .btn-memory),
 :global(html[data-theme='dark'] .ai-view .btn-toggle),
@@ -3065,5 +3350,16 @@ onBeforeUnmount(() => {
   .prompt-gallery { grid-template-columns: 1fr; }
   .prompt-card { min-height: 74px; }
   .quick-prompts { max-width: 100%; }
+  .operation-overview {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .overview-metrics {
+    justify-content: flex-start;
+    max-width: none;
+  }
+  .overview-metric strong {
+    max-width: 150px;
+  }
 }
 </style>
