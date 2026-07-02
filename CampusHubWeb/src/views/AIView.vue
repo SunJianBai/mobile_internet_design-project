@@ -1020,7 +1020,10 @@ const renderMapCard = (props = {}) => {
         `<div class="map-card-title">${escapeHtml(title)}</div>` +
         `<div class="map-card-coords">${lng.toFixed(6)}, ${lat.toFixed(6)} · zoom ${zoom}</div>` +
       `</div>` +
-      `<a href="${escapeHtml(markerUrl)}" target="_blank" rel="noopener noreferrer" class="map-card-action">打开高德地图</a>` +
+      `<div class="map-card-actions">` +
+        `<button type="button" class="map-card-action map-card-draft" data-map-intent="order-draft">用此地点约伴</button>` +
+        `<a href="${escapeHtml(markerUrl)}" target="_blank" rel="noopener noreferrer" class="map-card-action">打开高德地图</a>` +
+      `</div>` +
     `</div>` +
     `<div class="map-card-hint">可拖拽地图，也可以使用缩放和平移按钮。</div>` +
   `</div>`
@@ -1169,11 +1172,32 @@ function handleChatClick(e) {
     return
   }
 
+  const mapIntent = e.target.closest('[data-map-intent]')
+  if (mapIntent) {
+    e.preventDefault()
+    const card = mapIntent.closest('.map-card')
+    sendMapIntent(card, mapIntent.dataset.mapIntent)
+    return
+  }
+
   const link = e.target.closest('.app-link')
   if (link) {
     e.preventDefault()
     const route = link.dataset.route
     if (route) router.push(route)
+  }
+}
+
+function sendMapIntent(card, intent) {
+  if (!card || !intent) return
+  const title = card.dataset.title || '这个地点'
+  const lng = Number.parseFloat(card.dataset.lng)
+  const lat = Number.parseFloat(card.dataset.lat)
+  const coordText = Number.isFinite(lng) && Number.isFinite(lat)
+    ? `，地点坐标：${lng.toFixed(6)}, ${lat.toFixed(6)}`
+    : ''
+  if (intent === 'order-draft') {
+    sendMessageText(`基于地图里的「${title}」创建一个约伴订单草稿${coordText}。如果还缺少必要信息，请先让我补充；不要直接发布。`)
   }
 }
 
@@ -1944,17 +1968,41 @@ onBeforeUnmount(() => {
 .markdown-body :deep(.map-card-info) { min-width: 0; }
 .markdown-body :deep(.map-card-title) { font-size: 14px; font-weight: 700; color: #111827; margin-bottom: 4px; }
 .markdown-body :deep(.map-card-coords) { font-size: 12px; color: #64748b; font-family: monospace; }
-.markdown-body :deep(.map-card-action) {
+.markdown-body :deep(.map-card-actions) {
   flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.markdown-body :deep(.map-card-action) {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 34px;
   padding: 8px 11px;
+  border: 1px solid transparent;
   border-radius: 10px;
   background: #eff6ff;
   color: #1d4ed8;
   font-size: 12px;
   font-weight: 700;
   text-decoration: none;
+  cursor: pointer;
+  font-family: inherit;
 }
 .markdown-body :deep(.map-card-action:hover) { background: #dbeafe; text-decoration: none; }
+.markdown-body :deep(.map-card-draft) {
+  background: #2563eb;
+  color: #ffffff;
+  border-color: #2563eb;
+}
+.markdown-body :deep(.map-card-draft:hover) {
+  background: #1d4ed8;
+  color: #ffffff;
+  border-color: #1d4ed8;
+}
 .markdown-body :deep(.map-tile-stage) {
   cursor: grab;
   user-select: none;
@@ -2302,6 +2350,18 @@ onBeforeUnmount(() => {
   color: #f8fbff;
 }
 
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-draft) {
+  background: #3768d8;
+  color: #ffffff;
+  border-color: #5b8cff;
+}
+
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-draft:hover) {
+  background: #4c7df0;
+  color: #ffffff;
+  border-color: #9ab8ff;
+}
+
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-badge) {
   background: rgba(15, 23, 42, 0.86);
   color: #bfdbfe;
@@ -2386,6 +2446,18 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .markdown-body .map-control:hover) {
   background: #2d4470 !important;
   color: #f8fbff !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .map-card-draft) {
+  background: #3768d8 !important;
+  color: #ffffff !important;
+  border-color: #5b8cff !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .map-card-draft:hover) {
+  background: #4c7df0 !important;
+  color: #ffffff !important;
+  border-color: #9ab8ff !important;
 }
 
 :global(html[data-theme='dark'] .markdown-body .map-badge) {
