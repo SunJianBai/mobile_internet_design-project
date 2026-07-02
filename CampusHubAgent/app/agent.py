@@ -27,8 +27,8 @@ from app.config import (
     SILICONFLOW_ROUTER_MODEL,
 )
 from app.tools import search_orders, create_order, get_my_orders, get_order_detail
-from app.tools_order import ORDER_EXTRA_TOOLS
-from app.tools_content import CONTENT_TOOLS, create_content
+from app.tools_order import ORDER_EXTRA_TOOLS, apply_to_order, accept_applicant, complete_order
+from app.tools_content import CONTENT_TOOLS, create_content, create_comment, like_content
 from app.tools_user import USER_TOOLS
 from app.mcp_tools import MCP_TOOLS, maps_around_search, maps_geo, maps_weather
 from app.tools_utils import UTIL_TOOLS
@@ -1401,6 +1401,25 @@ def _field_value(fields: dict, keywords: tuple[str, ...]) -> str:
     return ""
 
 
+def _field_int(fields: dict, keywords: tuple[str, ...]) -> int | None:
+    return _extract_first_int(_field_value(fields, keywords))
+
+
+def _comment_text_from_fields(fields: dict) -> str:
+    for label, value in fields.items():
+        label_text = str(label)
+        if any(keyword in label_text for keyword in ("评论内容", "评论文本", "回复内容", "留言内容")):
+            return str(value).strip()
+    for label, value in fields.items():
+        label_text = str(label)
+        if (
+            any(keyword in label_text for keyword in ("评论", "回复", "留言"))
+            and not any(id_key in label_text for id_key in ("ID", "编号", "申请"))
+        ):
+            return str(value).strip()
+    return ""
+
+
 def _normalize_activity_type(value: str, context: str = "") -> str:
     text = f"{value} {context}".upper()
     rules = [
@@ -1521,6 +1540,16 @@ def _current_user_id(user_info: dict) -> int | None:
 def _infer_confirmed_action_kind(text: str, fields: dict) -> str:
     lowered = str(text or "").lower()
     field_labels = " ".join(fields.keys())
+    if any(cue in lowered for cue in ("申请加入", "报名", "加入订单", "加入活动")):
+        return "order.apply"
+    if any(cue in lowered for cue in ("评论", "回复动态", "给动态回复")) or _comment_text_from_fields(fields):
+        return "content.comment"
+    if any(cue in lowered for cue in ("点赞", "赞一下", "点个赞")):
+        return "content.like"
+    if any(cue in lowered for cue in ("接受申请", "同意加入", "通过申请")) or _field_value(fields, ("申请者ID", "申请用户ID", "accepter")):
+        return "order.accept"
+    if any(cue in lowered for cue in ("完成订单", "标记完成")):
+        return "order.complete"
     if "动态" in lowered or "动态" in field_labels or _field_value(fields, ("动态内容", "正文", "内容")):
         return "content.create"
     if "约伴" in lowered or "订单" in lowered or "活动类型" in field_labels:
@@ -1652,6 +1681,204 @@ async def _execute_confirmed_content(user_info: dict, fields: dict, user_message
     }
 
 
+async def _execute_confirmed_comment(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    content_id = _field_int(fields, ("动态ID", "帖子ID", "内容ID", "content_id", "post_id"))
+    comment_text = _comment_text_from_fields(fields)
+
+    missing = []
+    if not user_id:
+        missing.append("用户ID")
+    if not content_id:
+        missing.append("动态ID")
+    if not comment_text:
+        missing.append("评论内容")
+
+    intent = _intent_for_confirmed_execution("content.comment")
+    if missing:
+        return {
+            "reply": "我还不能发表评论，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {"user_id": user_id, "content_id": content_id, "comment_text": comment_text}
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认评论",
+        "detail": "已收到完整确认草稿，正在调用评论工具",
+        "state": "running",
+    })
+    result_text = await create_comment.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "评论执行完成",
+        "detail": "评论工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "create_comment", "args": args}],
+        "intent": intent,
+    }
+
+
+async def _execute_confirmed_like(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    content_id = _field_int(fields, ("动态ID", "帖子ID", "内容ID", "content_id", "post_id"))
+    missing = []
+    if not user_id:
+        missing.append("用户ID")
+    if not content_id:
+        missing.append("动态ID")
+
+    intent = _intent_for_confirmed_execution("content.like")
+    if missing:
+        return {
+            "reply": "我还不能点赞，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {"user_id": user_id, "content_id": content_id}
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认点赞",
+        "detail": "已收到完整确认草稿，正在调用点赞工具",
+        "state": "running",
+    })
+    result_text = await like_content.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "点赞执行完成",
+        "detail": "点赞工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "like_content", "args": args}],
+        "intent": intent,
+    }
+
+
+async def _execute_confirmed_order_apply(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    order_id = _field_int(fields, ("订单ID", "约伴ID", "活动ID", "order_id"))
+    message = _field_value(fields, ("申请留言", "留言", "备注", "说明"))
+    missing = []
+    if not user_id:
+        missing.append("用户ID")
+    if not order_id:
+        missing.append("订单ID")
+
+    intent = _intent_for_confirmed_execution("order.apply")
+    if missing:
+        return {
+            "reply": "我还不能申请加入订单，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {"user_id": user_id, "order_id": order_id, "message": message}
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认报名",
+        "detail": "已收到完整确认草稿，正在调用申请加入工具",
+        "state": "running",
+    })
+    result_text = await apply_to_order.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "报名执行完成",
+        "detail": "申请加入工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "apply_to_order", "args": args}],
+        "intent": intent,
+    }
+
+
+async def _execute_confirmed_order_accept(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    order_id = _field_int(fields, ("订单ID", "约伴ID", "活动ID", "order_id"))
+    accepter_id = _field_int(fields, ("申请者ID", "申请用户ID", "用户ID", "accepter_id"))
+    missing = []
+    if not user_id:
+        missing.append("当前用户ID")
+    if not order_id:
+        missing.append("订单ID")
+    if not accepter_id:
+        missing.append("申请者ID")
+
+    intent = _intent_for_confirmed_execution("order.accept")
+    if missing:
+        return {
+            "reply": "我还不能接受申请，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {"user_id": user_id, "order_id": order_id, "accepter_id": accepter_id}
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认接受申请",
+        "detail": "已收到完整确认草稿，正在调用接受申请工具",
+        "state": "running",
+    })
+    result_text = await accept_applicant.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "接受申请执行完成",
+        "detail": "接受申请工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "accept_applicant", "args": args}],
+        "intent": intent,
+    }
+
+
+async def _execute_confirmed_order_complete(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    order_id = _field_int(fields, ("订单ID", "约伴ID", "活动ID", "order_id"))
+    missing = []
+    if not user_id:
+        missing.append("用户ID")
+    if not order_id:
+        missing.append("订单ID")
+
+    intent = _intent_for_confirmed_execution("order.complete")
+    if missing:
+        return {
+            "reply": "我还不能完成订单，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {"user_id": user_id, "order_id": order_id}
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认完成订单",
+        "detail": "已收到完整确认草稿，正在调用完成订单工具",
+        "state": "running",
+    })
+    result_text = await complete_order.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "完成订单执行完成",
+        "detail": "完成订单工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "complete_order", "args": args}],
+        "intent": intent,
+    }
+
+
 async def build_confirmed_execution_response(user_info: dict, history: list, user_message: str) -> dict | None:
     """Execute a structured draft only after the user explicitly confirms it."""
     if not _is_confirmed_artifact_message(user_message):
@@ -1663,9 +1890,19 @@ async def build_confirmed_execution_response(user_info: dict, history: list, use
         return await _execute_confirmed_order(user_info, fields, user_message)
     if action_kind == "content.create":
         return await _execute_confirmed_content(user_info, fields, user_message)
+    if action_kind == "content.comment":
+        return await _execute_confirmed_comment(user_info, fields, user_message)
+    if action_kind == "content.like":
+        return await _execute_confirmed_like(user_info, fields, user_message)
+    if action_kind == "order.apply":
+        return await _execute_confirmed_order_apply(user_info, fields, user_message)
+    if action_kind == "order.accept":
+        return await _execute_confirmed_order_accept(user_info, fields, user_message)
+    if action_kind == "order.complete":
+        return await _execute_confirmed_order_complete(user_info, fields, user_message)
 
     return {
-        "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单创建或动态发布草稿，或继续手动处理。",
+        "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单、动态、评论、点赞或报名草稿，或继续手动处理。",
         "tool_calls": [],
         "intent": _intent_for_confirmed_execution(action_kind),
     }
