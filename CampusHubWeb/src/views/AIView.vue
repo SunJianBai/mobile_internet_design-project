@@ -105,7 +105,14 @@
                       <svg viewBox="0 0 24 24" width="20" height="20"><path d="M12 2C6.48 2 2 6.48 2 12s4.48 10 10 10 10-4.48 10-10S17.52 2 12 2zm0 3c1.66 0 3 1.34 3 3s-1.34 3-3 3-3-1.34-3-3 1.34-3 3-3zm0 14.2c-2.5 0-4.71-1.28-6-3.22.03-1.99 4-3.08 6-3.08 1.99 0 5.97 1.09 6 3.08-1.29 1.94-3.5 3.22-6 3.22z" fill="currentColor"/></svg>
                     </div>
                     <div class="assistant-content">
-                      <div v-if="message.operations?.length" class="operation-timeline">
+                      <div
+                        v-if="message.operations?.length"
+                        :class="['operation-timeline', { completed: !message.loading && message.content }]"
+                      >
+                        <div v-if="!message.loading && message.content" class="operation-summary-head">
+                          <span>执行摘要</span>
+                          <span>{{ message.operations.length }} 步</span>
+                        </div>
                         <div
                           v-for="(operation, opIndex) in message.operations"
                           :key="`${message.mid || message.localId || 'msg'}-${opIndex}`"
@@ -268,6 +275,10 @@ const wasMobileViewport = ref(false)
 let activeStreamController = null
 let streamStateUnsubscribe = null
 let streamStateReloading = false
+
+const COMPLETED_UI_STATE_KEY = 'campushub_ai_completed_ui_states'
+const COMPLETED_UI_STATE_TTL = 24 * 60 * 60 * 1000
+const COMPLETED_UI_STATE_LIMIT = 30
 
 const promptStarters = [
   {
@@ -465,6 +476,101 @@ function saveStreamState(cid, assistantMsg, userText, state = 'running') {
   writeStreamStates(states)
 }
 
+function getLocalJson(key, fallback = {}) {
+  try {
+    const raw = localStorage.getItem(key)
+    return raw ? JSON.parse(raw) : fallback
+  } catch (e) {
+    return fallback
+  }
+}
+
+function setLocalJson(key, value) {
+  try {
+    localStorage.setItem(key, JSON.stringify(value))
+  } catch (e) {
+    // ignore storage quota/privacy errors; live UI still works in memory
+  }
+}
+
+function finalizeOperationSummary(operations = []) {
+  return toPlainStreamValue(operations, [])
+    .slice(-10)
+    .map(operation => ({
+      ...operation,
+      state: operation.state === 'running' ? 'completed' : (operation.state || 'completed')
+    }))
+}
+
+function readCompletedUiStates() {
+  const now = Date.now()
+  const states = getLocalJson(COMPLETED_UI_STATE_KEY, {})
+  const entries = Object.entries(states)
+    .filter(([, value]) => value?.updatedAt && now - Number(value.updatedAt) < COMPLETED_UI_STATE_TTL)
+    .sort((a, b) => Number(b[1].updatedAt) - Number(a[1].updatedAt))
+    .slice(0, COMPLETED_UI_STATE_LIMIT)
+  return Object.fromEntries(entries)
+}
+
+function writeCompletedUiStates(states) {
+  setLocalJson(COMPLETED_UI_STATE_KEY, states)
+}
+
+function saveCompletedUiState(cid, assistantMsg, userText) {
+  if (!cid || !assistantMsg) return
+  const operations = finalizeOperationSummary(assistantMsg.operations || [])
+  const artifacts = toPlainStreamValue(assistantMsg.artifacts, [])
+  if (!operations.length && !artifacts.length) return
+
+  const states = readCompletedUiStates()
+  states[String(cid)] = {
+    cid,
+    userText,
+    updatedAt: Date.now(),
+    assistant: {
+      operations,
+      artifacts,
+      contentPreview: String(assistantMsg.content || '').slice(0, 120)
+    }
+  }
+  const trimmed = Object.fromEntries(
+    Object.entries(states)
+      .sort((a, b) => Number(b[1].updatedAt) - Number(a[1].updatedAt))
+      .slice(0, COMPLETED_UI_STATE_LIMIT)
+  )
+  writeCompletedUiStates(trimmed)
+}
+
+function mergeCompletedUiState(cid) {
+  const state = readCompletedUiStates()[String(cid)]
+  const assistant = state?.assistant
+  if (!assistant) return false
+
+  const targetIndex = [...messages.value]
+    .map((message, index) => ({ message, index }))
+    .reverse()
+    .find(item => item.message.role === 'assistant')?.index
+  if (targetIndex === undefined) return false
+
+  const previousUser = [...messages.value]
+    .slice(0, targetIndex)
+    .reverse()
+    .find(message => message.role === 'user')
+  if (state.userText && previousUser?.content && previousUser.content !== state.userText) {
+    return false
+  }
+
+  const target = messages.value[targetIndex]
+  if (assistant.operations?.length && !target.operations?.length) {
+    target.operations = toPlainStreamValue(assistant.operations, [])
+  }
+  if (assistant.artifacts?.length && !target.artifacts?.length) {
+    target.artifacts = toPlainStreamValue(assistant.artifacts, [])
+  }
+  target.uiRestored = true
+  return true
+}
+
 function clearStreamState(cid) {
   if (!cid) return
   const states = readStreamStates()
@@ -639,6 +745,7 @@ async function switchConversation(cid) {
     const resp = await agentService.getMessages(cid)
     const rawMessages = resp.data?.data || []
     messages.value = rawMessages.map(m => ({ ...m, loading: false }))
+    mergeCompletedUiState(cid)
     const stored = getStoredStreamState(cid)
     const latestSaved = rawMessages[rawMessages.length - 1]
     if (stored && latestSaved?.role === 'assistant' && latestSaved?.content) {
@@ -728,6 +835,7 @@ async function handleSendMessage() {
       if (!aiMsg.content) aiMsg.content = '抱歉，AI 未返回有效内容。'
       sending.value = false
       activeStreamController = null
+      saveCompletedUiState(streamCid, aiMsg, msgText)
       clearStreamState(streamCid)
       scrollToBottom()
       await loadConversations()
@@ -1416,12 +1524,31 @@ onBeforeUnmount(() => {
   border-radius: 10px;
   background: #f9fafb;
 }
+.operation-timeline.completed {
+  padding: 8px 10px;
+  background: #f8fafc;
+}
+.operation-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding-bottom: 7px;
+  margin-bottom: 2px;
+  border-bottom: 1px solid #edf2f7;
+  color: #475569;
+  font-size: 12px;
+  font-weight: 800;
+}
 .operation-step {
   display: flex;
   gap: 10px;
   align-items: flex-start;
   padding: 6px 0;
   color: #64748b;
+}
+.operation-timeline.completed .operation-step {
+  padding: 4px 0;
 }
 .operation-step + .operation-step { border-top: 1px solid #edf2f7; }
 .operation-dot {
@@ -1989,6 +2116,11 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24);
 }
 
+:global(:root[data-theme='dark']) .operation-summary-head {
+  color: #c7d8f4;
+  border-bottom-color: rgba(148, 163, 184, 0.16);
+}
+
 :global(:root[data-theme='dark']) .artifact-confirmation {
   background: linear-gradient(180deg, #172235 0%, #132033 100%);
   border-color: rgba(91, 140, 255, 0.34);
@@ -2227,6 +2359,11 @@ onBeforeUnmount(() => {
   background: #172235 !important;
   border-color: rgba(148, 163, 184, 0.22) !important;
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-summary-head) {
+  color: #c7d8f4 !important;
+  border-bottom-color: rgba(148, 163, 184, 0.16) !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .operation-step + .operation-step) {
