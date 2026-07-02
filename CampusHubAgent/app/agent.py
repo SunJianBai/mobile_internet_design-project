@@ -9,6 +9,7 @@ import logging
 import asyncio
 import contextvars
 import hashlib
+import re
 import time
 from collections import OrderedDict
 from typing import AsyncIterator
@@ -549,6 +550,8 @@ def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bo
     text = " ".join(str(user_message or "").split()).lower()
     if not text:
         return False
+    if _has_any(text, ("如果还缺少", "如果缺少", "缺少必要信息", "请先让我补充", "先让我补充")):
+        return False
     operation_type = (analysis.get("operation_type") or "").lower()
     if operation_type in {"write", "mixed"}:
         return False
@@ -566,12 +569,195 @@ def _has_any(text: str, cues: tuple[str, ...]) -> bool:
     return any(cue in text for cue in cues)
 
 
+def _contains_blocking_write_negation(text: str) -> bool:
+    """Return true when the user is negating the write itself, not asking for confirmation first."""
+    if _has_any(text, ("取消", "不想")):
+        return True
+    direct_confirmation_cues = ("不要直接", "别直接", "不要马上", "别马上", "先确认", "先让我确认")
+    if _has_any(text, direct_confirmation_cues):
+        return False
+    return _has_any(
+        text,
+        (
+            "不要创建",
+            "别创建",
+            "不要发起",
+            "别发起",
+            "不要发布",
+            "别发布",
+            "不要发动态",
+            "别发动态",
+            "不要发订单",
+            "别发订单",
+            "不要报名",
+            "别报名",
+            "不要申请",
+            "别申请",
+            "不要评论",
+            "别评论",
+            "不要点赞",
+            "别点赞",
+        ),
+    )
+
+
+def _looks_like_time_text(text: str) -> bool:
+    return bool(
+        re.search(
+            r"(今天|今晚|明天|后天|大后天|周[一二三四五六日天末]|星期[一二三四五六日天]|"
+            r"[0-9一二两三四五六七八九十]{1,2}(点|:|：)|上午|中午|下午|晚上|早上|傍晚|凌晨|[0-9一二两三四五六七八九十]{1,2}号)",
+            text,
+        )
+    )
+
+
+def _detect_general_help_shortcut(user_message: str) -> dict | None:
+    """Fast path for low-risk product-help or small-talk prompts.
+
+    Business routing still goes through the semantic router. This shortcut only
+    avoids spending a full router/review budget on obvious "what can you do"
+    prompts that never need tools or write confirmation.
+    """
+    text = " ".join(str(user_message or "").split())
+    if not text:
+        return None
+
+    business_cues = (
+        "订单",
+        "约伴",
+        "活动",
+        "动态",
+        "地图",
+        "天气",
+        "附近",
+        "推荐",
+        "查询",
+        "查一下",
+        "搜索",
+        "发布",
+        "创建",
+        "发起",
+        "报名",
+        "申请加入",
+        "评论",
+        "点赞",
+        "记住",
+        "偏好",
+        "用户",
+        "主页",
+    )
+    if _has_any(text, business_cues):
+        return None
+
+    help_cues = (
+        "你能做什么",
+        "你可以做什么",
+        "你会做什么",
+        "你是谁",
+        "介绍你自己",
+        "介绍一下你自己",
+        "怎么用",
+        "如何使用",
+        "使用说明",
+        "有什么功能",
+        "功能介绍",
+        "给我几个例子",
+        "能帮我什么",
+        "hello",
+        "hi",
+        "你好",
+        "在吗",
+    )
+    if not _has_any(text.lower(), help_cues):
+        return None
+
+    return {
+        "primary_intent": "chat.general",
+        "domain": "general",
+        "operation_type": "read",
+        "requires_confirmation": False,
+        "confidence": 0.95,
+        "summary": "用户在询问 AI 助手能力或进行普通闲聊",
+        "missing_slots": [],
+        "suggested_agents": ["general"],
+        "next_action": "direct_answer",
+        "reviewed": False,
+        "general_help_shortcut": True,
+        "router_timeout": False,
+    }
+
+
+def _detect_draft_edit_shortcut(history: list, user_message: str) -> dict | None:
+    """Keep draft edits in the original write domain without another slow router round."""
+    text = " ".join(str(user_message or "").split())
+    if not text:
+        return None
+
+    edit_cues = ("改成", "改为", "修改", "调整", "换成", "补充", "加上", "删掉", "去掉")
+    if not _has_any(text, edit_cues):
+        return None
+
+    recent = "\n".join(str(item.get("content", "")) for item in (history or [])[-6:])
+    if not _has_any(recent, ("草稿", "待确认", "确认草稿", "确认创建", "确认发布", "确认执行")):
+        return None
+
+    if _has_any(recent, ("动态", "帖子", "发布")):
+        return {
+            "primary_intent": "content.create",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "confidence": 0.9,
+            "summary": "用户正在修改上一条动态发布草稿",
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+            "reviewed": False,
+            "draft_edit_shortcut": True,
+            "router_timeout": False,
+        }
+
+    if _has_any(recent, ("约伴", "订单", "活动")):
+        return {
+            "primary_intent": "order.create",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "confidence": 0.9,
+            "summary": "用户正在修改上一条约伴订单草稿",
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+            "reviewed": False,
+            "draft_edit_shortcut": True,
+            "router_timeout": False,
+        }
+
+    if _has_any(recent, ("记忆", "记住", "偏好")):
+        return {
+            "primary_intent": "memory.manage",
+            "domain": "memory",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "confidence": 0.88,
+            "summary": "用户正在修改上一条记忆草稿",
+            "missing_slots": [],
+            "suggested_agents": ["memory"],
+            "next_action": "prepare_draft",
+            "reviewed": False,
+            "draft_edit_shortcut": True,
+            "router_timeout": False,
+        }
+
+    return None
+
+
 def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
     """Fast safety path for unmistakable write or read-then-write requests."""
     text = " ".join(str(user_message or "").split())
     if not text:
         return None
-    if _has_any(text, ("不要", "别", "不想", "取消")):
+    if _contains_blocking_write_negation(text):
         return None
     if _looks_like_read_then_write_request(text, {}):
         return {
@@ -655,7 +841,7 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
 
     if _has_any(text, ("创建", "发起")) and _has_any(text, ("约伴", "订单", "活动")):
         missing_slots = []
-        if not _has_any(text, ("点", "上午", "中午", "下午", "晚上", "今晚", "明天", "周", "号")):
+        if not _looks_like_time_text(text):
             missing_slots.append("时间")
         if not _has_any(text, ("校区", "馆", "场", "楼", "室", "地点", "地址")):
             missing_slots.append("地点")
@@ -683,6 +869,68 @@ def _detect_timeout_read_fallback(user_message: str) -> dict | None:
         return None
 
     read_cues = ("找", "看看", "查询", "查一下", "推荐", "附近", "有没有", "怎么走", "路线", "地图")
+    generic_read_cues = read_cues + ("搜索", "搜一下", "列出", "哪些", "信息", "主页")
+
+    if _has_any(text, ("天气", "气温", "下雨", "刮风", "适不适合")):
+        return {
+            "primary_intent": "weather.query",
+            "domain": "weather",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.7,
+            "summary": "用户想查询天气或户外建议，路由模型超时后降级为天气只读查询",
+            "missing_slots": [],
+            "suggested_agents": ["map_weather"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "router_timeout_fallback": True,
+        }
+
+    if _has_any(text, generic_read_cues) and _has_any(text, ("订单", "约伴", "活动", "我发布", "我参加", "篮球", "羽毛球")):
+        return {
+            "primary_intent": "order.search",
+            "domain": "order",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.7,
+            "summary": "用户想查询约伴活动或订单，路由模型超时后降级为订单只读查询",
+            "missing_slots": [],
+            "suggested_agents": ["order_query"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "router_timeout_fallback": True,
+        }
+
+    if _has_any(text, generic_read_cues) and _has_any(text, ("动态", "帖子", "评论", "自习")):
+        return {
+            "primary_intent": "content.search",
+            "domain": "content",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.7,
+            "summary": "用户想查询校园动态，路由模型超时后降级为动态只读查询",
+            "missing_slots": [],
+            "suggested_agents": ["content_query"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "router_timeout_fallback": True,
+        }
+
+    if _has_any(text, generic_read_cues) and _has_any(text, ("用户", "主页", "资料")):
+        return {
+            "primary_intent": "user.profile",
+            "domain": "user",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.7,
+            "summary": "用户想查看用户主页信息，路由模型超时后降级为用户资料只读查询",
+            "missing_slots": [],
+            "suggested_agents": ["user_profile"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "router_timeout_fallback": True,
+        }
+
     place_cues = (
         "店",
         "地方",
@@ -796,6 +1044,44 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
             "phase": "intent_safety",
             "title": "识别明确安全路径",
             "detail": detail,
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
+    draft_edit_analysis = _detect_draft_edit_shortcut(history, user_message)
+    if draft_edit_analysis:
+        analysis = _normalize_intent_analysis(draft_edit_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_draft_edit",
+            "title": "识别草稿修改",
+            "detail": "已根据最近确认草稿沿用原领域，继续生成待确认修改内容",
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
+    general_help_analysis = _detect_general_help_shortcut(user_message)
+    if general_help_analysis:
+        analysis = _normalize_intent_analysis(general_help_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_general_help",
+            "title": "识别普通帮助请求",
+            "detail": "这是低风险能力介绍或闲聊请求，无需调用业务工具或等待写操作确认",
             "state": "completed",
         })
         await _emit_event("intent", {

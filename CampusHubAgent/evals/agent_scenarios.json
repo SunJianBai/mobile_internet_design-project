@@ -197,9 +197,46 @@
       }
     },
     {
+      "id": "multi_step_map_then_order_after_choice",
+      "category": "multi_step",
+      "message": "先找三家适合三个人去的足疗店，把地图给我，等我选了再创建约伴订单",
+      "expect": {
+        "primary_intent_any": ["multi_step", "map.search"],
+        "domain_any": ["multi", "map"],
+        "operation_type": "mixed",
+        "requires_confirmation": true,
+        "next_action": "execute_read_tools",
+        "confirmation_gate": false
+      }
+    },
+    {
+      "id": "order_create_from_map_card_missing_slots",
+      "category": "order_write",
+      "message": "基于地图里的「沁雨轩头疗馆」创建一个约伴订单草稿，地点坐标：116.170492, 39.728167。如果还缺少必要信息，请先让我补充；不要直接发布。",
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action_any": ["ask_clarification", "prepare_draft"]
+      }
+    },
+    {
       "id": "ambiguous_join_people_not_publish",
       "category": "guardrail",
       "message": "想找几个人一起出去玩，先看看附近有什么地方推荐",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "map_relax_recommend_no_order",
+      "category": "guardrail",
+      "message": "附近有没有适合三个人去放松的足疗按摩店，先只推荐一下，不要创建订单",
       "expect": {
         "primary_intent": "map.search",
         "domain": "map",
@@ -243,6 +280,17 @@
       "id": "casual_chat",
       "category": "general",
       "message": "你能做什么，给我几个例子",
+      "expect": {
+        "primary_intent": "chat.general",
+        "domain": "general",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "general_greeting",
+      "category": "general",
+      "message": "你好，介绍一下你自己",
       "expect": {
         "primary_intent": "chat.general",
         "domain": "general",
