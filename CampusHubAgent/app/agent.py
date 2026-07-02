@@ -2578,6 +2578,59 @@ def _format_weather_direct_reply(weather_text: str) -> str:
     )
 
 
+def _build_weather_artifact(weather_text: str, reply: str, intent_analysis: dict) -> dict | None:
+    data = _safe_json_object(weather_text)
+    forecasts = data.get("forecasts") if isinstance(data.get("forecasts"), list) else []
+    if not forecasts:
+        return None
+
+    city = data.get("city") or "北京"
+    today = forecasts[0]
+    day_weather = today.get("dayweather") or "未知"
+    night_weather = today.get("nightweather") or "未知"
+    day_temp = today.get("daytemp") or "-"
+    night_temp = today.get("nighttemp") or "-"
+    advice = ""
+    for line in str(reply or "").splitlines():
+        if "建议：" in line:
+            advice = line.split("建议：", 1)[-1].strip()
+            break
+    if not advice:
+        advice = "建议出门前再确认实时天气。"
+
+    return {
+        "type": "weather",
+        "title": f"{city}今日天气建议",
+        "description": "已整理成可继续操作的天气卡片；后续如需创建活动，仍会先生成确认草稿。",
+        "fields": [
+            {"label": "城市", "value": city},
+            {"label": "白天", "value": f"{day_weather} · {day_temp}℃"},
+            {"label": "夜间", "value": f"{night_weather} · {night_temp}℃"},
+            {"label": "建议", "value": advice},
+        ],
+        "actions": [
+            {
+                "label": "找室内备选地点",
+                "prompt": f"根据{city}今天的天气，帮我找附近适合临时改去的室内地点，并展示地图",
+                "primary": True,
+            },
+            {
+                "label": "生成备选安排",
+                "prompt": f"根据{city}今天的天气，帮我整理一个户外和室内两套备选安排，先不要发布或创建订单",
+            },
+            {
+                "label": "只看可加入活动",
+                "prompt": "帮我筛选今天适合室内进行、现在还能加入的约伴活动",
+            },
+        ],
+        "state": "completed",
+        "intent": {
+            "primary_intent": intent_analysis.get("primary_intent"),
+            "next_action": intent_analysis.get("next_action"),
+        },
+    }
+
+
 async def build_direct_read_response(user_info: dict, user_message: str, intent_analysis: dict) -> dict | None:
     """Fast deterministic read path for simple map/weather tasks."""
     primary_intent = (intent_analysis.get("primary_intent") or "").lower()
@@ -2598,13 +2651,21 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
         reply = _format_weather_direct_reply(weather_text)
         if not reply:
             return None
+        weather_artifact = _build_weather_artifact(weather_text, reply, intent_analysis)
+        if weather_artifact:
+            await _emit_event("artifact", weather_artifact)
         await _emit_event("agent_step", {
             "phase": "weather_direct",
             "title": "天气查询完成",
             "detail": "已获取天气结果并整理建议",
             "state": "completed",
         })
-        return {"reply": reply, "tool_calls": [{"name": "maps_weather", "args": {"city": "北京"}}], "intent": intent_analysis}
+        return {
+            "reply": reply,
+            "tool_calls": [{"name": "maps_weather", "args": {"city": "北京"}}],
+            "intent": intent_analysis,
+            "artifacts": [weather_artifact] if weather_artifact else [],
+        }
 
     if primary_intent not in {"map.search", "multi_step"}:
         return None

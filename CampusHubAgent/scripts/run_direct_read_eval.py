@@ -169,7 +169,7 @@ async def scenario_multi_step_marks_primary_draft_action() -> DirectReadResult:
     return DirectReadResult("multi_step_marks_primary_draft_action", not failures, failures, actual)
 
 
-async def scenario_weather_direct_stays_text_only() -> DirectReadResult:
+async def scenario_weather_direct_returns_artifact() -> DirectReadResult:
     async def check(harness: DirectReadHarness) -> dict[str, Any]:
         result = await harness.agent.build_direct_read_response(
             user_info={"uid": 4, "campus": "LIANGXIANG"},
@@ -186,22 +186,36 @@ async def scenario_weather_direct_stays_text_only() -> DirectReadResult:
             "reply": result.get("reply") if result else "",
             "artifacts": result.get("artifacts", []) if result else [],
             "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
         }
 
     actual = await run_with_events(check)
     failures: list[str] = []
     if "北京今日天气" not in actual.get("reply", ""):
         failures.append("weather direct reply should still render weather guidance")
-    if actual.get("artifacts"):
-        failures.append("weather direct response should not add map follow-up artifacts")
-    return DirectReadResult("weather_direct_stays_text_only", not failures, failures, actual)
+    artifacts = actual.get("artifacts") or []
+    artifact = artifacts[0] if artifacts else {}
+    artifact_events = [item for item in actual.get("events", []) if item.get("event") == "artifact"]
+    if not artifacts:
+        failures.append("weather direct response should return a structured weather artifact")
+    if not artifact_events:
+        failures.append("weather direct flow should emit an artifact event for streaming clients")
+    if artifact.get("type") != "weather":
+        failures.append(f"expected weather artifact, got {artifact.get('type')!r}")
+    fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
+    if fields.get("白天") != "晴 · 31℃":
+        failures.append(f"expected daytime weather field, got {fields.get('白天')!r}")
+    labels = [action.get("label") for action in artifact.get("actions", []) if isinstance(action, dict)]
+    if "找室内备选地点" not in labels:
+        failures.append("expected an action for indoor backup places")
+    return DirectReadResult("weather_direct_returns_artifact", not failures, failures, actual)
 
 
 async def run_all() -> list[DirectReadResult]:
     scenarios = [
         scenario_map_search_returns_followup_artifact,
         scenario_multi_step_marks_primary_draft_action,
-        scenario_weather_direct_stays_text_only,
+        scenario_weather_direct_returns_artifact,
     ]
     return [await scenario() for scenario in scenarios]
 

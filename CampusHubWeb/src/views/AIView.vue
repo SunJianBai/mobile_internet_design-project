@@ -152,7 +152,7 @@
                           :class="['artifact-card', `artifact-${artifact.type || 'generic'}`]"
                         >
                           <div class="artifact-header">
-                            <div class="artifact-icon">{{ artifact.type === 'confirmation' ? '!' : 'i' }}</div>
+                            <div class="artifact-icon">{{ getArtifactIcon(artifact) }}</div>
                             <div class="artifact-heading">
                               <div class="artifact-title">{{ artifact.title || '结果卡片' }}</div>
                               <div v-if="artifact.description" class="artifact-description">{{ artifact.description }}</div>
@@ -225,7 +225,7 @@
                             :class="[
                               'artifact-actions',
                               'artifact-prompt-actions',
-                              { 'guide-action-grid': artifact.type === 'guide' }
+                              { 'guide-action-grid': isActionCardArtifact(artifact) }
                             ]"
                           >
                             <button
@@ -233,12 +233,12 @@
                               :key="`${artifactIndex}-action-${actionIndex}`"
                               :class="[
                                 'artifact-action',
-                                { primary: action.primary, 'guide-action-card': artifact.type === 'guide' }
+                                { primary: action.primary, 'guide-action-card': isActionCardArtifact(artifact) }
                               ]"
                               :disabled="sending"
                               @click="handleArtifactPromptAction(action)"
                             >
-                              <template v-if="artifact.type === 'guide'">
+                              <template v-if="isActionCardArtifact(artifact)">
                                 <span class="guide-action-label">{{ action.label || '执行' }}</span>
                                 <span v-if="action.prompt" class="guide-action-hint">{{ getGuideActionHint(action.prompt) }}</span>
                               </template>
@@ -834,6 +834,17 @@ function formatArtifactValue(value) {
   if (Array.isArray(value)) return value.join('、')
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+function getArtifactIcon(artifact) {
+  if (artifact?.type === 'confirmation') return '!'
+  if (artifact?.type === 'weather') return '天'
+  if (artifact?.type === 'guide') return '行'
+  return 'i'
+}
+
+function isActionCardArtifact(artifact) {
+  return ['guide', 'weather'].includes(artifact?.type)
 }
 
 function isArtifactFieldMissing(field) {
@@ -2102,6 +2113,16 @@ onBeforeUnmount(() => {
 .artifact-guide .artifact-icon {
   background: #0f766e;
 }
+.artifact-weather {
+  border-color: #bfdbfe;
+  background: linear-gradient(180deg, #ffffff 0%, #eef6ff 100%);
+}
+.artifact-weather .artifact-icon {
+  background: #2563eb;
+}
+.artifact-weather .artifact-field:last-child {
+  grid-column: 1 / -1;
+}
 .artifact-header {
   display: flex;
   gap: 10px;
@@ -2940,9 +2961,19 @@ onBeforeUnmount(() => {
   border-color: rgba(45, 212, 191, 0.28);
 }
 
+:global(:root[data-theme='dark']) .artifact-weather {
+  background: linear-gradient(180deg, #172235 0%, #13243b 100%);
+  border-color: rgba(96, 165, 250, 0.3);
+}
+
 :global(:root[data-theme='dark']) .artifact-guide .artifact-icon {
   background: #0f766e;
   color: #ccfbf1;
+}
+
+:global(:root[data-theme='dark']) .artifact-weather .artifact-icon {
+  background: #2563eb;
+  color: #dbeafe;
 }
 
 :global(:root[data-theme='dark']) .artifact-title,
@@ -3273,6 +3304,16 @@ onBeforeUnmount(() => {
   color: #edf4ff !important;
   border-color: rgba(148, 163, 184, 0.22) !important;
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-weather) {
+  background: linear-gradient(180deg, #172235 0%, #13243b 100%) !important;
+  border-color: rgba(96, 165, 250, 0.3) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-weather .artifact-icon) {
+  background: #2563eb !important;
+  color: #dbeafe !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-field) {
