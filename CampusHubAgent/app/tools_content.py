@@ -61,6 +61,35 @@ async def get_content_detail(content_id: int) -> str:
 
 
 @tool
+async def create_content(
+    user_id: int,
+    content: str,
+    media_type: str = "TEXT_ONLY",
+    order_id: int | None = None,
+) -> str:
+    """发布一条校园动态。调用前必须确认用户提供了动态内容。
+
+    Args:
+        user_id: 当前用户ID（系统自动提供）
+        content: 动态正文
+        media_type: 媒体类型: TEXT_ONLY, IMAGE, VIDEO（默认TEXT_ONLY）
+        order_id: 可选，关联的约伴订单ID
+    """
+    body = {
+        "content": content,
+        "mediaType": (media_type or "TEXT_ONLY").upper(),
+    }
+    if order_id:
+        body["orderId"] = order_id
+
+    result = await api_post("/api/v1/contents", user_id=user_id, json_body=body)
+    if result.get("code") == 200:
+        content_id = result.get("data")
+        return f"✅ 动态发布成功！[查看动态](/contents/{content_id})"
+    return f"发布动态失败: {result.get('message', '未知错误')}"
+
+
+@tool
 async def create_comment(user_id: int, content_id: int, comment_text: str) -> str:
     """在某条动态下发表评论。
 
@@ -90,4 +119,4 @@ async def like_content(user_id: int, content_id: int) -> str:
     return f"操作失败: {result.get('message', '未知错误')}"
 
 
-CONTENT_TOOLS = [search_contents, get_content_detail, create_comment, like_content]
+CONTENT_TOOLS = [search_contents, get_content_detail, create_content, create_comment, like_content]

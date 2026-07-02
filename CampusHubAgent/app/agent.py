@@ -12,6 +12,7 @@ import hashlib
 import re
 import time
 from collections import OrderedDict
+from datetime import datetime, timedelta
 from typing import AsyncIterator
 
 from langchain_openai import ChatOpenAI
@@ -27,7 +28,7 @@ from app.config import (
 )
 from app.tools import search_orders, create_order, get_my_orders, get_order_detail
 from app.tools_order import ORDER_EXTRA_TOOLS
-from app.tools_content import CONTENT_TOOLS
+from app.tools_content import CONTENT_TOOLS, create_content
 from app.tools_user import USER_TOOLS
 from app.mcp_tools import MCP_TOOLS, maps_around_search, maps_geo, maps_weather
 from app.tools_utils import UTIL_TOOLS
@@ -1369,6 +1370,307 @@ def _enrich_order_confirmation_fields(
     return enriched_fields, enriched_missing
 
 
+def _is_confirmed_artifact_message(text: str) -> bool:
+    text = str(text or "")
+    return any(cue in text for cue in (
+        "我确认执行这个草稿",
+        "我确认按修改后的内容执行这个草稿",
+        "确认执行这个草稿",
+    ))
+
+
+def _parse_confirmed_artifact_fields(text: str) -> dict:
+    fields = {}
+    for raw_line in str(text or "").splitlines():
+        line = raw_line.strip().lstrip("-*•").strip()
+        if not line or ("：" not in line and ":" not in line):
+            continue
+        separator = "：" if "：" in line else ":"
+        label, value = line.split(separator, 1)
+        label = label.strip()
+        value = value.strip()
+        if label and value:
+            fields[label] = value
+    return fields
+
+
+def _field_value(fields: dict, keywords: tuple[str, ...]) -> str:
+    for label, value in fields.items():
+        if any(keyword in label for keyword in keywords):
+            return str(value).strip()
+    return ""
+
+
+def _normalize_activity_type(value: str, context: str = "") -> str:
+    text = f"{value} {context}".upper()
+    rules = [
+        ("BASKETBALL", ("BASKETBALL", "篮球")),
+        ("BADMINTON", ("BADMINTON", "羽毛球")),
+        ("MEAL", ("MEAL", "吃饭", "约饭", "餐厅", "饭店", "美食")),
+        ("STUDY", ("STUDY", "自习", "图书馆", "学习")),
+        ("MOVIE", ("MOVIE", "电影", "影院", "电影院")),
+        ("RUNNING", ("RUNNING", "跑步", "夜跑", "操场")),
+        ("GAME", ("GAME", "游戏", "开黑")),
+        ("OTHER", ("OTHER", "按摩", "足疗", "洗脚", "推拿", "SPA", "头疗", "约伴")),
+    ]
+    for normalized, cues in rules:
+        if any(cue.upper() in text for cue in cues):
+            return normalized
+    return "OTHER"
+
+
+def _normalize_campus(value: str, context: str = "") -> str:
+    text = f"{value} {context}".upper()
+    rules = [
+        ("LIANGXIANG", ("LIANGXIANG", "良乡")),
+        ("ZHONGGUANCUN", ("ZHONGGUANCUN", "中关村")),
+        ("ZHUHAI", ("ZHUHAI", "珠海")),
+        ("XISHAN", ("XISHAN", "西山")),
+        ("OTHER_CAMPUS", ("OTHER_CAMPUS", "其他校区")),
+    ]
+    for normalized, cues in rules:
+        if any(cue.upper() in text for cue in cues):
+            return normalized
+    return ""
+
+
+def _normalize_gender_require(value: str) -> str:
+    text = str(value or "").upper()
+    if any(cue in text for cue in ("FEMALE", "女")):
+        return "FEMALE"
+    if any(cue in text for cue in ("MALE", "男")):
+        return "MALE"
+    return "ANY"
+
+
+def _extract_first_int(value: str) -> int | None:
+    text = str(value or "")
+    match = re.search(r"\d{1,3}", text)
+    if match:
+        parsed = int(match.group(0))
+        return parsed if parsed > 0 else None
+    return _extract_group_size(text)
+
+
+def _parse_hour_token(value: str) -> int | None:
+    value = str(value or "").strip()
+    if not value:
+        return None
+    if value.isdigit():
+        return int(value)
+    return _parse_small_chinese_number(value)
+
+
+def _normalize_start_time(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    normalized = text.replace("/", "-")
+    match = re.search(r"(20\d{2})-(\d{1,2})-(\d{1,2})\s+(\d{1,2}):(\d{1,2})(?::(\d{1,2}))?", normalized)
+    if match:
+        year, month, day, hour, minute, second = match.groups()
+        dt = datetime(int(year), int(month), int(day), int(hour), int(minute), int(second or 0))
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    match = re.search(r"(20\d{2})年(\d{1,2})月(\d{1,2})日?\s*([0-9一二两三四五六七八九十]{1,3})[点时:：](\d{1,2})?", text)
+    if match:
+        year, month, day, hour_token, minute = match.groups()
+        hour = _parse_hour_token(hour_token)
+        if hour is not None:
+            if any(cue in text for cue in ("下午", "晚上", "今晚")) and hour < 12:
+                hour += 12
+            dt = datetime(int(year), int(month), int(day), hour, int(minute or 0), 0)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    day_offset = None
+    if "后天" in text:
+        day_offset = 2
+    elif "明天" in text:
+        day_offset = 1
+    elif any(cue in text for cue in ("今天", "今晚")):
+        day_offset = 0
+
+    match = re.search(r"([0-9一二两三四五六七八九十]{1,3})[点时:：](\d{1,2})?", text)
+    if day_offset is not None and match:
+        hour = _parse_hour_token(match.group(1))
+        if hour is not None:
+            if any(cue in text for cue in ("下午", "晚上", "今晚")) and hour < 12:
+                hour += 12
+            minute = int(match.group(2) or 0)
+            dt = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=day_offset)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+
+    return ""
+
+
+def _current_user_id(user_info: dict) -> int | None:
+    for key in ("uid", "id", "user_id", "userId"):
+        value = (user_info or {}).get(key)
+        if value is None:
+            continue
+        try:
+            parsed = int(value)
+            if parsed > 0:
+                return parsed
+        except (TypeError, ValueError):
+            continue
+    return None
+
+
+def _infer_confirmed_action_kind(text: str, fields: dict) -> str:
+    lowered = str(text or "").lower()
+    field_labels = " ".join(fields.keys())
+    if "动态" in lowered or "动态" in field_labels or _field_value(fields, ("动态内容", "正文", "内容")):
+        return "content.create"
+    if "约伴" in lowered or "订单" in lowered or "活动类型" in field_labels:
+        return "order.create"
+    return "other.write"
+
+
+def _intent_for_confirmed_execution(action_kind: str) -> dict:
+    domain = "content" if action_kind.startswith("content.") else "order" if action_kind.startswith("order.") else "other"
+    return {
+        "primary_intent": action_kind,
+        "domain": domain,
+        "operation_type": "write",
+        "requires_confirmation": False,
+        "confidence": 1.0,
+        "summary": "用户已确认执行结构化草稿",
+        "missing_slots": [],
+        "suggested_agents": [],
+        "next_action": "execute_confirmed_write",
+        "confirmation_confirmed": True,
+    }
+
+
+async def _execute_confirmed_order(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    context_text = user_message
+    activity_value = _field_value(fields, ("活动类型", "类型"))
+    campus_value = _field_value(fields, ("校区",))
+    location = _field_value(fields, ("地点名称", "活动地点", "地点", "位置"))
+    start_time_value = _field_value(fields, ("开始时间", "时间"))
+    people_value = _field_value(fields, ("参与人数", "人数", "上限"))
+    gender_value = _field_value(fields, ("性别", "性别要求"))
+    coords = _field_value(fields, ("地点坐标", "坐标"))
+    note = _field_value(fields, ("备注", "说明"))
+
+    args = {
+        "user_id": user_id,
+        "activity_type": _normalize_activity_type(activity_value, context_text),
+        "campus": _normalize_campus(campus_value, context_text),
+        "location": location,
+        "start_time": _normalize_start_time(start_time_value),
+        "gender_require": _normalize_gender_require(gender_value),
+        "max_people": _extract_first_int(people_value),
+        "note": note or (f"地点坐标：{coords}" if coords else ""),
+    }
+    missing = []
+    if not args["user_id"]:
+        missing.append("用户ID")
+    if not args["campus"]:
+        missing.append("校区")
+    if not args["location"]:
+        missing.append("地点")
+    if not args["start_time"]:
+        missing.append("时间（请使用 yyyy-MM-dd HH:mm:ss 或“明天晚上7点”这类格式）")
+    if not args["max_people"]:
+        missing.append("参与人数")
+
+    intent = _intent_for_confirmed_execution("order.create")
+    if missing:
+        return {
+            "reply": "我还不能执行这个订单草稿，缺少或无法解析：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认订单",
+        "detail": "已收到完整确认草稿，正在调用订单创建工具",
+        "state": "running",
+    })
+    result_text = await create_order.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "订单执行完成",
+        "detail": "订单创建工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "create_order", "args": args}],
+        "intent": intent,
+    }
+
+
+async def _execute_confirmed_content(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    content = _field_value(fields, ("动态内容", "正文", "内容", "文本"))
+    media_type = _field_value(fields, ("媒体类型", "mediaType")) or "TEXT_ONLY"
+    order_id = _extract_first_int(_field_value(fields, ("订单ID", "关联订单")))
+
+    missing = []
+    if not user_id:
+        missing.append("用户ID")
+    if not content:
+        missing.append("动态内容")
+
+    intent = _intent_for_confirmed_execution("content.create")
+    if missing:
+        return {
+            "reply": "我还不能发布这个动态草稿，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {
+        "user_id": user_id,
+        "content": content,
+        "media_type": media_type,
+        "order_id": order_id,
+    }
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认动态",
+        "detail": "已收到完整确认草稿，正在调用动态发布工具",
+        "state": "running",
+    })
+    result_text = await create_content.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "动态执行完成",
+        "detail": "动态发布工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "create_content", "args": args}],
+        "intent": intent,
+    }
+
+
+async def build_confirmed_execution_response(user_info: dict, history: list, user_message: str) -> dict | None:
+    """Execute a structured draft only after the user explicitly confirms it."""
+    if not _is_confirmed_artifact_message(user_message):
+        return None
+
+    fields = _parse_confirmed_artifact_fields(user_message)
+    action_kind = _infer_confirmed_action_kind(user_message, fields)
+    if action_kind == "order.create":
+        return await _execute_confirmed_order(user_info, fields, user_message)
+    if action_kind == "content.create":
+        return await _execute_confirmed_content(user_info, fields, user_message)
+
+    return {
+        "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单创建或动态发布草稿，或继续手动处理。",
+        "tool_calls": [],
+        "intent": _intent_for_confirmed_execution(action_kind),
+    }
+
+
 async def build_confirmation_artifact(
     user_info: dict,
     history: list,
@@ -1832,6 +2134,10 @@ async def chat(
     user_message: str,
 ) -> dict:
     """非流式多 Agent 调用。"""
+    confirmed_execution = await build_confirmed_execution_response(user_info, history, user_message)
+    if confirmed_execution:
+        return confirmed_execution
+
     intent_analysis = await analyze_intent(user_info, memories, history, user_message)
     if _requires_confirmation_gate(intent_analysis):
         artifact = await build_confirmation_artifact(user_info, history, user_message, intent_analysis)
