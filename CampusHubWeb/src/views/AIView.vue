@@ -1152,6 +1152,101 @@ const renderEntityLinkCard = (url = '', text = '') => {
   `</a>`
 }
 
+const getExecutionMeta = (message = '', url = '') => {
+  const text = String(message || '').trim()
+  const orderId = (url.match(/^\/orders\/(\d+)$/) || text.match(/订单\s*#?(\d+)/))?.[1]
+  const contentId = (url.match(/^\/contents\/(\d+)$/) || text.match(/动态\s*#?(\d+)/))?.[1]
+  const route = url || (orderId ? `/orders/${orderId}` : contentId ? `/contents/${contentId}` : '')
+
+  if (/约伴订单创建成功|订单创建成功/.test(text)) {
+    return {
+      type: 'order',
+      icon: '约',
+      title: '约伴订单已创建',
+      subtitle: orderId ? `订单 #${orderId} 已发布，正在等待同学加入` : '订单已发布，正在等待同学加入',
+      action: '查看订单',
+      route
+    }
+  }
+  if (/动态发布成功/.test(text)) {
+    return {
+      type: 'content',
+      icon: '动',
+      title: '动态已发布',
+      subtitle: contentId ? `动态 #${contentId} 已同步到校园动态` : '已同步到校园动态',
+      action: '查看动态',
+      route
+    }
+  }
+  if (/评论发表成功/.test(text)) {
+    return {
+      type: 'comment',
+      icon: '评',
+      title: '评论已发表',
+      subtitle: contentId ? `已评论动态 #${contentId}` : '评论已写入动态',
+      action: '查看动态',
+      route
+    }
+  }
+  if (/操作成功/.test(text) && route.startsWith('/contents/')) {
+    return {
+      type: 'like',
+      icon: '赞',
+      title: '动态操作已完成',
+      subtitle: contentId ? `动态 #${contentId} 的点赞状态已更新` : '点赞状态已更新',
+      action: '查看动态',
+      route
+    }
+  }
+  if (/申请加入订单/.test(text)) {
+    return {
+      type: 'order',
+      icon: '报',
+      title: '申请已提交',
+      subtitle: orderId ? `订单 #${orderId} 正在等待发布者审核` : '正在等待发布者审核',
+      action: '查看订单',
+      route
+    }
+  }
+  if (/已接受用户加入订单/.test(text)) {
+    return {
+      type: 'order',
+      icon: '审',
+      title: '申请已接受',
+      subtitle: orderId ? `订单 #${orderId} 已进入后续约伴流程` : '订单已进入后续约伴流程',
+      action: '查看订单',
+      route
+    }
+  }
+  if (/已标记为完成/.test(text)) {
+    return {
+      type: 'order',
+      icon: '完',
+      title: '订单已完成',
+      subtitle: orderId ? `订单 #${orderId} 已更新为完成状态` : '订单状态已更新为完成',
+      action: '查看订单',
+      route
+    }
+  }
+  return null
+}
+
+const renderExecutionResultCard = (message = '', url = '') => {
+  const meta = getExecutionMeta(message, url)
+  if (!meta) return ''
+  const action = meta.route
+    ? `<button type="button" class="app-link execution-action" data-route="${escapeHtml(meta.route)}">${escapeHtml(meta.action)}</button>`
+    : ''
+  return `<div class="execution-result-card execution-${meta.type}">` +
+    `<span class="execution-icon">${escapeHtml(meta.icon)}</span>` +
+    `<span class="execution-main">` +
+      `<strong class="execution-title">${escapeHtml(meta.title)}</strong>` +
+      `<span class="execution-subtitle">${escapeHtml(meta.subtitle)}</span>` +
+    `</span>` +
+    action +
+  `</div>`
+}
+
 const renderMarkdown = (md) => {
   if (!md) return ''
 
@@ -1160,6 +1255,15 @@ const renderMarkdown = (md) => {
     const idx = mapBlocks.length
     mapBlocks.push(parseMapAttrs(attrs))
     return `@@MAP_BLOCK_${idx}@@`
+  })
+
+  const executionBlocks = []
+  md = md.replace(/^✅\s*(.+?)(?:\s*\[([^\]]+)\]\((\/(?:orders|contents)\/\d+)\))?\s*$/gm, (match, message, linkText, url) => {
+    const card = renderExecutionResultCard(message, url || '')
+    if (!card) return match
+    const idx = executionBlocks.length
+    executionBlocks.push(card)
+    return `@@EXECUTION_BLOCK_${idx}@@`
   })
 
   const codeBlocks = []
@@ -1198,6 +1302,8 @@ const renderMarkdown = (md) => {
     const items = m.trim().split(/\n/).filter(Boolean).map(l => l.replace(/^[ \t]*[-\*]\s+/, ''))
     return '\n<ul>' + items.map(i => '<li>' + i + '</li>').join('') + '</ul>'
   })
+
+  md = md.replace(/@@EXECUTION_BLOCK_(\d+)@@/g, (m, idx) => executionBlocks[Number(idx)] || '')
 
   const parts = md.split(/\n\s*\n/)
   md = parts.map(p => {
@@ -1937,6 +2043,107 @@ onBeforeUnmount(() => {
 }
 .markdown-body :deep(.entity-content .entity-action) { color: #047857; }
 
+.markdown-body :deep(.execution-result-card) {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  max-width: 560px;
+  margin: 12px 0;
+  padding: 13px 14px;
+  border: 1px solid #bbf7d0;
+  border-radius: 14px;
+  background: linear-gradient(135deg, #f0fdf4 0%, #eff6ff 100%);
+  box-shadow: 0 14px 32px rgba(15, 23, 42, 0.08);
+  color: #0f172a;
+  transition: transform 0.15s, border-color 0.15s, box-shadow 0.15s, background 0.15s;
+}
+.markdown-body :deep(.execution-result-card:hover) {
+  transform: translateY(-1px);
+  border-color: #86efac;
+  background: linear-gradient(135deg, #ecfdf5 0%, #e0f2fe 100%);
+  box-shadow: 0 18px 36px rgba(15, 23, 42, 0.12);
+}
+.markdown-body :deep(.execution-icon) {
+  flex: 0 0 auto;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 42px;
+  height: 42px;
+  border-radius: 13px;
+  background: #2563eb;
+  color: #ffffff;
+  font-size: 15px;
+  font-weight: 900;
+  box-shadow: 0 10px 20px rgba(37, 99, 235, 0.18);
+}
+.markdown-body :deep(.execution-content .execution-icon) {
+  background: #059669;
+  box-shadow: 0 10px 20px rgba(5, 150, 105, 0.18);
+}
+.markdown-body :deep(.execution-comment .execution-icon) {
+  background: #d97706;
+  box-shadow: 0 10px 20px rgba(217, 119, 6, 0.18);
+}
+.markdown-body :deep(.execution-like .execution-icon) {
+  background: #e11d48;
+  box-shadow: 0 10px 20px rgba(225, 29, 72, 0.18);
+}
+.markdown-body :deep(.execution-main) {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.markdown-body :deep(.execution-title) {
+  color: #0f172a;
+  font-size: 14px;
+  line-height: 1.35;
+}
+.markdown-body :deep(.execution-subtitle) {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.45;
+}
+.markdown-body :deep(.execution-action) {
+  flex: 0 0 auto;
+  min-height: 32px;
+  padding: 0 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.78);
+  color: #1d4ed8;
+  font: inherit;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background 0.15s, border-color 0.15s, color 0.15s;
+}
+.markdown-body :deep(.execution-action:hover) {
+  border-color: #93c5fd;
+  background: #dbeafe;
+  color: #1e40af;
+  text-decoration: none;
+}
+
+@media (max-width: 640px) {
+  .markdown-body :deep(.execution-result-card) {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .markdown-body :deep(.execution-main) {
+    flex: 1 1 calc(100% - 54px);
+  }
+
+  .markdown-body :deep(.execution-action) {
+    margin-left: 54px;
+  }
+}
+
 /* 地图 */
 /* 状态文字 */
 .status-text { font-size: 13px; color: #9ca3af; padding: 4px 0; }
@@ -2316,6 +2523,7 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .operation-timeline,
 :global(:root[data-theme='dark']) .artifact-card,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-link-card),
+:global(:root[data-theme='dark']) .markdown-body :deep(.execution-result-card),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card) {
   background: #172235;
   border-color: rgba(148, 163, 184, 0.22);
@@ -2345,6 +2553,7 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .artifact-title,
 :global(:root[data-theme='dark']) .artifact-field-value,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-title),
+:global(:root[data-theme='dark']) .markdown-body :deep(.execution-title),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-title),
 :global(:root[data-theme='dark']) .memory-content {
   color: #edf4ff;
@@ -2365,6 +2574,7 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .artifact-field-label,
 :global(:root[data-theme='dark']) .artifact-edit-field,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-subtitle),
+:global(:root[data-theme='dark']) .markdown-body :deep(.execution-subtitle),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-coords),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-hint) {
   color: #94a3b8;
@@ -2381,7 +2591,8 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .artifact-action:hover:not(:disabled),
-:global(:root[data-theme='dark']) .markdown-body :deep(.entity-link-card:hover) {
+:global(:root[data-theme='dark']) .markdown-body :deep(.entity-link-card:hover),
+:global(:root[data-theme='dark']) .markdown-body :deep(.execution-result-card:hover) {
   background: #1f2d44;
   border-color: rgba(154, 184, 255, 0.38);
   color: #f8fbff;
@@ -2431,6 +2642,7 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-action),
+:global(:root[data-theme='dark']) .markdown-body :deep(.execution-action),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-control),
 :global(:root[data-theme='dark']) .memory-tag {
   background: #223554;
@@ -2439,9 +2651,11 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-action:hover),
+:global(:root[data-theme='dark']) .markdown-body :deep(.execution-action:hover),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-control:hover) {
   background: #2d4470;
   color: #f8fbff;
+  text-decoration: none;
 }
 
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-draft) {
@@ -2506,6 +2720,7 @@ onBeforeUnmount(() => {
 
 /* v-html 注入的卡片不会携带 scoped attribute，暗色覆盖必须用纯全局选择器。 */
 :global(html[data-theme='dark'] .markdown-body .entity-link-card),
+:global(html[data-theme='dark'] .markdown-body .execution-result-card),
 :global(html[data-theme='dark'] .markdown-body .map-card) {
   background: #172235 !important;
   color: #edf4ff !important;
@@ -2513,23 +2728,27 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
 }
 
-:global(html[data-theme='dark'] .markdown-body .entity-link-card:hover) {
+:global(html[data-theme='dark'] .markdown-body .entity-link-card:hover),
+:global(html[data-theme='dark'] .markdown-body .execution-result-card:hover) {
   background: #1f2d44 !important;
   border-color: rgba(154, 184, 255, 0.38) !important;
 }
 
 :global(html[data-theme='dark'] .markdown-body .entity-title),
+:global(html[data-theme='dark'] .markdown-body .execution-title),
 :global(html[data-theme='dark'] .markdown-body .map-card-title) {
   color: #edf4ff !important;
 }
 
 :global(html[data-theme='dark'] .markdown-body .entity-subtitle),
+:global(html[data-theme='dark'] .markdown-body .execution-subtitle),
 :global(html[data-theme='dark'] .markdown-body .map-card-coords),
 :global(html[data-theme='dark'] .markdown-body .map-card-hint) {
   color: #94a3b8 !important;
 }
 
 :global(html[data-theme='dark'] .markdown-body .map-card-action),
+:global(html[data-theme='dark'] .markdown-body .execution-action),
 :global(html[data-theme='dark'] .markdown-body .map-control) {
   background: #223554 !important;
   color: #bfdbfe !important;
@@ -2537,9 +2756,11 @@ onBeforeUnmount(() => {
 }
 
 :global(html[data-theme='dark'] .markdown-body .map-card-action:hover),
+:global(html[data-theme='dark'] .markdown-body .execution-action:hover),
 :global(html[data-theme='dark'] .markdown-body .map-control:hover) {
   background: #2d4470 !important;
   color: #f8fbff !important;
+  text-decoration: none !important;
 }
 
 :global(html[data-theme='dark'] .markdown-body .map-card-draft) {
