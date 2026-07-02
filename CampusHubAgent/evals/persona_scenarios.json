@@ -1,0 +1,259 @@
+{
+  "version": 1,
+  "description": "Persona-style CampusHub intent scenarios with colloquial student requests and multi-turn context.",
+  "default_user": {
+    "uid": 4,
+    "nickname": "Codex QA",
+    "campus": "LIANGXIANG"
+  },
+  "scenarios": [
+    {
+      "id": "persona_map_dinner_budget_no_publish",
+      "category": "persona_map_read",
+      "persona": "预算敏感的室友小组",
+      "message": "周五晚上想和两个室友在良乡附近吃烤肉，人均80以内，先帮我找店就行，别发活动",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "persona_map_route_cinema_only",
+      "category": "persona_map_read",
+      "persona": "临时出行的学生",
+      "message": "从良乡校区到最近的电影院怎么走？给我地图就行，不用创建任何东西",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_map_store_not_dynamic",
+      "category": "persona_guardrail",
+      "persona": "容易被误判为发布动态的约人请求",
+      "message": "想找几个人周末去密室，先看看附近有什么店，不要发布动态也不要创建订单",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_order_search_joinable_badminton",
+      "category": "persona_order_read",
+      "persona": "想临时加入运动约伴的学生",
+      "message": "有没有今天晚上能加入的羽毛球约伴？良乡校区最好，帮我看看",
+      "expect": {
+        "primary_intent_any": ["order.search", "order.manage"],
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_order_create_missing_place",
+      "category": "persona_order_write",
+      "persona": "想发起活动但信息不完整的学生",
+      "message": "帮我发起一个周末打羽毛球的约伴，地点还没想好，先生成草稿",
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action_any": ["ask_clarification", "prepare_draft"]
+      }
+    },
+    {
+      "id": "persona_order_create_after_map_choice",
+      "category": "persona_multi_step",
+      "persona": "先查地点再基于结果创建约伴的人",
+      "message": "就选第一家店，帮我整理成三个人今晚八点的按摩约伴订单草稿，先别直接发布",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我找三家适合三个人去的按摩店"
+        },
+        {
+          "role": "assistant",
+          "content": "已推荐 3 家附近店铺，并展示了地图卡片。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action_any": ["ask_clarification", "prepare_draft"]
+      }
+    },
+    {
+      "id": "persona_content_create_study_buddy",
+      "category": "persona_content_write",
+      "persona": "想发布自习动态的学生",
+      "message": "帮我发个动态：今晚八点三楼自习，缺搭子，看到的同学可以一起来",
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "persona_content_search_study_recent",
+      "category": "persona_content_read",
+      "persona": "想看社区动态的人",
+      "message": "动态里最近有人约图书馆自习吗？搜一下就好",
+      "expect": {
+        "primary_intent": "content.search",
+        "domain": "content",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_content_comment_write",
+      "category": "persona_content_write",
+      "persona": "想让 AI 代发评论的人",
+      "message": "帮我在动态 23 下面回一句：我也想去，别直接绕过确认",
+      "expect": {
+        "primary_intent": "content.interact",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_content_like_write",
+      "category": "persona_content_write",
+      "persona": "想点赞动态的人",
+      "message": "给动态 9 点个赞，确认后再执行",
+      "expect": {
+        "primary_intent": "content.interact",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_memory_food_preference",
+      "category": "persona_memory_write",
+      "persona": "希望 AI 记住饮食偏好的人",
+      "message": "记住我不吃辣，推荐餐厅的时候尽量避开川菜和湘菜",
+      "expect": {
+        "primary_intent": "memory.manage",
+        "domain": "memory",
+        "operation_type_any": ["write", "mixed"],
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_user_profile_check",
+      "category": "persona_user_read",
+      "persona": "想查看陌生同学信息的人",
+      "message": "看看用户 12 的主页，他以前发过什么内容？",
+      "expect": {
+        "primary_intent": "user.profile",
+        "domain": "user",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_weather_commute",
+      "category": "persona_weather_read",
+      "persona": "准备骑车上课的人",
+      "message": "明天北京会不会下雨，适不适合骑车去上课？",
+      "expect": {
+        "primary_intent": "weather.query",
+        "domain": "weather",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_multi_map_then_order",
+      "category": "persona_multi_step",
+      "persona": "明确要求先查再创建的人",
+      "message": "先帮我找三家附近烤肉店，等我选了再创建约饭订单",
+      "expect": {
+        "primary_intent_any": ["multi_step", "map.search"],
+        "domain_any": ["multi", "map"],
+        "operation_type": "mixed",
+        "requires_confirmation": true,
+        "confirmation_gate": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "persona_draft_edit_order_context",
+      "category": "persona_draft_followup",
+      "persona": "正在修改约伴订单草稿的人",
+      "message": "人数改成 4 个，时间换到晚上九点，地点还是刚才那个",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我创建一个按摩约伴订单草稿"
+        },
+        {
+          "role": "assistant",
+          "content": "已生成约伴订单确认草稿，请确认或修改后再执行。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_draft_edit_content_context",
+      "category": "persona_draft_followup",
+      "persona": "正在修改动态草稿的人",
+      "message": "把语气改得轻松一点，加一句欢迎大家带电脑",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我发一条图书馆自习动态"
+        },
+        {
+          "role": "assistant",
+          "content": "已生成发布动态确认草稿，请确认或修改。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_general_how_to_use",
+      "category": "persona_general",
+      "persona": "第一次打开 AI 助手的人",
+      "message": "你能怎么帮我？别直接替我发东西，先说说能力就行",
+      "expect": {
+        "primary_intent": "chat.general",
+        "domain": "general",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    }
+  ]
+}

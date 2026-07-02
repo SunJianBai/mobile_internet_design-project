@@ -664,6 +664,10 @@ def _detect_general_help_shortcut(user_message: str) -> dict | None:
         "功能介绍",
         "给我几个例子",
         "能帮我什么",
+        "能怎么帮我",
+        "怎么帮我",
+        "说说能力",
+        "能力",
         "hello",
         "hi",
         "你好",
@@ -779,7 +783,12 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
             "router_timeout": False,
         }
 
-    if _has_any(text, generic_read_cues) and _has_any(text, ("动态", "帖子", "评论区", "校园圈")):
+    negated_content_write = _has_any(text, ("不要发布动态", "别发布动态", "不用发布动态", "不要发动态", "别发动态", "不用发动态"))
+    if (
+        _has_any(text, generic_read_cues)
+        and _has_any(text, ("动态", "帖子", "评论区", "校园圈"))
+        and not (negated_content_write and _has_any(text, ("店", "地方", "地点", "附近", "密室", "商家")))
+    ):
         return {
             "primary_intent": "content.search",
             "domain": "content",
@@ -864,6 +873,7 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "ktv",
         "酒吧",
         "公园",
+        "密室",
     )
     if _has_any(lowered, map_read_cues) and _has_any(lowered, place_cues):
         return {
@@ -890,7 +900,7 @@ def _detect_draft_edit_shortcut(history: list, user_message: str) -> dict | None
     if not text:
         return None
 
-    edit_cues = ("改成", "改为", "修改", "调整", "换成", "补充", "加上", "删掉", "去掉")
+    edit_cues = ("改成", "改为", "改得", "修改", "调整", "换成", "补充", "加上", "加一句", "语气", "删掉", "去掉")
     if not _has_any(text, edit_cues):
         return None
 
@@ -992,7 +1002,7 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
             "next_action": "prepare_draft",
         }
 
-    if "动态" in text and _has_any(text, ("评论", "回复")):
+    if "动态" in text and _has_any(text, ("评论", "回复", "回一句", "回一条", "留言")):
         return {
             **base,
             "primary_intent": "content.interact",
@@ -1012,6 +1022,28 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
             "missing_slots": [],
             "suggested_agents": ["content_draft"],
             "next_action": "prepare_draft",
+        }
+
+    if (
+        _has_any(text, ("订单草稿", "约伴订单草稿"))
+        or (_has_any(text, ("整理成", "生成", "做成")) and _has_any(text, ("约伴", "订单", "活动")))
+        or (_has_any(text, ("草稿",)) and _has_any(text, ("约伴", "订单", "活动")))
+    ):
+        missing_slots = []
+        if not _looks_like_time_text(text):
+            missing_slots.append("时间")
+        if not _has_any(text, ("校区", "馆", "场", "楼", "室", "地点", "地址", "店", "第一家", "刚才")):
+            missing_slots.append("地点")
+        if not _has_any(text, ("人", "人数", "最多", "名")):
+            missing_slots.append("参与人数")
+        return {
+            **base,
+            "primary_intent": "order.create",
+            "domain": "order",
+            "summary": "用户想基于已有信息整理一个约伴活动草稿",
+            "missing_slots": missing_slots,
+            "suggested_agents": ["order_draft"],
+            "next_action": "ask_clarification" if missing_slots else "prepare_draft",
         }
 
     if _has_any(text, ("发布动态", "发一条动态", "发个动态", "发动态")):
