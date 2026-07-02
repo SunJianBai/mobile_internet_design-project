@@ -236,15 +236,23 @@
     </div>
 
     <!-- 记忆面板 -->
-    <el-drawer v-model="showMemoryPanel" title="AI 对你的了解" direction="rtl" size="380px">
+    <el-drawer
+      v-model="showMemoryPanel"
+      class="memory-drawer"
+      title="AI 对你的了解"
+      direction="rtl"
+      :size="memoryDrawerSize"
+    >
       <div class="memory-panel">
         <div v-if="memories.length === 0" class="memory-empty">AI 还没有记住关于你的任何信息</div>
         <div v-for="mem in memories" :key="mem.memId" class="memory-item">
-          <div class="memory-tag">{{ mem.category }}</div>
+          <div class="memory-item-head">
+            <div class="memory-tag">{{ mem.category }}</div>
+            <button class="memory-delete" @click="handleDeleteMemory(mem.memId)" title="删除此记忆" aria-label="删除此记忆">
+              <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+            </button>
+          </div>
           <div class="memory-content">{{ mem.content }}</div>
-          <button class="memory-delete" @click="handleDeleteMemory(mem.memId)" title="删除此记忆">
-            <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
-          </button>
         </div>
       </div>
     </el-drawer>
@@ -272,6 +280,7 @@ const sidebarCollapsed = ref(false)
 const showMemoryPanel = ref(false)
 const memories = ref([])
 const wasMobileViewport = ref(false)
+const memoryDrawerSize = computed(() => (wasMobileViewport.value ? '100%' : '420px'))
 let activeStreamController = null
 let streamStateUnsubscribe = null
 let streamStateReloading = false
@@ -1128,6 +1137,10 @@ const renderMarkdown = (md) => {
     const code = codeBlocks[Number(idx)] || ''
     return '<pre><code>' + escapeHtml(code) + '</code></pre>'
   })
+
+  // Models sometimes wrap map directives in backticks. Render them as maps, not code.
+  md = md.replace(/<pre><code>\s*@@MAP_BLOCK_(\d+)@@\s*<\/code><\/pre>/g, '@@MAP_BLOCK_$1@@')
+  md = md.replace(/<code>\s*@@MAP_BLOCK_(\d+)@@\s*<\/code>/g, '@@MAP_BLOCK_$1@@')
 
   md = md.replace(/@@MAP_BLOCK_(\d+)@@/g, (m, idx) => {
     const p = mapBlocks[Number(idx)]
@@ -2020,13 +2033,78 @@ onBeforeUnmount(() => {
 }
 
 /* ==================== 记忆面板 ==================== */
-.memory-panel { padding: 0 4px; }
-.memory-empty { text-align: center; color: #999; padding: 32px 0; }
-.memory-item { display: flex; align-items: flex-start; gap: 8px; padding: 12px; border-bottom: 1px solid #f0f0f0; }
-.memory-tag { background: #eff6ff; color: #2563eb; font-size: 11px; padding: 2px 8px; border-radius: 10px; white-space: nowrap; }
-.memory-content { flex: 1; font-size: 13px; color: #333; line-height: 1.5; }
-.memory-delete { border: none; background: transparent; color: #ccc; cursor: pointer; padding: 2px; flex-shrink: 0; }
-.memory-delete:hover { color: #ef4444; }
+.memory-panel {
+  display: grid;
+  gap: 10px;
+  padding: 2px 2px 14px;
+}
+.memory-empty {
+  text-align: center;
+  color: #64748b;
+  padding: 36px 16px;
+  border: 1px dashed #d8e0ec;
+  border-radius: 10px;
+  background: #f8fafc;
+}
+.memory-item {
+  display: grid;
+  gap: 8px;
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid #e4ebf5;
+  border-radius: 10px;
+  background: #ffffff;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.05);
+}
+.memory-item-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  min-width: 0;
+}
+.memory-tag {
+  max-width: calc(100% - 38px);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.4;
+  padding: 3px 9px;
+  border: 1px solid #dbeafe;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+.memory-content {
+  min-width: 0;
+  font-size: 13px;
+  color: #334155;
+  line-height: 1.6;
+  word-break: break-word;
+  overflow-wrap: anywhere;
+}
+.memory-delete {
+  width: 28px;
+  height: 28px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: #94a3b8;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  flex-shrink: 0;
+  transition: all 0.15s;
+}
+.memory-delete:hover {
+  color: #ef4444;
+  background: #fef2f2;
+  border-color: #fecaca;
+}
 
 /* ==================== 暗色模式 ==================== */
 :global(:root[data-theme='dark']) .ai-view,
@@ -2234,9 +2312,29 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .memory-item {
-  border-bottom-color: rgba(148, 163, 184, 0.16);
+  background: #172235;
+  border-color: rgba(148, 163, 184, 0.2);
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18);
 }
 
+:global(:root[data-theme='dark']) .memory-empty {
+  background: #172235;
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #94a3b8;
+}
+
+:global(:root[data-theme='dark']) .memory-delete {
+  color: #94a3b8;
+  border-color: rgba(148, 163, 184, 0.12);
+}
+
+:global(:root[data-theme='dark']) .memory-delete:hover {
+  color: #fca5a5;
+  background: rgba(239, 68, 68, 0.12);
+  border-color: rgba(248, 113, 113, 0.28);
+}
+
+:global(:root[data-theme='dark']) :deep(.memory-drawer),
 :global(:root[data-theme='dark']) :deep(.el-drawer) {
   background: #101722;
   color: #edf4ff;
@@ -2411,6 +2509,50 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .operation-summary-head) {
   color: #c7d8f4 !important;
   border-bottom-color: rgba(148, 163, 184, 0.16) !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer) {
+  background: #101722 !important;
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .el-drawer__header) {
+  color: #edf4ff !important;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.18) !important;
+  margin-bottom: 12px !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .el-drawer__body) {
+  background: #101722 !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-empty),
+:global(html[data-theme='dark'] .memory-drawer .memory-item) {
+  background: #172235 !important;
+  color: #edf4ff !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18) !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-content) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-tag) {
+  background: #223554 !important;
+  color: #bfdbfe !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-delete) {
+  color: #94a3b8 !important;
+  border-color: rgba(148, 163, 184, 0.12) !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-delete:hover) {
+  color: #fca5a5 !important;
+  background: rgba(239, 68, 68, 0.12) !important;
+  border-color: rgba(248, 113, 113, 0.28) !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .operation-step + .operation-step) {
