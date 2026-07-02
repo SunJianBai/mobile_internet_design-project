@@ -180,6 +180,19 @@
                       <template v-else>
                         <div v-if="message.status && !message.content" class="status-text">{{ message.status }}</div>
                         <div class="markdown-body" v-html="formatContent(message.content)"></div>
+                        <div v-if="getFollowupSuggestions(message).length" class="reply-actions" aria-label="下一步建议">
+                          <button
+                            v-for="suggestion in getFollowupSuggestions(message)"
+                            :key="suggestion.label"
+                            class="reply-action"
+                            type="button"
+                            :disabled="sending"
+                            @click="startSuggestedPrompt(suggestion.prompt)"
+                          >
+                            <span>{{ suggestion.icon }}</span>
+                            {{ suggestion.label }}
+                          </button>
+                        </div>
                       </template>
                     </div>
                   </div>
@@ -282,6 +295,64 @@ const promptStarters = [
     prompt: '查一下今天北京天气，适不适合晚上去操场跑步'
   }
 ]
+
+function uniqSuggestions(items) {
+  const seen = new Set()
+  return items.filter(item => {
+    if (!item?.label || !item?.prompt || seen.has(item.label)) return false
+    seen.add(item.label)
+    return true
+  }).slice(0, 4)
+}
+
+function getFollowupSuggestions(message) {
+  if (!message || message.role !== 'assistant' || message.loading) return []
+
+  const content = String(message.content || '')
+  const artifacts = Array.isArray(message.artifacts) ? message.artifacts : []
+  const hasConfirmation = artifacts.some(item => item.type === 'confirmation')
+  if (hasConfirmation) {
+    return uniqSuggestions([
+      { icon: '改', label: '继续修改草稿', prompt: '我想继续修改这个草稿' },
+      { icon: '补', label: '补充缺失信息', prompt: '我来补充这个草稿缺少的信息' },
+      { icon: '查', label: '先再查一下', prompt: '先帮我再查一下相关信息，暂时不要执行' }
+    ])
+  }
+
+  const suggestions = []
+  const hasMap = /地图|附近|路线|店|餐厅|影院|按摩|地点|地址|map-card|高德/.test(content)
+  const hasWeather = /天气|温度|下雨|风|户外|跑步|出行/.test(content)
+  const hasOrder = /约伴|订单|活动|报名|加入|篮球|羽毛球|自习/.test(content)
+  const hasContent = /动态|评论|点赞|帖子|发布/.test(content)
+
+  if (hasMap) {
+    suggestions.push(
+      { icon: '换', label: '换一批附近推荐', prompt: '换一批附近推荐，并继续展示地图' },
+      { icon: '约', label: '基于这个地点创建约伴', prompt: '基于刚才推荐的地点，帮我整理一个约伴活动草稿' }
+    )
+  }
+  if (hasWeather) {
+    suggestions.push({ icon: '备', label: '给我备选安排', prompt: '如果天气不适合，帮我推荐一个室内备选安排' })
+  }
+  if (hasOrder) {
+    suggestions.push(
+      { icon: '筛', label: '只看可加入活动', prompt: '只筛选我现在还能加入的约伴活动' },
+      { icon: '发', label: '帮我发起一个约伴', prompt: '帮我根据刚才的信息生成一个新的约伴活动草稿' }
+    )
+  }
+  if (hasContent) {
+    suggestions.push({ icon: '写', label: '整理成动态草稿', prompt: '把刚才的信息整理成一条校园动态草稿，先不要发布' })
+  }
+
+  if (!suggestions.length && content.trim()) {
+    suggestions.push(
+      { icon: '短', label: '再简短一点', prompt: '把刚才的回答再简短一点' },
+      { icon: '细', label: '展开更多细节', prompt: '把刚才的回答展开得更具体一点' }
+    )
+  }
+
+  return uniqSuggestions(suggestions)
+}
 
 const AGENT_EVENT_TITLES = {
   agent_step: '智能体执行中',
@@ -1626,6 +1697,52 @@ onBeforeUnmount(() => {
 /* 状态文字 */
 .status-text { font-size: 13px; color: #9ca3af; padding: 4px 0; }
 
+/* 回复后的下一步建议 */
+.reply-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #edf2f7;
+}
+.reply-action {
+  min-height: 34px;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 7px 12px;
+  border: 1px solid #dbe3ef;
+  border-radius: 999px;
+  background: #ffffff;
+  color: #374151;
+  font-size: 13px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.15s;
+}
+.reply-action span {
+  width: 20px;
+  height: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: #eff6ff;
+  color: #2563eb;
+  font-size: 12px;
+  font-weight: 700;
+}
+.reply-action:hover:not(:disabled) {
+  border-color: #93c5fd;
+  background: #eff6ff;
+  color: #1d4ed8;
+  transform: translateY(-1px);
+}
+.reply-action:disabled {
+  cursor: default;
+  opacity: 0.55;
+}
+
 /* 地图卡片 */
 .markdown-body :deep(.map-card) {
   margin: 14px 0;
@@ -1935,6 +2052,27 @@ onBeforeUnmount(() => {
   color: #fbbf24;
 }
 
+:global(:root[data-theme='dark']) .reply-actions {
+  border-top-color: rgba(148, 163, 184, 0.16);
+}
+
+:global(:root[data-theme='dark']) .reply-action {
+  background: #172235;
+  color: #dbe7f8;
+  border-color: rgba(148, 163, 184, 0.24);
+}
+
+:global(:root[data-theme='dark']) .reply-action span {
+  background: #223554;
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .reply-action:hover:not(:disabled) {
+  background: #1f2d44;
+  color: #f8fbff;
+  border-color: rgba(154, 184, 255, 0.38);
+}
+
 :global(:root[data-theme='dark']) .markdown-body :deep(code) {
   background: #101a2a;
   color: #bfdbfe;
@@ -2057,6 +2195,27 @@ onBeforeUnmount(() => {
   color: #edf4ff !important;
   border-color: rgba(148, 163, 184, 0.22) !important;
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .reply-actions) {
+  border-top-color: rgba(148, 163, 184, 0.16) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .reply-action) {
+  background: #172235 !important;
+  color: #dbe7f8 !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .reply-action span) {
+  background: #223554 !important;
+  color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .reply-action:hover:not(:disabled)) {
+  background: #1f2d44 !important;
+  color: #f8fbff !important;
+  border-color: rgba(154, 184, 255, 0.38) !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-confirmation) {

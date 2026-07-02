@@ -8,6 +8,9 @@ import json
 import logging
 import asyncio
 import contextvars
+import hashlib
+import time
+from collections import OrderedDict
 from typing import AsyncIterator
 
 from langchain_openai import ChatOpenAI
@@ -44,6 +47,12 @@ MAIN_AGENT_RECURSION_LIMIT = 12
 SUB_AGENT_RECURSION_LIMIT = 8
 MAX_MAIN_DELEGATIONS = 4
 MAX_DELEGATIONS_PER_AGENT = 2
+ROUTER_TIMEOUT_SECONDS = 18
+INTENT_REVIEW_TIMEOUT_SECONDS = 25
+INTENT_CACHE_TTL_SECONDS = 10 * 60
+INTENT_CACHE_MAX_SIZE = 128
+
+_intent_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
 
 INTENT_ANALYSIS_PROMPT = """你是 CampusHub 的意图分析智能体。请基于用户消息、最近对话和用户信息判断请求类型。
 
@@ -174,6 +183,12 @@ Output: {{"primary_intent":"order.create","domain":"order","operation_type":"wri
 
 User: 帮我找附近的篮球场
 Output: {{"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.9,"summary":"用户想查询附近篮球场","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}}
+
+User: 我想要找3个人一起去洗脚按摩，有什么推荐的店吗
+Output: {{"primary_intent":"map.search","domain":"map","operation_type":"read","requires_confirmation":false,"confidence":0.92,"summary":"用户想查询并推荐适合多人前往的足疗按摩店","missing_slots":[],"suggested_agents":["map_weather"],"next_action":"execute_read_tools"}}
+
+User: 帮我发个动态找三个人一起去按摩
+Output: {{"primary_intent":"content.create","domain":"content","operation_type":"write","requires_confirmation":true,"confidence":0.92,"summary":"用户想发布一条寻找同伴的校园动态","missing_slots":[],"suggested_agents":["content_draft"],"next_action":"prepare_draft"}}
 
 JSON fields:
 {{
@@ -412,10 +427,56 @@ def _render_intent_prompt(
         "{history}": json.dumps((history or [])[-8:], ensure_ascii=False),
         "{user_message}": user_message,
     }
-    prompt = INTENT_ROUTER_PROMPT_V2
+    prompt = INTENT_REVIEW_PROMPT if previous_analysis is not None else INTENT_ROUTER_PROMPT_V2
     for placeholder, value in replacements.items():
         prompt = prompt.replace(placeholder, value)
     return prompt + "\n\n" + INTENT_SEMANTIC_ROUTING_GUIDE
+
+
+def _intent_cache_key(user_info: dict, memories: list, history: list, user_message: str) -> str:
+    payload = {
+        "uid": (user_info or {}).get("uid"),
+        "campus": (user_info or {}).get("campus"),
+        "message": " ".join(str(user_message or "").split()),
+        "history": (history or [])[-6:],
+        "memories": [
+            {
+                "category": item.get("category"),
+                "content": item.get("content"),
+            }
+            for item in (memories or [])[-8:]
+            if isinstance(item, dict)
+        ],
+    }
+    raw = json.dumps(payload, ensure_ascii=False, sort_keys=True)
+    return hashlib.sha256(raw.encode("utf-8")).hexdigest()
+
+
+def _copy_intent(value: dict) -> dict:
+    return json.loads(json.dumps(value or {}, ensure_ascii=False))
+
+
+def _get_cached_intent(cache_key: str) -> dict | None:
+    entry = _intent_cache.get(cache_key)
+    if not entry:
+        return None
+    created_at, analysis = entry
+    if time.time() - created_at > INTENT_CACHE_TTL_SECONDS:
+        _intent_cache.pop(cache_key, None)
+        return None
+    _intent_cache.move_to_end(cache_key)
+    cached = _copy_intent(analysis)
+    cached["cache_hit"] = True
+    return cached
+
+
+def _store_intent(cache_key: str, analysis: dict) -> None:
+    cache_value = _copy_intent(analysis)
+    cache_value.pop("cache_hit", None)
+    _intent_cache[cache_key] = (time.time(), cache_value)
+    _intent_cache.move_to_end(cache_key)
+    while len(_intent_cache) > INTENT_CACHE_MAX_SIZE:
+        _intent_cache.popitem(last=False)
 
 
 def _normalize_intent_analysis(value: dict) -> dict:
@@ -466,7 +527,10 @@ async def review_intent(
     })
     prompt = _render_intent_prompt(previous_analysis, user_info, memories, history, user_message)
     try:
-        result = await _get_llm(streaming=False, temperature=0, max_tokens=700).ainvoke([HumanMessage(content=prompt)])
+        result = await asyncio.wait_for(
+            _get_llm(streaming=False, temperature=0, max_tokens=700).ainvoke([HumanMessage(content=prompt)]),
+            timeout=INTENT_REVIEW_TIMEOUT_SECONDS,
+        )
         reviewed = _normalize_intent_analysis(_safe_json_loads(result.content))
         reviewed["reviewed"] = True
         reviewed["router_first_pass"] = previous_analysis
@@ -478,6 +542,24 @@ async def review_intent(
 
 
 async def analyze_intent(user_info: dict, memories: list, history: list, user_message: str) -> dict:
+    started_at = time.perf_counter()
+    cache_key = _intent_cache_key(user_info, memories, history, user_message)
+    cached = _get_cached_intent(cache_key)
+    if cached:
+        cached["router_elapsed_ms"] = 0
+        await _emit_event("agent_step", {
+            "phase": "intent_cache",
+            "title": "复用意图分析结果",
+            "detail": "检测到相同用户上下文和请求，已复用最近一次语义分析结果",
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **cached,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return cached
+
     await _emit_event("agent_step", {
         "phase": "intent",
         "title": "分析用户意图",
@@ -486,17 +568,27 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
     })
     prompt = _render_intent_prompt(None, user_info, memories, history, user_message)
     try:
-        result = await _get_router_llm().ainvoke([HumanMessage(content=prompt)])
+        result = await asyncio.wait_for(
+            _get_router_llm().ainvoke([HumanMessage(content=prompt)]),
+            timeout=ROUTER_TIMEOUT_SECONDS,
+        )
         analysis = _normalize_intent_analysis(_safe_json_loads(result.content))
+        analysis["router_timeout"] = False
     except Exception as e:
         logger.warning("Intent analysis failed: %s", e)
         analysis = _normalize_intent_analysis({
             "summary": "意图分析暂时失败，交由主智能体继续判断。",
             "next_action": "ask_clarification",
         })
+        analysis["router_timeout"] = isinstance(e, asyncio.TimeoutError)
+        analysis["router_error"] = e.__class__.__name__
 
     if _should_review_intent(analysis):
         analysis = await review_intent(user_info, memories, history, user_message, analysis)
+
+    analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+    analysis["cache_hit"] = False
+    _store_intent(cache_key, analysis)
 
     await _emit_event("intent", {
         **analysis,

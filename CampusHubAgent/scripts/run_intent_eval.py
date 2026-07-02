@@ -26,6 +26,7 @@ class ScenarioResult:
     scenario_id: str
     category: str
     ok: bool
+    duration_ms: int
     failures: list[str]
     expected: dict[str, Any]
     actual: dict[str, Any]
@@ -101,6 +102,7 @@ async def run_scenario(
 ) -> ScenarioResult:
     from app.agent import analyze_intent
 
+    started_at = asyncio.get_running_loop().time()
     try:
         actual = await asyncio.wait_for(
             analyze_intent(
@@ -123,6 +125,7 @@ async def run_scenario(
         scenario_id=scenario["id"],
         category=scenario["category"],
         ok=not failures,
+        duration_ms=int((asyncio.get_running_loop().time() - started_at) * 1000),
         failures=failures,
         expected=scenario["expect"],
         actual=actual,
@@ -149,7 +152,13 @@ def print_text_report(results: list[ScenarioResult]) -> None:
         domain = result.actual.get("domain")
         operation = result.actual.get("operation_type")
         confirm = result.actual.get("requires_confirmation")
-        print(f"{mark:4} {result.scenario_id:34} {domain}/{intent}/{operation}/confirm={confirm}")
+        cache = " cache" if result.actual.get("cache_hit") else ""
+        timeout = " timeout" if result.actual.get("router_timeout") else ""
+        print(
+            f"{mark:4} {result.scenario_id:34} "
+            f"{domain}/{intent}/{operation}/confirm={confirm} "
+            f"{result.duration_ms}ms{cache}{timeout}"
+        )
         for failure in result.failures:
             print(f"     - {failure}")
 
