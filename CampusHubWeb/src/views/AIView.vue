@@ -320,21 +320,52 @@
     <el-drawer
       v-model="showMemoryPanel"
       class="memory-drawer"
-      title="AI 对你的了解"
       direction="rtl"
       :size="memoryDrawerSize"
     >
-      <div class="memory-panel">
-        <div v-if="memories.length === 0" class="memory-empty">AI 还没有记住关于你的任何信息</div>
-        <div v-for="mem in memories" :key="mem.memId" class="memory-item">
-          <div class="memory-item-head">
-            <div class="memory-tag">{{ mem.category }}</div>
-            <button class="memory-delete" @click="handleDeleteMemory(mem.memId)" title="删除此记忆" aria-label="删除此记忆">
-              <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
-            </button>
+      <template #header>
+        <div class="memory-drawer-head">
+          <div>
+            <div class="memory-drawer-title">AI 记忆</div>
+            <div class="memory-drawer-subtitle">{{ memoryPanelSubtitle }}</div>
           </div>
-          <div class="memory-content">{{ mem.content }}</div>
+          <button class="memory-refresh" :disabled="memoryLoading" @click.stop="loadMemories" title="刷新记忆" aria-label="刷新记忆">
+            <svg viewBox="0 0 24 24" width="15" height="15"><path d="M17.65 6.35A7.95 7.95 0 0 0 12 4a8 8 0 1 0 7.75 10h-2.1A6 6 0 1 1 12 6c1.66 0 3.14.69 4.22 1.78L13 11h8V3l-3.35 3.35z" fill="currentColor"/></svg>
+          </button>
         </div>
+      </template>
+      <div class="memory-panel">
+        <div v-if="memoryLoading" class="memory-state">
+          <div class="memory-spinner" aria-hidden="true"></div>
+          <div>
+            <div class="memory-state-title">正在加载记忆</div>
+            <div class="memory-state-text">读取你确认保存过的偏好和上下文</div>
+          </div>
+        </div>
+        <div v-else-if="memoryError" class="memory-state memory-state-error">
+          <div class="memory-state-icon">!</div>
+          <div>
+            <div class="memory-state-title">加载失败</div>
+            <div class="memory-state-text">{{ memoryError }}</div>
+          </div>
+          <button class="memory-state-action" @click="loadMemories">重试</button>
+        </div>
+        <div v-else-if="memories.length === 0" class="memory-empty">
+          <div class="memory-empty-icon">记</div>
+          <div class="memory-empty-title">暂时没有 AI 记忆</div>
+          <div class="memory-empty-text">只有经过你确认保存的偏好才会出现在这里。</div>
+        </div>
+        <template v-else>
+          <div v-for="mem in memories" :key="mem.memId || mem.id" class="memory-item">
+            <div class="memory-item-head">
+              <div class="memory-tag">{{ mem.category || mem.source || '偏好' }}</div>
+              <button class="memory-delete" :disabled="deletingMemoryId === (mem.memId || mem.id)" @click="handleDeleteMemory(mem.memId || mem.id)" title="删除此记忆" aria-label="删除此记忆">
+                <svg viewBox="0 0 24 24" width="14" height="14"><path d="M6 19c0 1.1.9 2 2 2h8c1.1 0 2-.9 2-2V7H6v12zM19 4h-3.5l-1-1h-5l-1 1H5v2h14V4z" fill="currentColor"/></svg>
+              </button>
+            </div>
+            <div class="memory-content">{{ mem.content }}</div>
+          </div>
+        </template>
       </div>
     </el-drawer>
   </div>
@@ -360,8 +391,17 @@ const sending = ref(false)
 const sidebarCollapsed = ref(false)
 const showMemoryPanel = ref(false)
 const memories = ref([])
+const memoryLoading = ref(false)
+const memoryError = ref('')
+const deletingMemoryId = ref(null)
 const wasMobileViewport = ref(false)
 const memoryDrawerSize = computed(() => (wasMobileViewport.value ? '100%' : '420px'))
+const memoryPanelSubtitle = computed(() => {
+  if (memoryLoading.value) return '正在同步'
+  if (memoryError.value) return '需要重试'
+  if (!memories.value.length) return '暂无已保存内容'
+  return `${memories.value.length} 条已保存`
+})
 let activeStreamController = null
 let streamStateUnsubscribe = null
 let streamStateReloading = false
@@ -1145,22 +1185,47 @@ async function handleSendMessage() {
 
 // ==================== 记忆管理 ====================
 
+function normalizeMemoryResponse(resp) {
+  const payload = resp?.data?.data ?? resp?.data ?? resp
+  if (Array.isArray(payload)) return payload
+  if (Array.isArray(payload?.records)) return payload.records
+  if (Array.isArray(payload?.list)) return payload.list
+  return []
+}
+
 async function loadMemories() {
+  memoryLoading.value = true
+  memoryError.value = ''
   try {
     const resp = await agentService.getMemories()
-    memories.value = resp.data?.data || []
+    memories.value = normalizeMemoryResponse(resp)
   } catch (e) {
     console.error('加载记忆失败', e)
+    memoryError.value = e?.response?.data?.message || e?.message || '无法读取 AI 记忆'
+  } finally {
+    memoryLoading.value = false
   }
 }
 
 async function handleDeleteMemory(memId) {
+  if (!memId || deletingMemoryId.value) return
   try {
+    await ElMessageBox.confirm('删除后这条记忆不会再参与后续推荐，确定删除吗？', '删除 AI 记忆', {
+      type: 'warning',
+      confirmButtonText: '删除',
+      cancelButtonText: '取消',
+      confirmButtonClass: 'danger-confirm-button'
+    })
+    deletingMemoryId.value = memId
     await agentService.deleteMemory(memId)
-    memories.value = memories.value.filter(m => m.memId !== memId)
+    memories.value = memories.value.filter(m => (m.memId || m.id) !== memId)
     ElMessage.success('已删除')
   } catch (e) {
-    ElMessage.error('删除失败')
+    if (e !== 'cancel' && e !== 'close') {
+      ElMessage.error(e?.response?.data?.message || '删除失败')
+    }
+  } finally {
+    deletingMemoryId.value = null
   }
 }
 
@@ -2838,18 +2903,137 @@ onBeforeUnmount(() => {
 }
 
 /* ==================== 记忆面板 ==================== */
+:global(.memory-drawer .el-drawer__header) {
+  margin-bottom: 0;
+  padding: 18px 18px 14px;
+  border-bottom: 1px solid #e5eaf3;
+}
+:global(.memory-drawer .el-drawer__body) {
+  padding: 16px 18px 18px;
+}
+.memory-drawer :deep(.el-drawer__close-btn) {
+  width: 32px;
+  height: 32px;
+  border-radius: 8px;
+}
+.memory-drawer-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  width: 100%;
+  min-width: 0;
+}
+.memory-drawer-title {
+  color: #172033;
+  font-size: 18px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+.memory-drawer-subtitle {
+  margin-top: 4px;
+  color: #64748b;
+  font-size: 12px;
+  font-weight: 700;
+}
+.memory-refresh {
+  width: 34px;
+  height: 34px;
+  border: 1px solid #dbe5f3;
+  border-radius: 10px;
+  background: #f8fafc;
+  color: #2563eb;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  transition: all 0.16s;
+  flex-shrink: 0;
+}
+.memory-refresh:hover {
+  background: #eff6ff;
+  border-color: #bfdbfe;
+}
+.memory-refresh:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
 .memory-panel {
   display: grid;
   gap: 10px;
   padding: 2px 2px 14px;
 }
+.memory-state,
 .memory-empty {
-  text-align: center;
   color: #64748b;
-  padding: 36px 16px;
   border: 1px dashed #d8e0ec;
   border-radius: 10px;
   background: #f8fafc;
+}
+.memory-state {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 16px;
+}
+.memory-state-error {
+  border-color: #fecaca;
+  background: #fff7f7;
+}
+.memory-state-title,
+.memory-empty-title {
+  color: #172033;
+  font-size: 14px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+.memory-state-text,
+.memory-empty-text {
+  margin-top: 3px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.5;
+}
+.memory-state-icon,
+.memory-empty-icon {
+  width: 34px;
+  height: 34px;
+  border-radius: 10px;
+  background: #e0e7ff;
+  color: #4338ca;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-weight: 900;
+  flex-shrink: 0;
+}
+.memory-spinner {
+  width: 28px;
+  height: 28px;
+  border: 3px solid #dbeafe;
+  border-top-color: #2563eb;
+  border-radius: 50%;
+  animation: memory-spin 0.85s linear infinite;
+  flex-shrink: 0;
+}
+.memory-state-action {
+  margin-left: auto;
+  height: 30px;
+  padding: 0 12px;
+  border: 1px solid #bfdbfe;
+  border-radius: 8px;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+}
+.memory-empty {
+  text-align: center;
+  padding: 34px 18px;
+}
+.memory-empty-icon {
+  margin: 0 auto 10px;
 }
 .memory-item {
   display: grid;
@@ -2909,6 +3093,14 @@ onBeforeUnmount(() => {
   color: #ef4444;
   background: #fef2f2;
   border-color: #fecaca;
+}
+.memory-delete:disabled {
+  cursor: default;
+  opacity: 0.45;
+}
+
+@keyframes memory-spin {
+  to { transform: rotate(360deg); }
 }
 
 /* ==================== 暗色模式 ==================== */
@@ -3664,7 +3856,30 @@ onBeforeUnmount(() => {
   background: #101722 !important;
 }
 
+:global(html[data-theme='dark'] .memory-drawer .memory-drawer-title) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-drawer-subtitle),
+:global(html[data-theme='dark'] .memory-drawer .memory-state-text),
+:global(html[data-theme='dark'] .memory-drawer .memory-empty-text) {
+  color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-refresh),
+:global(html[data-theme='dark'] .memory-drawer .memory-state-action) {
+  background: #101a2a !important;
+  color: #bfdbfe !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-refresh:hover),
+:global(html[data-theme='dark'] .memory-drawer .memory-state-action:hover) {
+  background: #1d2b42 !important;
+}
+
 :global(html[data-theme='dark'] .memory-drawer .memory-empty),
+:global(html[data-theme='dark'] .memory-drawer .memory-state),
 :global(html[data-theme='dark'] .memory-drawer .memory-item) {
   background: #172235 !important;
   color: #edf4ff !important;
@@ -3672,8 +3887,21 @@ onBeforeUnmount(() => {
   box-shadow: 0 12px 24px rgba(0, 0, 0, 0.18) !important;
 }
 
+:global(html[data-theme='dark'] .memory-drawer .memory-state-title),
+:global(html[data-theme='dark'] .memory-drawer .memory-empty-title),
 :global(html[data-theme='dark'] .memory-drawer .memory-content) {
   color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-state-icon),
+:global(html[data-theme='dark'] .memory-drawer .memory-empty-icon) {
+  background: rgba(129, 140, 248, 0.18) !important;
+  color: #c7d2fe !important;
+}
+
+:global(html[data-theme='dark'] .memory-drawer .memory-spinner) {
+  border-color: rgba(96, 165, 250, 0.2) !important;
+  border-top-color: #93c5fd !important;
 }
 
 :global(html[data-theme='dark'] .memory-drawer .memory-tag) {
