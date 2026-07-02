@@ -8,6 +8,12 @@ from app.backend_client import api_get, api_post, api_put
 # ==================== 订单基础工具 ====================
 
 
+def _page_items(data):
+    if isinstance(data, dict):
+        return data.get("content") or data.get("list") or data.get("records") or []
+    return data or []
+
+
 @tool
 async def search_orders(
     activity_type: str = None,
@@ -27,10 +33,7 @@ async def search_orders(
 
     result = await api_get("/api/v1/orders", user_id=0, params=params)
     data = result.get("data")
-    if not data or (isinstance(data, dict) and not data.get("content")):
-        return "暂时没有找到符合条件的约伴订单。"
-
-    orders = data.get("content", []) if isinstance(data, dict) else data
+    orders = _page_items(data)
     if not orders:
         return "暂时没有找到符合条件的约伴订单。"
 
@@ -94,7 +97,7 @@ async def get_my_orders(user_id: int) -> str:
     """
     result = await api_get("/api/v1/orders/my", user_id=user_id, params={"page": 1, "size": 20})
     data = result.get("data")
-    orders = data.get("content", []) if isinstance(data, dict) else (data or [])
+    orders = _page_items(data)
     if not orders:
         return "你还没有发布过任何约伴订单。"
 

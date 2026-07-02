@@ -840,11 +840,13 @@ function getArtifactIcon(artifact) {
   if (artifact?.type === 'confirmation') return '!'
   if (artifact?.type === 'weather') return '天'
   if (artifact?.type === 'guide') return '行'
+  if (artifact?.type === 'order') return '约'
+  if (artifact?.type === 'content') return '动'
   return 'i'
 }
 
 function isActionCardArtifact(artifact) {
-  return ['guide', 'weather'].includes(artifact?.type)
+  return ['guide', 'weather', 'order', 'content'].includes(artifact?.type)
 }
 
 function isArtifactFieldMissing(field) {
@@ -931,6 +933,11 @@ function handleArtifactAction(artifact, action) {
 }
 
 function handleArtifactPromptAction(action) {
+  const route = String(action?.route || '').trim()
+  if (route) {
+    router.push(route)
+    return
+  }
   const prompt = String(action?.prompt || '').trim()
   if (!prompt) return
   sendMessageText(prompt)
@@ -2123,6 +2130,23 @@ onBeforeUnmount(() => {
 .artifact-weather .artifact-field:last-child {
   grid-column: 1 / -1;
 }
+.artifact-order {
+  border-color: #bbf7d0;
+  background: linear-gradient(180deg, #ffffff 0%, #f0fdf4 100%);
+}
+.artifact-order .artifact-icon {
+  background: #16a34a;
+}
+.artifact-content {
+  border-color: #ddd6fe;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f3ff 100%);
+}
+.artifact-content .artifact-icon {
+  background: #7c3aed;
+}
+.artifact-content .artifact-field:last-child {
+  grid-column: 1 / -1;
+}
 .artifact-header {
   display: flex;
   gap: 10px;
@@ -2966,6 +2990,16 @@ onBeforeUnmount(() => {
   border-color: rgba(96, 165, 250, 0.3);
 }
 
+:global(:root[data-theme='dark']) .artifact-order {
+  background: linear-gradient(180deg, #172235 0%, #122838 100%);
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+:global(:root[data-theme='dark']) .artifact-content {
+  background: linear-gradient(180deg, #172235 0%, #211b3a 100%);
+  border-color: rgba(167, 139, 250, 0.3);
+}
+
 :global(:root[data-theme='dark']) .artifact-guide .artifact-icon {
   background: #0f766e;
   color: #ccfbf1;
@@ -2974,6 +3008,16 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .artifact-weather .artifact-icon {
   background: #2563eb;
   color: #dbeafe;
+}
+
+:global(:root[data-theme='dark']) .artifact-order .artifact-icon {
+  background: #16a34a;
+  color: #dcfce7;
+}
+
+:global(:root[data-theme='dark']) .artifact-content .artifact-icon {
+  background: #7c3aed;
+  color: #ede9fe;
 }
 
 :global(:root[data-theme='dark']) .artifact-title,
@@ -3311,9 +3355,29 @@ onBeforeUnmount(() => {
   border-color: rgba(96, 165, 250, 0.3) !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .artifact-order) {
+  background: linear-gradient(180deg, #172235 0%, #122838 100%) !important;
+  border-color: rgba(74, 222, 128, 0.28) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-content) {
+  background: linear-gradient(180deg, #172235 0%, #211b3a 100%) !important;
+  border-color: rgba(167, 139, 250, 0.3) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .artifact-weather .artifact-icon) {
   background: #2563eb !important;
   color: #dbeafe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-order .artifact-icon) {
+  background: #16a34a !important;
+  color: #dcfce7 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-content .artifact-icon) {
+  background: #7c3aed !important;
+  color: #ede9fe !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-field) {

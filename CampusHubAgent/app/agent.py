@@ -28,7 +28,7 @@ from app.config import (
 )
 from app.tools import search_orders, create_order, get_my_orders, get_order_detail
 from app.tools_order import ORDER_EXTRA_TOOLS, apply_to_order, accept_applicant, complete_order
-from app.tools_content import CONTENT_TOOLS, create_content, create_comment, like_content
+from app.tools_content import CONTENT_TOOLS, search_contents, create_content, create_comment, like_content
 from app.tools_user import USER_TOOLS
 from app.mcp_tools import MCP_TOOLS, maps_around_search, maps_geo, maps_weather
 from app.tools_utils import UTIL_TOOLS
@@ -2470,7 +2470,273 @@ def _extract_location_from_geo(text: str) -> str:
 
 
 async def _invoke_tool_text(tool_obj, args: dict) -> str:
+    if hasattr(tool_obj, "ainvoke"):
+        return await tool_obj.ainvoke(args)
     return await asyncio.to_thread(tool_obj.invoke, args)
+
+
+def _extract_order_search_args(user_info: dict, user_message: str) -> dict:
+    activity_label = _infer_activity_label(user_message)
+    activity_type = ""
+    if activity_label:
+        activity_type = activity_label.split("（", 1)[0]
+
+    campus = _normalize_campus("", user_message)
+    if not campus:
+        campus = str((user_info or {}).get("campus") or "").upper()
+
+    args = {}
+    if activity_type:
+        args["activity_type"] = activity_type
+    if campus:
+        args["campus"] = campus
+    return args
+
+
+def _is_my_order_query(user_message: str) -> bool:
+    text = str(user_message or "")
+    return _has_any(text, ("我的订单", "我发布", "我发的", "我创建", "我参加", "我报名"))
+
+
+def _parse_order_result_lines(order_text: str) -> list[dict]:
+    items = []
+    pattern = re.compile(r"- \*\*\[订单#(?P<id>\d+)\]\(/orders/\d+\)\*\*\s*(?P<body>.+)")
+    for line in str(order_text or "").splitlines():
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        parts = [part.strip() for part in match.group("body").split("|")]
+        item = {
+            "id": match.group("id"),
+            "activity": parts[0] if len(parts) > 0 else "",
+            "campus_or_status": parts[1] if len(parts) > 1 else "",
+            "location": parts[2] if len(parts) > 2 else "",
+            "time": parts[3] if len(parts) > 3 else (parts[2] if len(parts) > 2 else ""),
+            "people": parts[4] if len(parts) > 4 else (parts[3] if len(parts) > 3 else ""),
+        }
+        items.append(item)
+    return items
+
+
+def _extract_result_count(result_text: str) -> int:
+    match = re.search(r"找到\s*(\d+)\s*[个条]", str(result_text or ""))
+    if match:
+        return int(match.group(1))
+    match = re.search(r"共有\s*(\d+)\s*个", str(result_text or ""))
+    if match:
+        return int(match.group(1))
+    return 0
+
+
+def _build_order_result_artifact(order_text: str, args: dict, user_message: str, intent_analysis: dict) -> dict | None:
+    orders = _parse_order_result_lines(order_text)
+    if not orders:
+        scope_parts = []
+        if args.get("campus"):
+            scope_parts.append(args["campus"])
+        if args.get("activity_type"):
+            scope_parts.append(args["activity_type"])
+        scope = " · ".join(scope_parts) if scope_parts else "全部可加入活动"
+        return {
+            "type": "order",
+            "title": "暂未找到可加入约伴",
+            "description": "这也是有效查询结果；可以换条件继续查，或先整理一个创建草稿。",
+            "fields": [
+                {"label": "查询范围", "value": scope},
+                {"label": "匹配数量", "value": "0 个结果"},
+                {"label": "下一步", "value": "建议放宽活动类型、校区或时间条件"},
+                {"label": "安全策略", "value": "创建新活动仍会先生成确认草稿"},
+            ],
+            "actions": [
+                {
+                    "label": "换个条件筛选",
+                    "prompt": "帮我放宽条件重新筛选可加入约伴活动，可以先看良乡校区所有未满员活动",
+                    "primary": True,
+                },
+                {
+                    "label": "发起约伴草稿",
+                    "prompt": (
+                        f"没有找到合适的{scope}约伴活动，帮我整理一个新的约伴订单草稿。"
+                        "如果还缺少地点、时间、人数等必要信息，请先追问；不要直接发布。"
+                    ),
+                },
+                {
+                    "label": "浏览全部活动",
+                    "prompt": "帮我浏览当前所有可加入约伴活动，先不要报名或创建订单",
+                },
+            ],
+            "state": "completed",
+            "intent": {
+                "primary_intent": intent_analysis.get("primary_intent"),
+                "next_action": intent_analysis.get("next_action"),
+            },
+        }
+
+    first = orders[0]
+    count = _extract_result_count(order_text) or len(orders)
+    scope_parts = []
+    if args.get("campus"):
+        scope_parts.append(args["campus"])
+    if args.get("activity_type"):
+        scope_parts.append(args["activity_type"])
+    scope = " · ".join(scope_parts) if scope_parts else "全部可加入活动"
+    first_summary = " · ".join(
+        part for part in [first.get("activity"), first.get("location"), first.get("time"), first.get("people")]
+        if part
+    )
+    draft_prompt = (
+        f"参考刚才查询到的{scope}约伴活动，帮我整理一个新的约伴订单草稿。"
+        "如果还缺少地点、时间、人数等必要信息，请先追问；不要直接发布。"
+    )
+    if first.get("location"):
+        draft_prompt = (
+            f"参考刚才第一条订单的地点「{first['location']}」，帮我整理一个新的约伴订单草稿。"
+            "如果还缺少地点、时间、人数等必要信息，请先追问；不要直接发布。"
+        )
+
+    return {
+        "type": "order",
+        "title": "可加入约伴结果",
+        "description": "已把订单查询结果整理成可操作卡片；报名、创建和其他写操作仍会先确认。",
+        "fields": [
+            {"label": "查询范围", "value": scope},
+            {"label": "匹配数量", "value": f"{count} 个结果"},
+            {"label": "第一条", "value": f"订单#{first.get('id')} · {first_summary}"},
+            {"label": "安全策略", "value": "查看可直接跳转，报名/创建需确认"},
+        ],
+        "actions": [
+            {
+                "label": f"打开订单#{first.get('id')}",
+                "route": f"/orders/{first.get('id')}",
+                "primary": True,
+            },
+            {
+                "label": "基于结果建草稿",
+                "prompt": draft_prompt,
+            },
+            {
+                "label": "换个条件筛选",
+                "prompt": "帮我换一个条件筛选可加入约伴活动，比如时间更近、人数未满、地点更近。",
+            },
+        ],
+        "state": "completed",
+        "intent": {
+            "primary_intent": intent_analysis.get("primary_intent"),
+            "next_action": intent_analysis.get("next_action"),
+        },
+    }
+
+
+def _extract_content_keyword(user_message: str) -> str:
+    text = str(user_message or "").strip()
+    patterns = [
+        r"关于(.+?)的(?:校园)?(?:动态|帖子)",
+        r"搜索(?:一下)?(?:关于)?(.+?)的?(?:校园)?(?:动态|帖子)",
+        r"查(?:一下|找)?(?:关于)?(.+?)的?(?:校园)?(?:动态|帖子)",
+        r"看看(?:关于)?(.+?)的?(?:校园)?(?:动态|帖子)",
+    ]
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if match:
+            keyword = re.sub(r"[，。,.!?！？\s]+$", "", match.group(1).strip())
+            keyword = re.sub(r"^(一下|有关|关于)", "", keyword).strip()
+            return keyword[:24]
+
+    for keyword in ("自习", "篮球", "羽毛球", "跑步", "电影", "约饭", "考试", "社团", "活动"):
+        if keyword in text:
+            return keyword
+    return ""
+
+
+def _parse_content_result_lines(content_text: str) -> list[dict]:
+    items = []
+    pattern = re.compile(r"- \*\*\[动态#(?P<id>\d+)\]\(/contents/\d+\)\*\*\s*by\s*(?P<author>.*?)\s*—\s*(?P<text>.*)")
+    for line in str(content_text or "").splitlines():
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        items.append({
+            "id": match.group("id"),
+            "author": match.group("author") or "匿名",
+            "text": match.group("text") or "",
+        })
+    return items
+
+
+def _build_content_result_artifact(content_text: str, keyword: str, intent_analysis: dict) -> dict | None:
+    contents = _parse_content_result_lines(content_text)
+    if not contents:
+        scope = keyword or "最新动态"
+        return {
+            "type": "content",
+            "title": "暂未找到相关动态",
+            "description": "这也是有效搜索结果；可以换主题继续查，或整理一条新的动态草稿。",
+            "fields": [
+                {"label": "搜索主题", "value": scope},
+                {"label": "匹配数量", "value": "0 条动态"},
+                {"label": "下一步", "value": "建议换关键词、看最新动态，或发布一条新的动态草稿"},
+                {"label": "安全策略", "value": "发布、评论、点赞都会先确认"},
+            ],
+            "actions": [
+                {
+                    "label": "换主题搜索",
+                    "prompt": "帮我换一个相关主题继续搜索校园动态",
+                    "primary": True,
+                },
+                {
+                    "label": "看最新动态",
+                    "prompt": "帮我浏览最新校园动态，先不要评论、点赞或发布",
+                },
+                {
+                    "label": "写动态草稿",
+                    "prompt": f"没有搜到关于「{scope}」的动态，帮我整理一条新的校园动态草稿。不要直接发布，先让我确认。",
+                },
+            ],
+            "state": "completed",
+            "intent": {
+                "primary_intent": intent_analysis.get("primary_intent"),
+                "next_action": intent_analysis.get("next_action"),
+            },
+        }
+
+    first = contents[0]
+    count = _extract_result_count(content_text) or len(contents)
+    scope = keyword or "最新动态"
+    first_text = first.get("text") or "无正文预览"
+    if len(first_text) > 48:
+        first_text = f"{first_text[:48]}..."
+
+    return {
+        "type": "content",
+        "title": "校园动态结果",
+        "description": "已把动态搜索整理成可继续操作的卡片；评论、点赞和发布都会先确认。",
+        "fields": [
+            {"label": "搜索主题", "value": scope},
+            {"label": "匹配数量", "value": f"{count} 条动态"},
+            {"label": "第一条", "value": f"动态#{first.get('id')} · {first.get('author')}"},
+            {"label": "摘要", "value": first_text},
+        ],
+        "actions": [
+            {
+                "label": f"打开动态#{first.get('id')}",
+                "route": f"/contents/{first.get('id')}",
+                "primary": True,
+            },
+            {
+                "label": "写类似动态草稿",
+                "prompt": f"参考刚才关于「{scope}」的动态，帮我整理一条新的校园动态草稿。不要直接发布，先让我确认。",
+            },
+            {
+                "label": "只看约伴相关",
+                "prompt": f"继续搜索和「{scope}」相关、适合约伴或一起参加的校园动态",
+            },
+        ],
+        "state": "completed",
+        "intent": {
+            "primary_intent": intent_analysis.get("primary_intent"),
+            "next_action": intent_analysis.get("next_action"),
+        },
+    }
 
 
 async def _resolve_poi_locations(pois: list[dict], limit: int = 3) -> list[dict]:
@@ -2665,6 +2931,79 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
             "tool_calls": [{"name": "maps_weather", "args": {"city": "北京"}}],
             "intent": intent_analysis,
             "artifacts": [weather_artifact] if weather_artifact else [],
+        }
+
+    if primary_intent in {"order.search", "order.manage"}:
+        await _emit_event("agent_step", {
+            "phase": "order_direct",
+            "title": "查询约伴活动",
+            "detail": "正在直接调用订单查询工具，优先返回可操作结果卡片",
+            "state": "running",
+        })
+        uid = int((user_info or {}).get("uid") or (user_info or {}).get("id") or (user_info or {}).get("userId") or 0)
+        if uid and _is_my_order_query(user_message):
+            order_args = {"user_id": uid}
+            order_text = await _invoke_tool_text(get_my_orders, order_args)
+            tool_name = "get_my_orders"
+        else:
+            order_args = _extract_order_search_args(user_info, user_message)
+            order_text = await _invoke_tool_text(search_orders, order_args)
+            tool_name = "search_orders"
+
+        order_has_results = bool(_parse_order_result_lines(order_text))
+        order_artifact = _build_order_result_artifact(order_text, order_args, user_message, intent_analysis)
+        if not order_artifact:
+            return None
+        await _emit_event("artifact", order_artifact)
+        await _emit_event("agent_step", {
+            "phase": "order_direct",
+            "title": "订单查询完成",
+            "detail": "已把可加入活动整理成结果卡片",
+            "state": "completed",
+        })
+        order_tail = (
+            "可以直接打开结果卡里的订单详情；如果要报名或创建新活动，我会先生成确认草稿。"
+            if order_has_results
+            else "我把空结果也整理成了下一步卡片；可以换条件继续查，或先创建一个需要你确认的约伴草稿。"
+        )
+        return {
+            "reply": order_text + f"\n\n{order_tail}",
+            "tool_calls": [{"name": tool_name, "args": order_args}],
+            "intent": intent_analysis,
+            "artifacts": [order_artifact],
+        }
+
+    if primary_intent == "content.search":
+        await _emit_event("agent_step", {
+            "phase": "content_direct",
+            "title": "搜索校园动态",
+            "detail": "正在直接调用动态搜索工具，优先返回可操作结果卡片",
+            "state": "running",
+        })
+        keyword = _extract_content_keyword(user_message)
+        content_args = {"keyword": keyword} if keyword else {}
+        content_text = await _invoke_tool_text(search_contents, content_args)
+        content_has_results = bool(_parse_content_result_lines(content_text))
+        content_artifact = _build_content_result_artifact(content_text, keyword, intent_analysis)
+        if not content_artifact:
+            return None
+        await _emit_event("artifact", content_artifact)
+        await _emit_event("agent_step", {
+            "phase": "content_direct",
+            "title": "动态搜索完成",
+            "detail": "已把校园动态整理成结果卡片",
+            "state": "completed",
+        })
+        content_tail = (
+            "可以直接打开结果卡里的动态详情；如果要评论、点赞或发布，我会先生成确认草稿。"
+            if content_has_results
+            else "我把空结果也整理成了下一步卡片；可以换主题继续查，或先生成一条需要你确认的动态草稿。"
+        )
+        return {
+            "reply": content_text + f"\n\n{content_tail}",
+            "tool_calls": [{"name": "search_contents", "args": content_args}],
+            "intent": intent_analysis,
+            "artifacts": [content_artifact],
         }
 
     if primary_intent not in {"map.search", "multi_step"}:

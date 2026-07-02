@@ -43,7 +43,22 @@ class DirectReadHarness:
 
     async def __aenter__(self) -> "DirectReadHarness":
         async def fake_invoke_tool_text(tool_obj, args: dict) -> str:
-            self.tool_calls.append({"args": args})
+            tool_name = getattr(tool_obj, "name", "")
+            self.tool_calls.append({"name": tool_name, "args": args})
+            if tool_name == "search_orders":
+                if args.get("activity_type") == "RUNNING":
+                    return "暂时没有找到符合条件的约伴订单。"
+                return (
+                    "找到 2 个约伴订单：\n\n"
+                    "- **[订单#42](/orders/42)** BASKETBALL | LIANGXIANG | 良乡体育馆 | 2026-07-03 19:00:00 | 2/4人\n"
+                    "- **[订单#43](/orders/43)** BADMINTON | LIANGXIANG | 羽毛球馆 | 2026-07-03 20:00:00 | 1/4人"
+                )
+            if tool_name == "search_contents":
+                return (
+                    "找到 2 条动态：\n\n"
+                    "- **[动态#77](/contents/77)** by 小白 — 今晚图书馆二楼自习，有同学一起吗\n"
+                    "- **[动态#78](/contents/78)** by 晚风 — 求一个自习搭子，期末周互相监督"
+                )
             if "city" in args:
                 return json.dumps({
                     "city": "北京",
@@ -211,11 +226,142 @@ async def scenario_weather_direct_returns_artifact() -> DirectReadResult:
     return DirectReadResult("weather_direct_returns_artifact", not failures, failures, actual)
 
 
+async def scenario_order_search_returns_result_artifact() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="帮我看看良乡校区今天有没有适合加入的篮球约伴活动",
+            intent_analysis={
+                "primary_intent": "order.search",
+                "domain": "order",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts") if result else [],
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifacts = actual.get("artifacts") or []
+    artifact = artifacts[0] if artifacts else {}
+    artifact_events = [item for item in actual.get("events", []) if item.get("event") == "artifact"]
+    if "订单#42" not in actual.get("reply", ""):
+        failures.append("order direct reply should include the order list")
+    if not artifacts:
+        failures.append("order direct response should return a structured order artifact")
+    if not artifact_events:
+        failures.append("order direct flow should emit an artifact event for streaming clients")
+    if artifact.get("type") != "order":
+        failures.append(f"expected order artifact, got {artifact.get('type')!r}")
+    fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
+    if "2 个结果" != fields.get("匹配数量"):
+        failures.append(f"expected order count field, got {fields.get('匹配数量')!r}")
+    actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
+    first_action = actions[0] if actions else {}
+    if first_action.get("route") != "/orders/42":
+        failures.append(f"expected first order route, got {first_action.get('route')!r}")
+    if not any("不要直接发布" in action.get("prompt", "") for action in actions):
+        failures.append("order follow-up prompt should keep the no-direct-publish guard")
+    return DirectReadResult("order_search_returns_result_artifact", not failures, failures, actual)
+
+
+async def scenario_order_search_empty_returns_action_card() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="帮我看看良乡校区今晚有没有跑步约伴活动",
+            intent_analysis={
+                "primary_intent": "order.search",
+                "domain": "order",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifact = (actual.get("artifacts") or [{}])[0]
+    artifact_events = [item for item in actual.get("events", []) if item.get("event") == "artifact"]
+    if artifact.get("type") != "order":
+        failures.append(f"expected order artifact for empty result, got {artifact.get('type')!r}")
+    if "暂未找到" not in artifact.get("title", ""):
+        failures.append(f"expected empty order title, got {artifact.get('title')!r}")
+    if not artifact_events:
+        failures.append("empty order direct flow should still emit an artifact event")
+    fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
+    if fields.get("匹配数量") != "0 个结果":
+        failures.append(f"expected zero-result count field, got {fields.get('匹配数量')!r}")
+    labels = [action.get("label") for action in artifact.get("actions", []) if isinstance(action, dict)]
+    if "发起约伴草稿" not in labels:
+        failures.append("empty result card should offer a draft action")
+    return DirectReadResult("order_search_empty_returns_action_card", not failures, failures, actual)
+
+
+async def scenario_content_search_returns_result_artifact() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="搜索一下关于自习的校园动态",
+            intent_analysis={
+                "primary_intent": "content.search",
+                "domain": "content",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts") if result else [],
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifacts = actual.get("artifacts") or []
+    artifact = artifacts[0] if artifacts else {}
+    artifact_events = [item for item in actual.get("events", []) if item.get("event") == "artifact"]
+    if "动态#77" not in actual.get("reply", ""):
+        failures.append("content direct reply should include the content list")
+    if not artifacts:
+        failures.append("content direct response should return a structured content artifact")
+    if not artifact_events:
+        failures.append("content direct flow should emit an artifact event for streaming clients")
+    if artifact.get("type") != "content":
+        failures.append(f"expected content artifact, got {artifact.get('type')!r}")
+    fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
+    if fields.get("搜索主题") != "自习":
+        failures.append(f"expected content keyword field, got {fields.get('搜索主题')!r}")
+    actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
+    first_action = actions[0] if actions else {}
+    if first_action.get("route") != "/contents/77":
+        failures.append(f"expected first content route, got {first_action.get('route')!r}")
+    if not any("不要直接发布" in action.get("prompt", "") for action in actions):
+        failures.append("content draft prompt should keep the no-direct-publish guard")
+    return DirectReadResult("content_search_returns_result_artifact", not failures, failures, actual)
+
+
 async def run_all() -> list[DirectReadResult]:
     scenarios = [
         scenario_map_search_returns_followup_artifact,
         scenario_multi_step_marks_primary_draft_action,
         scenario_weather_direct_returns_artifact,
+        scenario_order_search_returns_result_artifact,
+        scenario_order_search_empty_returns_action_card,
+        scenario_content_search_returns_result_artifact,
     ]
     return [await scenario() for scenario in scenarios]
 

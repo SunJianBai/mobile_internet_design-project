@@ -5,6 +5,12 @@ from langchain_core.tools import tool
 from app.backend_client import api_get, api_post
 
 
+def _page_items(data):
+    if isinstance(data, dict):
+        return data.get("content") or data.get("list") or data.get("records") or []
+    return data or []
+
+
 @tool
 async def search_contents(keyword: str = "") -> str:
     """搜索校园动态/帖子。
@@ -19,7 +25,7 @@ async def search_contents(keyword: str = "") -> str:
     path = "/api/v1/contents/search" if keyword else "/api/v1/contents"
     result = await api_get(path, user_id=0, params=params)
     data = result.get("data")
-    items = data.get("content", []) if isinstance(data, dict) else (data or [])
+    items = _page_items(data)
     if not items:
         return "没有找到相关动态。"
 
