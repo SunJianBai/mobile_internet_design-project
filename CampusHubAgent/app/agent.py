@@ -50,6 +50,7 @@ MAX_DELEGATIONS_PER_AGENT = 2
 ROUTER_TIMEOUT_SECONDS = 14
 INTENT_REVIEW_TIMEOUT_SECONDS = 15
 INTENT_TOTAL_BUDGET_SECONDS = 29
+SUB_AGENT_TIMEOUT_SECONDS = 75
 INTENT_CACHE_TTL_SECONDS = 10 * 60
 INTENT_CACHE_MAX_SIZE = 128
 
@@ -561,6 +562,161 @@ def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bo
     )
 
 
+def _has_any(text: str, cues: tuple[str, ...]) -> bool:
+    return any(cue in text for cue in cues)
+
+
+def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
+    """Fast safety path for unmistakable write or read-then-write requests."""
+    text = " ".join(str(user_message or "").split())
+    if not text:
+        return None
+    if _has_any(text, ("不要", "别", "不想", "取消")):
+        return None
+    if _looks_like_read_then_write_request(text, {}):
+        return {
+            "primary_intent": "multi_step",
+            "domain": "multi",
+            "operation_type": "mixed",
+            "requires_confirmation": True,
+            "confidence": 0.86,
+            "summary": "用户想先查询推荐信息，再根据结果决定是否创建草稿",
+            "missing_slots": [],
+            "suggested_agents": ["map_weather", "order_draft"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "safety_shortcut": True,
+            "router_timeout": False,
+        }
+
+    base = {
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "confidence": 0.88,
+        "reviewed": False,
+        "safety_shortcut": True,
+        "router_timeout": False,
+    }
+
+    if _has_any(text, ("记住", "以后优先", "偏好")):
+        return {
+            **base,
+            "primary_intent": "memory.manage",
+            "domain": "memory",
+            "summary": "用户想让 AI 记住一条偏好或事实",
+            "missing_slots": [],
+            "suggested_agents": ["memory"],
+            "next_action": "prepare_draft",
+        }
+
+    if "动态" in text and _has_any(text, ("评论", "回复")):
+        return {
+            **base,
+            "primary_intent": "content.interact",
+            "domain": "content",
+            "summary": "用户想对动态发表评论",
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    if "动态" in text and _has_any(text, ("点赞", "点个赞", "赞一下")):
+        return {
+            **base,
+            "primary_intent": "content.interact",
+            "domain": "content",
+            "summary": "用户想给动态点赞",
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    if _has_any(text, ("发布动态", "发一条动态", "发个动态", "发动态")):
+        return {
+            **base,
+            "primary_intent": "content.create",
+            "domain": "content",
+            "summary": "用户想发布一条校园动态",
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    if _has_any(text, ("报名", "申请加入", "加入订单", "加入活动")):
+        return {
+            **base,
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "summary": "用户想报名或申请加入约伴活动",
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    if _has_any(text, ("创建", "发起")) and _has_any(text, ("约伴", "订单", "活动")):
+        missing_slots = []
+        if not _has_any(text, ("点", "上午", "中午", "下午", "晚上", "今晚", "明天", "周", "号")):
+            missing_slots.append("时间")
+        if not _has_any(text, ("校区", "馆", "场", "楼", "室", "地点", "地址")):
+            missing_slots.append("地点")
+        if not _has_any(text, ("人", "人数", "最多", "名")):
+            missing_slots.append("参与人数")
+        return {
+            **base,
+            "primary_intent": "order.create",
+            "domain": "order",
+            "summary": "用户想创建一个约伴活动草稿",
+            "missing_slots": missing_slots,
+            "suggested_agents": ["order_draft"],
+            "next_action": "ask_clarification" if missing_slots else "prepare_draft",
+        }
+
+    return None
+
+
+def _detect_timeout_read_fallback(user_message: str) -> dict | None:
+    """Conservative read-only fallback used only when the semantic router is unavailable."""
+    text = " ".join(str(user_message or "").split())
+    if not text:
+        return None
+    if _detect_safety_intent_shortcut(text):
+        return None
+
+    read_cues = ("找", "看看", "查询", "查一下", "推荐", "附近", "有没有", "怎么走", "路线", "地图")
+    place_cues = (
+        "店",
+        "地方",
+        "地点",
+        "商家",
+        "场",
+        "馆",
+        "餐厅",
+        "吃饭",
+        "饭",
+        "按摩",
+        "洗脚",
+        "玩",
+        "电影院",
+        "影院",
+    )
+    if not (_has_any(text, read_cues) and _has_any(text, place_cues)):
+        return None
+
+    return {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": False,
+        "confidence": 0.7,
+        "summary": "用户想查询或推荐附近地点，路由模型超时后降级为地图只读查询",
+        "missing_slots": [],
+        "suggested_agents": ["map_weather"],
+        "next_action": "execute_read_tools",
+        "reviewed": False,
+        "router_timeout_fallback": True,
+    }
+
+
 def _should_review_intent(analysis: dict, user_message: str = "") -> bool:
     confidence = analysis.get("confidence", 0.0)
     primary_intent = (analysis.get("primary_intent") or "").lower()
@@ -625,6 +781,30 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
         })
         return cached
 
+    safety_analysis = _detect_safety_intent_shortcut(user_message)
+    if safety_analysis:
+        analysis = _normalize_intent_analysis(safety_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        detail = (
+            "读优先复合请求会先执行查询，再引导确认写操作"
+            if analysis.get("operation_type") == "mixed"
+            else "这类请求必须先生成确认草稿，不等待模型路由后再拦截"
+        )
+        await _emit_event("agent_step", {
+            "phase": "intent_safety",
+            "title": "识别明确安全路径",
+            "detail": detail,
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
     await _emit_event("agent_step", {
         "phase": "intent",
         "title": "分析用户意图",
@@ -641,12 +821,25 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
         analysis["router_timeout"] = False
     except Exception as e:
         logger.warning("Intent analysis failed: %s", e)
-        analysis = _normalize_intent_analysis({
-            "summary": "意图分析暂时失败，交由主智能体继续判断。",
-            "next_action": "ask_clarification",
-        })
-        analysis["router_timeout"] = isinstance(e, asyncio.TimeoutError)
-        analysis["router_error"] = e.__class__.__name__
+        router_timeout = isinstance(e, asyncio.TimeoutError)
+        timeout_fallback = _detect_timeout_read_fallback(user_message) if router_timeout else None
+        if timeout_fallback:
+            analysis = _normalize_intent_analysis(timeout_fallback)
+            analysis["router_timeout"] = True
+            analysis["router_error"] = e.__class__.__name__
+            await _emit_event("agent_step", {
+                "phase": "intent_fallback",
+                "title": "意图路由降级",
+                "detail": "轻量模型响应超时，已将明确的地点/店铺推荐请求降级为地图只读查询",
+                "state": "completed",
+            })
+        else:
+            analysis = _normalize_intent_analysis({
+                "summary": "意图分析暂时失败，交由主智能体继续判断。",
+                "next_action": "ask_clarification",
+            })
+            analysis["router_timeout"] = router_timeout
+            analysis["router_error"] = e.__class__.__name__
 
     if _should_review_intent(analysis, user_message):
         elapsed_seconds = time.perf_counter() - started_at
@@ -689,6 +882,11 @@ def _build_intent_system_message(intent_analysis: dict) -> SystemMessage:
 
 请严格遵守：凡是写操作，必须先确认草稿，不要因为用户语气急切就直接执行。
 """
+    if (
+        (intent_analysis.get("operation_type") or "").lower() == "mixed"
+        and (intent_analysis.get("next_action") or "").lower() == "execute_read_tools"
+    ):
+        content += "\n本轮是读优先复合任务：先执行查询/推荐/路线等只读工具；最终只能给出可确认草稿或下一步建议，不要直接执行创建、发布、报名、点赞、评论等写操作。\n"
     return SystemMessage(content=content)
 
 
@@ -696,6 +894,8 @@ def _requires_confirmation_gate(intent_analysis: dict) -> bool:
     operation_type = (intent_analysis.get("operation_type") or "").lower()
     next_action = (intent_analysis.get("next_action") or "").lower()
     if operation_type not in {"write", "mixed"}:
+        return False
+    if operation_type == "mixed" and next_action == "execute_read_tools":
         return False
     if intent_analysis.get("requires_confirmation", True):
         return True
@@ -794,14 +994,17 @@ async def _run_sub_agent(agent_key: str, agent_name: str, system_prompt: str, to
             "detail": task[:180],
             "state": "running",
         })
-        result = await agent.ainvoke(
-            {
-                "messages": [
-                    SystemMessage(content=system_prompt),
-                    HumanMessage(content=task),
-                ],
-            },
-            config={"recursion_limit": SUB_AGENT_RECURSION_LIMIT},
+        result = await _await_with_soft_timeout(
+            agent.ainvoke(
+                {
+                    "messages": [
+                        SystemMessage(content=system_prompt),
+                        HumanMessage(content=task),
+                    ],
+                },
+                config={"recursion_limit": SUB_AGENT_RECURSION_LIMIT},
+            ),
+            SUB_AGENT_TIMEOUT_SECONDS,
         )
 
         # 提取最终 AI 回复
@@ -817,6 +1020,15 @@ async def _run_sub_agent(agent_key: str, agent_name: str, system_prompt: str, to
                 return msg.content
 
         return "子Agent 未返回有效结果。"
+    except asyncio.TimeoutError:
+        await _emit_event("agent_step", {
+            "phase": agent_key,
+            "agent": agent_key,
+            "title": f"{agent_name}执行超时",
+            "detail": f"超过 {SUB_AGENT_TIMEOUT_SECONDS} 秒仍未返回，已停止本次子智能体调用以避免界面长时间等待",
+            "state": "failed",
+        })
+        return f"{agent_name}执行超时。请基于已经获得的信息回复用户，或建议用户稍后重试/缩小查询范围。"
     except Exception as e:
         logger.error("Sub-agent error: %s", e, exc_info=True)
         await _emit_event("agent_step", {

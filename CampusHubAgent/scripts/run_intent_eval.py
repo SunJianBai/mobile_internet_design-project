@@ -65,6 +65,14 @@ def check_expectation(actual: dict[str, Any], expect: dict[str, Any]) -> list[st
                 f"expected {expect['requires_confirmation']}, got {actual_value}"
             )
 
+    if "confirmation_gate" in expect:
+        actual_value = bool(actual.get("confirmation_gate"))
+        if actual_value is not bool(expect["confirmation_gate"]):
+            failures.append(
+                "confirmation_gate: "
+                f"expected {expect['confirmation_gate']}, got {actual_value}"
+            )
+
     min_confidence = expect.get("min_confidence")
     if min_confidence is not None:
         confidence = actual.get("confidence")
@@ -100,7 +108,7 @@ async def run_scenario(
     default_user: dict[str, Any],
     timeout_seconds: float,
 ) -> ScenarioResult:
-    from app.agent import analyze_intent
+    from app.agent import analyze_intent, _requires_confirmation_gate
 
     started_at = asyncio.get_running_loop().time()
     try:
@@ -113,6 +121,8 @@ async def run_scenario(
             ),
             timeout=timeout_seconds,
         )
+        actual = dict(actual)
+        actual["confirmation_gate"] = _requires_confirmation_gate(actual)
         failures = check_expectation(actual, scenario["expect"])
     except asyncio.TimeoutError:
         actual = {"error": f"timed out after {timeout_seconds:g}s"}
@@ -154,10 +164,11 @@ def print_text_report(results: list[ScenarioResult]) -> None:
         confirm = result.actual.get("requires_confirmation")
         cache = " cache" if result.actual.get("cache_hit") else ""
         timeout = " timeout" if result.actual.get("router_timeout") else ""
+        gate = " gate" if result.actual.get("confirmation_gate") else ""
         print(
             f"{mark:4} {result.scenario_id:34} "
             f"{domain}/{intent}/{operation}/confirm={confirm} "
-            f"{result.duration_ms}ms{cache}{timeout}"
+            f"{result.duration_ms}ms{cache}{timeout}{gate}"
         )
         for failure in result.failures:
             print(f"     - {failure}")

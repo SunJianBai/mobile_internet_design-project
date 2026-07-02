@@ -2329,6 +2329,53 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .artifact-field) {
+  background: #101a2a !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-field.missing) {
+  background: rgba(245, 158, 11, 0.12) !important;
+  border-color: rgba(245, 158, 11, 0.34) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-field-label) {
+  color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-field-value) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-action) {
+  background: #101a2a !important;
+  color: #dbe7f8 !important;
+  border-color: rgba(148, 163, 184, 0.28) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-action:hover:not(:disabled)) {
+  background: #1f2d44 !important;
+  color: #f8fbff !important;
+  border-color: rgba(154, 184, 255, 0.38) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-action.primary) {
+  background: #3768d8 !important;
+  color: #ffffff !important;
+  border-color: #5b8cff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-action.primary:hover:not(:disabled)) {
+  background: #4c7df0 !important;
+  border-color: #9ab8ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-action.ghost:hover:not(:disabled)) {
+  background: rgba(245, 158, 11, 0.12) !important;
+  color: #fbbf24 !important;
+  border-color: rgba(245, 158, 11, 0.32) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .reply-actions) {
   border-top-color: rgba(148, 163, 184, 0.16) !important;
 }

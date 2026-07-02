@@ -83,6 +83,7 @@
         "domain": "order",
         "operation_type": "write",
         "requires_confirmation": true,
+        "confirmation_gate": true,
         "next_action_any": ["ask_clarification", "prepare_draft"]
       }
     },
@@ -95,6 +96,7 @@
         "domain": "order",
         "operation_type": "write",
         "requires_confirmation": true,
+        "confirmation_gate": true,
         "next_action": "prepare_draft"
       }
     },
@@ -106,7 +108,8 @@
         "primary_intent": "order.manage",
         "domain": "order",
         "operation_type": "write",
-        "requires_confirmation": true
+        "requires_confirmation": true,
+        "confirmation_gate": true
       }
     },
     {
@@ -129,6 +132,7 @@
         "domain": "content",
         "operation_type": "write",
         "requires_confirmation": true,
+        "confirmation_gate": true,
         "next_action": "prepare_draft"
       }
     },
@@ -140,7 +144,8 @@
         "primary_intent": "content.interact",
         "domain": "content",
         "operation_type": "write",
-        "requires_confirmation": true
+        "requires_confirmation": true,
+        "confirmation_gate": true
       }
     },
     {
@@ -151,7 +156,8 @@
         "primary_intent": "content.interact",
         "domain": "content",
         "operation_type": "write",
-        "requires_confirmation": true
+        "requires_confirmation": true,
+        "confirmation_gate": true
       }
     },
     {
@@ -173,7 +179,8 @@
         "primary_intent": "memory.manage",
         "domain": "memory",
         "operation_type_any": ["write", "mixed"],
-        "requires_confirmation": true
+        "requires_confirmation": true,
+        "confirmation_gate": true
       }
     },
     {
@@ -184,7 +191,9 @@
         "primary_intent_any": ["multi_step", "map.search"],
         "domain_any": ["multi", "map"],
         "operation_type": "mixed",
-        "requires_confirmation": true
+        "requires_confirmation": true,
+        "next_action": "execute_read_tools",
+        "confirmation_gate": false
       }
     },
     {
