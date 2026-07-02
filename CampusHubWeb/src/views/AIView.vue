@@ -157,10 +157,26 @@
                               <span>{{ field.label }}</span>
                               <textarea v-model="field.editValue" rows="2" :placeholder="field.missing ? '补充这个信息' : '修改内容'"></textarea>
                             </label>
+                            <div v-if="artifactHasEmptyRequiredEdits(artifact)" class="artifact-edit-hint">
+                              请先补充缺失信息，再保存或确认执行。
+                            </div>
                           </div>
                           <div v-if="artifact.type === 'confirmation'" class="artifact-actions">
                             <template v-if="artifact.editing">
-                              <button class="artifact-action primary" :disabled="sending" @click="handleArtifactAction(artifact, 'confirm-edited')">
+                              <button
+                                class="artifact-action"
+                                :disabled="sending || artifactHasEmptyRequiredEdits(artifact)"
+                                :title="artifactHasEmptyRequiredEdits(artifact) ? '请先补充缺失信息' : ''"
+                                @click="handleArtifactAction(artifact, 'save-edit')"
+                              >
+                                保存修改
+                              </button>
+                              <button
+                                class="artifact-action primary"
+                                :disabled="sending || artifactHasEmptyRequiredEdits(artifact)"
+                                :title="artifactHasEmptyRequiredEdits(artifact) ? '请先补充缺失信息' : ''"
+                                @click="handleArtifactAction(artifact, 'confirm-edited')"
+                              >
                                 保存并确认
                               </button>
                               <button class="artifact-action ghost" :disabled="sending" @click="handleArtifactAction(artifact, 'cancel-edit')">
@@ -447,9 +463,10 @@ function normalizeArtifact(eventName, data) {
     type,
     fields: fields.map(field => {
       const normalized = field && typeof field === 'object' ? field : { label: '信息', value: field }
+      const formattedValue = formatArtifactValue(normalized.value)
       return {
         ...normalized,
-        editValue: formatArtifactValue(normalized.value) === '未填写' ? '' : formatArtifactValue(normalized.value)
+        editValue: formattedValue === '未填写' || formattedValue === '待补充' ? '' : formattedValue
       }
     }),
     actions: actions
@@ -713,12 +730,41 @@ function formatArtifactValue(value) {
   return String(value)
 }
 
+function isArtifactFieldMissing(field) {
+  if (field?.missing) return true
+  const value = formatArtifactValue(field?.value)
+  return value === '待补充' || value === '未填写'
+}
+
 function artifactHasMissingFields(artifact) {
-  return (artifact?.fields || []).some(field => {
-    if (field?.missing) return true
-    const value = formatArtifactValue(field?.value)
-    return value === '待补充' || value === '未填写'
+  return (artifact?.fields || []).some(isArtifactFieldMissing)
+}
+
+function artifactHasEmptyRequiredEdits(artifact) {
+  return (artifact?.fields || []).some(field =>
+    isArtifactFieldMissing(field) && !String(field.editValue ?? '').trim()
+  )
+}
+
+function applyArtifactEdits(artifact) {
+  if (!artifact?.fields?.length) return true
+  if (artifactHasEmptyRequiredEdits(artifact)) {
+    ElMessage.warning('请先补充草稿中的缺失信息')
+    return false
+  }
+  artifact.fields = artifact.fields.map(field => {
+    const nextValue = String(field.editValue ?? '').trim()
+    const updated = { ...field }
+    if (nextValue) {
+      updated.value = nextValue
+      updated.missing = false
+    } else if (!isArtifactFieldMissing(field)) {
+      updated.value = ''
+    }
+    updated.editValue = nextValue
+    return updated
   })
+  return true
 }
 
 async function sendMessageText(text) {
@@ -734,7 +780,11 @@ function handleArtifactAction(artifact, action) {
     artifact.editing = true
     artifact.fields = (artifact.fields || []).map(field => ({
       ...field,
-      editValue: field.editValue ?? (formatArtifactValue(field.value) === '未填写' ? '' : formatArtifactValue(field.value))
+      editValue: field.editValue ?? (
+        ['未填写', '待补充'].includes(formatArtifactValue(field.value))
+          ? ''
+          : formatArtifactValue(field.value)
+      )
     }))
     return
   }
@@ -742,12 +792,25 @@ function handleArtifactAction(artifact, action) {
     artifact.editing = false
     return
   }
-  const messages = {
-    confirm: buildArtifactConfirmMessage(artifact, false),
-    'confirm-edited': buildArtifactConfirmMessage(artifact, true),
-    cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
+  if (action === 'save-edit') {
+    if (!applyArtifactEdits(artifact)) return
+    artifact.editing = false
+    ElMessage.success('草稿已更新，请确认后执行')
+    return
   }
-  sendMessageText(messages[action])
+  if (action === 'confirm-edited') {
+    if (!applyArtifactEdits(artifact)) return
+    artifact.editing = false
+    sendMessageText(buildArtifactConfirmMessage(artifact, true))
+    return
+  }
+  if (action === 'confirm') {
+    sendMessageText(buildArtifactConfirmMessage(artifact, false))
+    return
+  }
+  if (action === 'cancel') {
+    sendMessageText(artifact?.cancelMessage || `取消这个草稿：${title}`)
+  }
 }
 
 function handleArtifactPromptAction(action) {
@@ -1954,6 +2017,15 @@ onBeforeUnmount(() => {
   border-color: #2563eb;
   box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.12);
 }
+.artifact-edit-hint {
+  padding: 8px 10px;
+  border: 1px solid #fed7aa;
+  border-radius: 8px;
+  background: #fff7ed;
+  color: #b45309;
+  font-size: 12px;
+  line-height: 1.45;
+}
 
 /* Markdown 样式 */
 .markdown-body :deep(p) { margin: 0 0 12px; }
@@ -2571,6 +2643,12 @@ onBeforeUnmount(() => {
   border-color: rgba(245, 158, 11, 0.35);
 }
 
+:global(:root[data-theme='dark']) .artifact-edit-hint {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.35);
+  color: #fbbf24;
+}
+
 :global(:root[data-theme='dark']) .artifact-field-label,
 :global(:root[data-theme='dark']) .artifact-edit-field,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-subtitle),
@@ -2822,6 +2900,12 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-field.missing) {
   background: rgba(245, 158, 11, 0.12) !important;
   border-color: rgba(245, 158, 11, 0.34) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-edit-hint) {
+  background: rgba(245, 158, 11, 0.12) !important;
+  border-color: rgba(245, 158, 11, 0.34) !important;
+  color: #fbbf24 !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-field-label) {
