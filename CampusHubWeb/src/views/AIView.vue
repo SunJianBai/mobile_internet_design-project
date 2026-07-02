@@ -168,8 +168,13 @@
                               </button>
                             </template>
                             <template v-else>
-                              <button class="artifact-action primary" :disabled="sending" @click="handleArtifactAction(artifact, 'confirm')">
-                                确认执行
+                              <button
+                                class="artifact-action primary"
+                                :disabled="sending || artifactHasMissingFields(artifact)"
+                                :title="artifactHasMissingFields(artifact) ? '请先点击修改草稿补充缺失信息' : ''"
+                                @click="handleArtifactAction(artifact, 'confirm')"
+                              >
+                                {{ artifactHasMissingFields(artifact) ? '补充后确认' : '确认执行' }}
                               </button>
                               <button class="artifact-action" :disabled="sending" @click="handleArtifactAction(artifact, 'edit')">
                                 修改草稿
@@ -708,6 +713,14 @@ function formatArtifactValue(value) {
   return String(value)
 }
 
+function artifactHasMissingFields(artifact) {
+  return (artifact?.fields || []).some(field => {
+    if (field?.missing) return true
+    const value = formatArtifactValue(field?.value)
+    return value === '待补充' || value === '未填写'
+  })
+}
+
 async function sendMessageText(text) {
   if (!text || sending.value) return
   inputMessage.value = text
@@ -730,8 +743,8 @@ function handleArtifactAction(artifact, action) {
     return
   }
   const messages = {
-    confirm: artifact?.confirmMessage || `我确认执行这个草稿：${title}`,
-    'confirm-edited': buildEditedArtifactMessage(artifact),
+    confirm: buildArtifactConfirmMessage(artifact, false),
+    'confirm-edited': buildArtifactConfirmMessage(artifact, true),
     cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
   }
   sendMessageText(messages[action])
@@ -743,16 +756,19 @@ function handleArtifactPromptAction(action) {
   sendMessageText(prompt)
 }
 
-function buildEditedArtifactMessage(artifact) {
+function buildArtifactConfirmMessage(artifact, edited = false) {
   const title = artifact?.title || '这个草稿'
   const fields = (artifact?.fields || [])
     .map(field => {
-      const value = String(field.editValue ?? '').trim()
+      const value = edited
+        ? String(field.editValue ?? '').trim()
+        : formatArtifactValue(field.value)
       return value ? `${field.label}: ${value}` : ''
     })
     .filter(Boolean)
   const fieldText = fields.length ? `\n${fields.join('\n')}` : ''
-  return `我确认按修改后的内容执行这个草稿：${title}${fieldText}`
+  const prefix = edited ? '我确认按修改后的内容执行这个草稿' : '我确认执行这个草稿'
+  return `${prefix}：${title}${fieldText}`
 }
 
 const syncSidebarForViewport = () => {
@@ -1250,7 +1266,7 @@ function sendMapIntent(card, intent) {
     ? `，地点坐标：${lng.toFixed(6)}, ${lat.toFixed(6)}`
     : ''
   if (intent === 'order-draft') {
-    sendMessageText(`基于地图里的「${title}」创建一个约伴订单草稿${coordText}。如果还缺少必要信息，请先让我补充；不要直接发布。`)
+    sendMessageText(`基于地图里的「${title}」创建一个约伴订单草稿${coordText}。请沿用刚才推荐请求里的活动类型、人数和校区信息；如果还缺少必要信息，只追问缺失项，不要直接发布。`)
   }
 }
 

@@ -1205,6 +1205,170 @@ def _normalize_artifact_fields(fields: list, missing_fields: list) -> list:
     return normalized
 
 
+def _conversation_text(history: list, user_message: str) -> str:
+    parts = []
+    for item in (history or [])[-8:]:
+        if isinstance(item, dict) and item.get("content"):
+            parts.append(str(item.get("content")))
+    if user_message:
+        parts.append(str(user_message))
+    return "\n".join(parts)
+
+
+def _parse_small_chinese_number(token: str) -> int | None:
+    numerals = {
+        "零": 0,
+        "一": 1,
+        "二": 2,
+        "两": 2,
+        "三": 3,
+        "四": 4,
+        "五": 5,
+        "六": 6,
+        "七": 7,
+        "八": 8,
+        "九": 9,
+    }
+    token = str(token or "").strip()
+    if not token:
+        return None
+    if token in numerals:
+        return numerals[token]
+    if token == "十":
+        return 10
+    if "十" in token:
+        left, _, right = token.partition("十")
+        tens = numerals.get(left, 1) if left else 1
+        ones = numerals.get(right, 0) if right else 0
+        return tens * 10 + ones
+    return None
+
+
+def _extract_group_size(text: str) -> int | None:
+    text = str(text or "")
+    for match in re.finditer(r"(?<!\d)(\d{1,2})\s*(?:个|名)?人", text):
+        value = int(match.group(1))
+        if 1 <= value <= 50:
+            return value
+    for match in re.finditer(r"([一二两三四五六七八九十]{1,3})\s*(?:个|名)?人", text):
+        value = _parse_small_chinese_number(match.group(1))
+        if value and 1 <= value <= 50:
+            return value
+    return None
+
+
+def _extract_map_selection(text: str) -> tuple[str, str]:
+    text = str(text or "")
+    title = ""
+    title_match = re.search(r"[「\"]([^」\"]{1,80})[」\"]", text)
+    if title_match:
+        title = title_match.group(1).strip()
+
+    coords = ""
+    coord_match = re.search(r"坐标[:：]?\s*([0-9]{2,3}\.\d+)\s*[,，]\s*([0-9]{1,2}\.\d+)", text)
+    if coord_match:
+        coords = f"{coord_match.group(1)}, {coord_match.group(2)}"
+    return title, coords
+
+
+def _infer_activity_label(text: str) -> str:
+    lowered = str(text or "").lower()
+    activity_rules = [
+        (("篮球",), "BASKETBALL（篮球）"),
+        (("羽毛球",), "BADMINTON（羽毛球）"),
+        (("吃饭", "约饭", "餐厅", "饭店", "美食"), "MEAL（约饭）"),
+        (("自习", "图书馆", "学习"), "STUDY（自习）"),
+        (("电影", "影院", "电影院"), "MOVIE（电影）"),
+        (("跑步", "夜跑", "操场"), "RUNNING（跑步）"),
+        (("游戏", "开黑"), "GAME（游戏）"),
+        (("按摩", "足疗", "洗脚", "推拿", "spa", "头疗"), "OTHER（足疗按摩）"),
+    ]
+    for cues, label in activity_rules:
+        if any(cue in lowered for cue in cues):
+            return label
+    return ""
+
+
+def _infer_campus_label(user_info: dict, text: str) -> str:
+    text = str(text or "")
+    if "中关村" in text:
+        return "ZHONGGUANCUN（中关村校区）"
+    if "良乡" in text:
+        return "LIANGXIANG（良乡校区）"
+    campus = str((user_info or {}).get("campus") or "").upper()
+    campus_labels = {
+        "LIANGXIANG": "LIANGXIANG（良乡校区）",
+        "ZHONGGUANCUN": "ZHONGGUANCUN（中关村校区）",
+        "ZHUHAI": "ZHUHAI（珠海校区）",
+        "XISHAN": "XISHAN（西山校区）",
+        "OTHER_CAMPUS": "OTHER_CAMPUS（其他校区）",
+    }
+    return campus_labels.get(campus, "")
+
+
+def _set_artifact_field(fields: list, label_keywords: tuple[str, ...], label: str, value: str) -> None:
+    if not value:
+        return
+    for item in fields:
+        if not isinstance(item, dict):
+            continue
+        item_label = str(item.get("label") or item.get("name") or "")
+        if any(keyword in item_label for keyword in label_keywords):
+            current_value = str(item.get("value") or "").strip()
+            if not current_value or current_value in {"待补充", "未填写", "None", "null"}:
+                item["value"] = value
+            return
+    fields.append({"label": label, "value": value})
+
+
+def _drop_missing_fields(missing_fields: list, keywords: tuple[str, ...]) -> list:
+    return [
+        field for field in (missing_fields or [])
+        if not any(keyword in str(field) for keyword in keywords)
+    ]
+
+
+def _enrich_order_confirmation_fields(
+    fields: list,
+    missing_fields: list,
+    user_info: dict,
+    history: list,
+    user_message: str,
+    intent_analysis: dict,
+) -> tuple[list, list]:
+    if (intent_analysis.get("primary_intent") or "").lower() != "order.create":
+        return fields, missing_fields
+
+    enriched_fields = [dict(item) if isinstance(item, dict) else item for item in (fields or [])]
+    enriched_missing = list(missing_fields or [])
+    context_text = _conversation_text(history, user_message)
+    location_title, coords = _extract_map_selection(user_message)
+
+    if location_title:
+        _set_artifact_field(enriched_fields, ("地点名称", "地点", "位置"), "地点名称", location_title)
+        enriched_missing = _drop_missing_fields(enriched_missing, ("地点", "位置"))
+    if coords:
+        _set_artifact_field(enriched_fields, ("地点坐标", "坐标"), "地点坐标", coords)
+        enriched_missing = _drop_missing_fields(enriched_missing, ("地点", "位置", "坐标"))
+
+    activity_label = _infer_activity_label(context_text)
+    if activity_label:
+        _set_artifact_field(enriched_fields, ("活动类型", "类型"), "活动类型", activity_label)
+        enriched_missing = _drop_missing_fields(enriched_missing, ("活动类型", "类型"))
+
+    campus_label = _infer_campus_label(user_info, context_text)
+    if campus_label:
+        _set_artifact_field(enriched_fields, ("校区",), "校区", campus_label)
+        enriched_missing = _drop_missing_fields(enriched_missing, ("校区",))
+
+    group_size = _extract_group_size(context_text)
+    if group_size:
+        _set_artifact_field(enriched_fields, ("参与人数", "人数", "人"), "参与人数", f"{group_size}人")
+        enriched_missing = _drop_missing_fields(enriched_missing, ("参与人数", "人数", "人"))
+
+    return enriched_fields, enriched_missing
+
+
 async def build_confirmation_artifact(
     user_info: dict,
     history: list,
@@ -1232,10 +1396,25 @@ async def build_confirmation_artifact(
         draft = {}
 
     missing_fields = draft.get("missing_fields") if isinstance(draft.get("missing_fields"), list) else []
-    fields = _normalize_artifact_fields(draft.get("fields") if isinstance(draft.get("fields"), list) else [], missing_fields)
+    raw_fields = draft.get("fields") if isinstance(draft.get("fields"), list) else []
+    raw_missing_fields = list(missing_fields)
+    raw_fields, missing_fields = _enrich_order_confirmation_fields(
+        raw_fields,
+        missing_fields,
+        user_info,
+        history,
+        user_message,
+        intent_analysis,
+    )
+    fields = _normalize_artifact_fields(raw_fields, missing_fields)
     title = draft.get("title") or "请确认这次操作"
     description = draft.get("description") or intent_analysis.get("summary") or "这是一个需要确认后才会执行的写操作。"
     reply = draft.get("reply")
+    if raw_missing_fields != missing_fields:
+        if missing_fields:
+            reply = "我已根据上文补全部分草稿信息，还需要你补充：" + "、".join(str(item) for item in missing_fields)
+        else:
+            reply = "我已根据上文整理好操作草稿。确认无误后，请点击确认执行或直接回复“确认”。"
     if not reply:
         if missing_fields:
             reply = "我还需要你补充这些信息后再执行：" + "、".join(str(item) for item in missing_fields)
