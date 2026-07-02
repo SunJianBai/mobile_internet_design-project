@@ -2469,6 +2469,153 @@ def _extract_location_from_geo(text: str) -> str:
     return ""
 
 
+def _agent_display_name(agent_key: str) -> str:
+    labels = {
+        "order_query": "订单查询专家",
+        "order_draft": "订单草稿专家",
+        "content_query": "动态查询专家",
+        "content_draft": "动态草稿专家",
+        "map_weather": "地图天气专家",
+        "user_profile": "用户资料专家",
+        "memory": "记忆管理专家",
+        "general": "通用助手",
+    }
+    return labels.get(str(agent_key or ""), str(agent_key or "通用助手"))
+
+
+def _intent_display_name(primary_intent: str) -> str:
+    labels = {
+        "order.search": "查询约伴活动",
+        "order.create": "创建约伴草稿",
+        "order.manage": "管理约伴活动",
+        "content.search": "搜索校园动态",
+        "content.create": "发布动态草稿",
+        "content.interact": "动态互动",
+        "map.search": "地图地点推荐",
+        "weather.query": "天气建议",
+        "user.profile": "查看用户资料",
+        "memory.manage": "管理长期记忆",
+        "multi_step": "多步骤校园任务",
+        "chat.general": "普通对话",
+    }
+    return labels.get(str(primary_intent or ""), primary_intent or "待识别任务")
+
+
+def _operation_display_name(operation_type: str) -> str:
+    labels = {
+        "read": "只读查询",
+        "write": "写操作确认",
+        "mixed": "先查后写",
+        "unknown": "待确认",
+    }
+    return labels.get(str(operation_type or ""), operation_type or "待确认")
+
+
+def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
+    primary_intent = (intent_analysis.get("primary_intent") or "").lower()
+    operation_type = (intent_analysis.get("operation_type") or "").lower()
+    next_action = (intent_analysis.get("next_action") or "").lower()
+    suggested_agents = [
+        _agent_display_name(agent)
+        for agent in (intent_analysis.get("suggested_agents") or [])
+        if agent
+    ]
+    agent_text = "、".join(suggested_agents[:3]) or "通用助手"
+
+    steps = [{
+        "title": "识别意图与安全边界",
+        "detail": f"{_intent_display_name(primary_intent)} · {_operation_display_name(operation_type)}",
+        "state": "completed",
+    }]
+
+    if primary_intent == "weather.query":
+        steps.extend([
+            {"title": "调用天气工具", "detail": "直接查询天气数据，避免进入多轮委派", "state": "running"},
+            {"title": "生成天气建议卡", "detail": "给出户外/室内备选入口", "state": "pending"},
+        ])
+    elif primary_intent in {"map.search", "multi_step"} and next_action == "execute_read_tools":
+        steps.extend([
+            {"title": "搜索附近地点", "detail": "调用地图工具获取候选地点", "state": "running"},
+            {"title": "补全坐标并渲染地图", "detail": "前端会直接显示可交互地图卡片", "state": "pending"},
+        ])
+        if operation_type == "mixed" or primary_intent == "multi_step":
+            steps.append({"title": "写操作前等待确认", "detail": "创建订单或动态只会先生成草稿", "state": "pending"})
+    elif primary_intent in {"order.search", "order.manage"} and operation_type == "read":
+        steps.extend([
+            {"title": "查询约伴活动", "detail": "直接调用订单查询工具", "state": "running"},
+            {"title": "生成订单结果卡", "detail": "有结果可跳转详情，空结果也给出下一步入口", "state": "pending"},
+        ])
+    elif primary_intent == "content.search":
+        steps.extend([
+            {"title": "搜索校园动态", "detail": "直接调用动态搜索工具", "state": "running"},
+            {"title": "生成动态结果卡", "detail": "评论、点赞或发布前仍会先确认", "state": "pending"},
+        ])
+    elif operation_type in {"write", "mixed"} or intent_analysis.get("requires_confirmation"):
+        steps.extend([
+            {"title": "整理待确认草稿", "detail": "提取关键字段和缺失信息", "state": "running"},
+            {"title": "等待用户确认", "detail": "确认前不会创建、发布、报名、评论、点赞或写入记忆", "state": "pending"},
+        ])
+    elif primary_intent == "chat.general":
+        steps.append({"title": "直接回答", "detail": "无需调用业务工具", "state": "running"})
+    else:
+        steps.extend([
+            {"title": "调度领域专家", "detail": agent_text, "state": "running"},
+            {"title": "汇总工具结果", "detail": "根据专家返回内容整理最终回复", "state": "pending"},
+        ])
+
+    return steps
+
+
+def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
+    primary_intent = (intent_analysis.get("primary_intent") or "unknown").lower()
+    operation_type = (intent_analysis.get("operation_type") or "unknown").lower()
+    requires_confirmation = bool(intent_analysis.get("requires_confirmation"))
+    suggested_agents = intent_analysis.get("suggested_agents") or []
+    strategy = "确认门控" if requires_confirmation else "直接执行只读工具"
+    if primary_intent == "chat.general":
+        strategy = "直接回答"
+    elif primary_intent in {"order.search", "content.search", "weather.query", "map.search", "multi_step"}:
+        strategy = "确定性工具路径"
+    elif suggested_agents:
+        strategy = "领域专家委派"
+
+    return {
+        "type": "plan",
+        "title": "本轮执行计划",
+        "description": "根据意图分析生成的可视化调度计划；写操作仍会先等待你确认。",
+        "fields": [
+            {"label": "任务", "value": _intent_display_name(primary_intent)},
+            {"label": "类型", "value": _operation_display_name(operation_type)},
+            {"label": "策略", "value": strategy},
+            {
+                "label": "专家",
+                "value": "、".join(_agent_display_name(agent) for agent in suggested_agents[:3]) or "无需额外专家",
+            },
+        ],
+        "steps": _build_execution_plan_steps(intent_analysis),
+        "state": "running",
+        "intent": {
+            "primary_intent": primary_intent,
+            "next_action": intent_analysis.get("next_action"),
+            "requires_confirmation": requires_confirmation,
+        },
+    }
+
+
+def _should_emit_execution_plan(intent_analysis: dict) -> bool:
+    primary_intent = (intent_analysis.get("primary_intent") or "").lower()
+    next_action = (intent_analysis.get("next_action") or "").lower()
+    return not (primary_intent == "chat.general" and next_action == "direct_answer")
+
+
+async def _emit_execution_plan(intent_analysis: dict) -> dict | None:
+    if not _should_emit_execution_plan(intent_analysis):
+        return None
+    artifact = _build_execution_plan_artifact(intent_analysis)
+    await _emit_event("artifact", artifact)
+    return artifact
+
+
 async def _invoke_tool_text(tool_obj, args: dict) -> str:
     if hasattr(tool_obj, "ainvoke"):
         return await tool_obj.ainvoke(args)
@@ -3195,13 +3342,14 @@ async def chat(
         return confirmed_execution
 
     intent_analysis = await analyze_intent(user_info, memories, history, user_message)
+    plan_artifact = await _emit_execution_plan(intent_analysis)
     if _requires_confirmation_gate(intent_analysis):
         artifact = await build_confirmation_artifact(user_info, history, user_message, intent_analysis)
         return {
             "reply": artifact.get("reply", ""),
             "tool_calls": [],
             "intent": intent_analysis,
-            "artifacts": [artifact],
+            "artifacts": [item for item in (plan_artifact, artifact) if item],
         }
 
     if (
@@ -3212,6 +3360,8 @@ async def chat(
 
     direct_read_result = await build_direct_read_response(user_info, user_message, intent_analysis)
     if direct_read_result:
+        if plan_artifact:
+            direct_read_result["artifacts"] = [plan_artifact] + list(direct_read_result.get("artifacts") or [])
         return direct_read_result
 
     await _emit_event("agent_step", {
@@ -3259,7 +3409,12 @@ async def chat(
         "state": "completed",
     })
 
-    return {"reply": final_reply, "tool_calls": tool_calls_log, "intent": intent_analysis}
+    return {
+        "reply": final_reply,
+        "tool_calls": tool_calls_log,
+        "intent": intent_analysis,
+        "artifacts": [plan_artifact] if plan_artifact else [],
+    }
 
 
 async def stream_chat(

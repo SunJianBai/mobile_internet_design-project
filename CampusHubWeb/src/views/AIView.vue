@@ -158,6 +158,19 @@
                               <div v-if="artifact.description" class="artifact-description">{{ artifact.description }}</div>
                             </div>
                           </div>
+                          <div v-if="artifact.type === 'plan' && artifact.steps?.length" class="plan-step-list">
+                            <div
+                              v-for="(step, stepIndex) in artifact.steps"
+                              :key="`plan-${artifactIndex}-${stepIndex}`"
+                              :class="['plan-step', step.state || 'pending']"
+                            >
+                              <span class="plan-step-index">{{ stepIndex + 1 }}</span>
+                              <div class="plan-step-main">
+                                <div class="plan-step-title">{{ step.title || '执行步骤' }}</div>
+                                <div v-if="step.detail" class="plan-step-detail">{{ step.detail }}</div>
+                              </div>
+                            </div>
+                          </div>
                           <div v-if="artifact.fields?.length && !artifact.editing" class="artifact-fields">
                             <div
                               v-for="(field, fieldIndex) in artifact.fields"
@@ -564,6 +577,7 @@ function normalizeArtifact(eventName, data) {
   const type = payload.type || (eventName === 'confirm_required' ? 'confirmation' : 'generic')
   const fields = Array.isArray(payload.fields) ? payload.fields : []
   const actions = Array.isArray(payload.actions) ? payload.actions : []
+  const steps = Array.isArray(payload.steps) ? payload.steps : []
   return {
     ...payload,
     type,
@@ -578,6 +592,9 @@ function normalizeArtifact(eventName, data) {
     actions: actions
       .map(action => action && typeof action === 'object' ? action : { label: String(action || ''), prompt: String(action || '') })
       .filter(action => action.label || action.prompt),
+    steps: steps
+      .map(step => step && typeof step === 'object' ? step : { title: String(step || '') })
+      .filter(step => step.title || step.detail),
     editing: false
   }
 }
@@ -838,6 +855,7 @@ function formatArtifactValue(value) {
 
 function getArtifactIcon(artifact) {
   if (artifact?.type === 'confirmation') return '!'
+  if (artifact?.type === 'plan') return '计'
   if (artifact?.type === 'weather') return '天'
   if (artifact?.type === 'guide') return '行'
   if (artifact?.type === 'order') return '约'
@@ -2113,6 +2131,13 @@ onBeforeUnmount(() => {
   border-color: #bfdbfe;
   background: linear-gradient(180deg, #ffffff 0%, #f8fbff 100%);
 }
+.artifact-plan {
+  border-color: #c7d2fe;
+  background: linear-gradient(180deg, #ffffff 0%, #f5f7ff 100%);
+}
+.artifact-plan .artifact-icon {
+  background: #4f46e5;
+}
 .artifact-guide {
   border-color: #bae6fd;
   background: linear-gradient(180deg, #ffffff 0%, #f0f9ff 100%);
@@ -2177,6 +2202,62 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
+}
+.plan-step-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 12px;
+}
+.plan-step {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+  padding: 9px 10px;
+  border: 1px solid #e5e7eb;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+.plan-step-index {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 22px;
+  background: #e0e7ff;
+  color: #4338ca;
+  font-size: 12px;
+  font-weight: 900;
+}
+.plan-step.running .plan-step-index {
+  background: #dbeafe;
+  color: #2563eb;
+  box-shadow: 0 0 0 4px rgba(37, 99, 235, 0.1);
+}
+.plan-step.completed .plan-step-index {
+  background: #dcfce7;
+  color: #15803d;
+}
+.plan-step.pending .plan-step-index {
+  background: #fef3c7;
+  color: #b45309;
+}
+.plan-step-main {
+  min-width: 0;
+}
+.plan-step-title {
+  color: #172033;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+}
+.plan-step-detail {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.4;
+  word-break: break-word;
 }
 .artifact-fields {
   margin-top: 12px;
@@ -2980,6 +3061,11 @@ onBeforeUnmount(() => {
   border-color: rgba(91, 140, 255, 0.34);
 }
 
+:global(:root[data-theme='dark']) .artifact-plan {
+  background: linear-gradient(180deg, #172235 0%, #191f3a 100%);
+  border-color: rgba(129, 140, 248, 0.32);
+}
+
 :global(:root[data-theme='dark']) .artifact-guide {
   background: linear-gradient(180deg, #172235 0%, #102534 100%);
   border-color: rgba(45, 212, 191, 0.28);
@@ -3010,6 +3096,11 @@ onBeforeUnmount(() => {
   color: #dbeafe;
 }
 
+:global(:root[data-theme='dark']) .artifact-plan .artifact-icon {
+  background: #4f46e5;
+  color: #e0e7ff;
+}
+
 :global(:root[data-theme='dark']) .artifact-order .artifact-icon {
   background: #16a34a;
   color: #dcfce7;
@@ -3022,6 +3113,7 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .artifact-title,
 :global(:root[data-theme='dark']) .artifact-field-value,
+:global(:root[data-theme='dark']) .plan-step-title,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-title),
 :global(:root[data-theme='dark']) .markdown-body :deep(.execution-title),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-title),
@@ -3030,10 +3122,31 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .artifact-field,
+:global(:root[data-theme='dark']) .plan-step,
 :global(:root[data-theme='dark']) .artifact-edit-field textarea {
   background: #101a2a;
   border-color: rgba(148, 163, 184, 0.22);
   color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .plan-step-index {
+  background: rgba(129, 140, 248, 0.18);
+  color: #c7d2fe;
+}
+
+:global(:root[data-theme='dark']) .plan-step.running .plan-step-index {
+  background: rgba(96, 165, 250, 0.2);
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .plan-step.completed .plan-step-index {
+  background: rgba(34, 197, 94, 0.18);
+  color: #bbf7d0;
+}
+
+:global(:root[data-theme='dark']) .plan-step.pending .plan-step-index {
+  background: rgba(245, 158, 11, 0.18);
+  color: #fde68a;
 }
 
 :global(:root[data-theme='dark']) .artifact-field.missing {
@@ -3049,6 +3162,7 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .artifact-field-label,
 :global(:root[data-theme='dark']) .artifact-edit-field,
+:global(:root[data-theme='dark']) .plan-step-detail,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-subtitle),
 :global(:root[data-theme='dark']) .markdown-body :deep(.execution-subtitle),
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-card-coords),
@@ -3350,6 +3464,11 @@ onBeforeUnmount(() => {
   box-shadow: 0 16px 32px rgba(0, 0, 0, 0.24) !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .artifact-plan) {
+  background: linear-gradient(180deg, #172235 0%, #191f3a 100%) !important;
+  border-color: rgba(129, 140, 248, 0.32) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .artifact-weather) {
   background: linear-gradient(180deg, #172235 0%, #13243b 100%) !important;
   border-color: rgba(96, 165, 250, 0.3) !important;
@@ -3370,6 +3489,11 @@ onBeforeUnmount(() => {
   color: #dbeafe !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .artifact-plan .artifact-icon) {
+  background: #4f46e5 !important;
+  color: #e0e7ff !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .artifact-order .artifact-icon) {
   background: #16a34a !important;
   color: #dcfce7 !important;
@@ -3383,6 +3507,31 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-field) {
   background: #101a2a !important;
   border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-step) {
+  background: #101a2a !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-step-index) {
+  background: rgba(129, 140, 248, 0.18) !important;
+  color: #c7d2fe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-step.running .plan-step-index) {
+  background: rgba(96, 165, 250, 0.2) !important;
+  color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-step.completed .plan-step-index) {
+  background: rgba(34, 197, 94, 0.18) !important;
+  color: #bbf7d0 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-step.pending .plan-step-index) {
+  background: rgba(245, 158, 11, 0.18) !important;
+  color: #fde68a !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-field.missing) {
@@ -3400,7 +3549,15 @@ onBeforeUnmount(() => {
   color: #94a3b8 !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .plan-step-detail) {
+  color: #94a3b8 !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .artifact-field-value) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-step-title) {
   color: #edf4ff !important;
 }
 

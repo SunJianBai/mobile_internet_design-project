@@ -1,8 +1,8 @@
 """Run deterministic checks for direct read responses.
 
 These checks patch tool invocation, so they do not call AMap, the LLM, or the
-Java backend. They verify that fast read paths return rich UI artifacts instead
-of only plain text.
+Java backend. They verify that fast read paths and execution plans return rich
+UI artifacts instead of only plain text.
 
 Examples:
   python scripts/run_direct_read_eval.py
@@ -354,6 +354,31 @@ async def scenario_content_search_returns_result_artifact() -> DirectReadResult:
     return DirectReadResult("content_search_returns_result_artifact", not failures, failures, actual)
 
 
+async def scenario_execution_plan_describes_tool_path() -> DirectReadResult:
+    from app import agent as agent_module
+
+    plan = agent_module._build_execution_plan_artifact({
+        "primary_intent": "order.search",
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": False,
+        "suggested_agents": ["order_query"],
+        "next_action": "execute_read_tools",
+    })
+    failures: list[str] = []
+    if plan.get("type") != "plan":
+        failures.append(f"expected plan artifact, got {plan.get('type')!r}")
+    fields = {field.get("label"): field.get("value") for field in plan.get("fields", []) if isinstance(field, dict)}
+    if fields.get("策略") != "确定性工具路径":
+        failures.append(f"expected deterministic tool strategy, got {fields.get('策略')!r}")
+    titles = [step.get("title") for step in plan.get("steps", []) if isinstance(step, dict)]
+    if "查询约伴活动" not in titles:
+        failures.append("plan should include an order query step")
+    if "生成订单结果卡" not in titles:
+        failures.append("plan should include a result-card step")
+    return DirectReadResult("execution_plan_describes_tool_path", not failures, failures, {"plan": plan})
+
+
 async def run_all() -> list[DirectReadResult]:
     scenarios = [
         scenario_map_search_returns_followup_artifact,
@@ -362,6 +387,7 @@ async def run_all() -> list[DirectReadResult]:
         scenario_order_search_returns_result_artifact,
         scenario_order_search_empty_returns_action_card,
         scenario_content_search_returns_result_artifact,
+        scenario_execution_plan_describes_tool_path,
     ]
     return [await scenario() for scenario in scenarios]
 
