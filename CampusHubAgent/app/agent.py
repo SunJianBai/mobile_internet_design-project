@@ -29,7 +29,7 @@ from app.tools import search_orders, create_order, get_my_orders, get_order_deta
 from app.tools_order import ORDER_EXTRA_TOOLS
 from app.tools_content import CONTENT_TOOLS
 from app.tools_user import USER_TOOLS
-from app.mcp_tools import MCP_TOOLS
+from app.mcp_tools import MCP_TOOLS, maps_around_search, maps_geo, maps_weather
 from app.tools_utils import UTIL_TOOLS
 from app.prompts import (
     build_main_agent_prompt,
@@ -1323,6 +1323,213 @@ async def build_general_help_response(intent_analysis: dict) -> dict:
     }
 
 
+LIANGXIANG_CENTER = "116.178000,39.729000"
+ZHONGGUANCUN_CENTER = "116.326000,39.964000"
+
+
+def _safe_json_object(text: str) -> dict:
+    try:
+        value = json.loads(text or "{}")
+        return value if isinstance(value, dict) else {}
+    except Exception:
+        return {}
+
+
+def _select_campus_center(user_info: dict, user_message: str) -> tuple[str, str]:
+    text = str(user_message or "")
+    campus = str(user_info.get("campus") or "").upper()
+    if "中关村" in text or campus == "ZHONGGUANCUN":
+        return ZHONGGUANCUN_CENTER, "北京理工大学中关村校区"
+    return LIANGXIANG_CENTER, "北京理工大学良乡校区"
+
+
+def _extract_map_keyword(user_message: str) -> str:
+    text = str(user_message or "").lower()
+    keyword_groups = [
+        (("按摩", "洗脚", "足疗", "推拿", "spa"), "按摩"),
+        (("吃饭", "餐厅", "饭店", "美食", "约饭"), "餐厅"),
+        (("咖啡", "奶茶"), "咖啡"),
+        (("电影院", "影院", "电影"), "电影院"),
+        (("篮球",), "篮球场"),
+        (("羽毛球",), "羽毛球馆"),
+        (("自习", "图书馆"), "图书馆"),
+        (("超市", "便利店"), "超市"),
+        (("玩", "放松", "休闲"), "休闲娱乐"),
+    ]
+    for cues, keyword in keyword_groups:
+        if any(cue in text for cue in cues):
+            return keyword
+    return "校园周边"
+
+
+def _extract_location_from_geo(text: str) -> str:
+    data = _safe_json_object(text)
+    candidates = data.get("return") or data.get("geocodes") or []
+    if not isinstance(candidates, list):
+        return ""
+    for item in candidates:
+        if isinstance(item, dict) and item.get("location"):
+            return str(item["location"])
+    return ""
+
+
+async def _invoke_tool_text(tool_obj, args: dict) -> str:
+    return await asyncio.to_thread(tool_obj.invoke, args)
+
+
+async def _resolve_poi_locations(pois: list[dict], limit: int = 3) -> list[dict]:
+    resolved = []
+    for poi in pois[:limit]:
+        if not isinstance(poi, dict):
+            continue
+        item = {
+            "name": str(poi.get("name") or "未命名地点"),
+            "address": str(poi.get("address") or "地址暂缺"),
+            "location": str(poi.get("location") or ""),
+        }
+        if not item["location"]:
+            query = item["address"] if item["address"] != "地址暂缺" else item["name"]
+            geo_text = await _invoke_tool_text(maps_geo, {"address": query, "city": "北京"})
+            item["location"] = _extract_location_from_geo(geo_text)
+        if item["location"]:
+            resolved.append(item)
+    return resolved
+
+
+def _format_map_direct_reply(keyword: str, center_name: str, pois: list[dict]) -> str:
+    if not pois:
+        return ""
+    lines = [
+        f"我先按 **{center_name}** 周边帮你找了几个“{keyword}”相关地点，下面这些结果可以直接在页面里看地图。",
+        "",
+    ]
+    for index, poi in enumerate(pois, start=1):
+        lng_lat = [part.strip() for part in str(poi["location"]).split(",", 1)]
+        if len(lng_lat) != 2:
+            continue
+        lng, lat = lng_lat
+        title = poi["name"].replace("{", "").replace("}", "")
+        lines.extend([
+            f"{index}. **{poi['name']}**",
+            f"   地址：{poi['address']}",
+            f"   经纬度：{lng},{lat}",
+            f":::map{{lng={lng} lat={lat} zoom=15 title={title}}}",
+            "",
+        ])
+    lines.append("如果你选中其中一个地点，可以点地图卡里的“用此地点约伴”，我会先整理订单草稿并等你确认。")
+    return "\n".join(lines).strip()
+
+
+def _format_weather_direct_reply(weather_text: str) -> str:
+    data = _safe_json_object(weather_text)
+    forecasts = data.get("forecasts") if isinstance(data.get("forecasts"), list) else []
+    if not forecasts:
+        return ""
+    city = data.get("city") or "北京"
+    today = forecasts[0]
+    day_weather = today.get("dayweather") or "未知"
+    night_weather = today.get("nightweather") or "未知"
+    day_temp = today.get("daytemp") or "-"
+    night_temp = today.get("nighttemp") or "-"
+    advice = "天气有降雨或强对流迹象，户外活动建议带伞并准备室内备选。"
+    weather_text_joined = f"{day_weather}{night_weather}"
+    if not any(cue in weather_text_joined for cue in ("雨", "雪", "雷", "沙尘")):
+        advice = "天气风险不高，可以安排户外活动，但仍建议出门前再确认实时天气。"
+    return (
+        f"**{city}今日天气**\n\n"
+        f"- 白天：{day_weather}，约 {day_temp}℃\n"
+        f"- 夜间：{night_weather}，约 {night_temp}℃\n"
+        f"- 建议：{advice}\n\n"
+        "需要的话，我也可以继续帮你找附近的室内备选地点。"
+    )
+
+
+async def build_direct_read_response(user_info: dict, user_message: str, intent_analysis: dict) -> dict | None:
+    """Fast deterministic read path for simple map/weather tasks."""
+    primary_intent = (intent_analysis.get("primary_intent") or "").lower()
+    next_action = (intent_analysis.get("next_action") or "").lower()
+    if intent_analysis.get("requires_confirmation") and primary_intent != "multi_step":
+        return None
+    if primary_intent == "multi_step" and next_action != "execute_read_tools":
+        return None
+
+    if primary_intent == "weather.query":
+        await _emit_event("agent_step", {
+            "phase": "weather_direct",
+            "title": "查询天气",
+            "detail": "正在直接调用天气工具，避免普通天气问题进入多轮智能体循环",
+            "state": "running",
+        })
+        weather_text = await _invoke_tool_text(maps_weather, {"city": "北京"})
+        reply = _format_weather_direct_reply(weather_text)
+        if not reply:
+            return None
+        await _emit_event("agent_step", {
+            "phase": "weather_direct",
+            "title": "天气查询完成",
+            "detail": "已获取天气结果并整理建议",
+            "state": "completed",
+        })
+        return {"reply": reply, "tool_calls": [{"name": "maps_weather", "args": {"city": "北京"}}], "intent": intent_analysis}
+
+    if primary_intent not in {"map.search", "multi_step"}:
+        return None
+
+    keyword = _extract_map_keyword(user_message)
+    center, center_name = _select_campus_center(user_info, user_message)
+    await _emit_event("agent_step", {
+        "phase": "map_direct",
+        "title": "查询附近地点",
+        "detail": f"正在以{center_name}为中心搜索：{keyword}",
+        "state": "running",
+    })
+    search_text = await _invoke_tool_text(
+        maps_around_search,
+        {"location": center, "keywords": keyword, "radius": "3000"},
+    )
+    data = _safe_json_object(search_text)
+    pois = data.get("pois") if isinstance(data.get("pois"), list) else []
+    if not pois:
+        return None
+
+    await _emit_event("agent_step", {
+        "phase": "map_geocode",
+        "title": "补全地图坐标",
+        "detail": "正在为推荐地点补全经纬度，方便前端直接渲染地图",
+        "state": "running",
+    })
+    resolved = await _resolve_poi_locations(pois, limit=3)
+    await _emit_event("agent_step", {
+        "phase": "map_geocode",
+        "title": "地图坐标已补全",
+        "detail": f"已为 {len(resolved)} 个地点解析经纬度",
+        "state": "completed",
+    })
+    reply = _format_map_direct_reply(keyword, center_name, resolved)
+    if not reply:
+        return None
+    await _emit_event("agent_step", {
+        "phase": "map_direct",
+        "title": "地图推荐完成",
+        "detail": f"已整理 {len(resolved)} 个可渲染地图的地点",
+        "state": "completed",
+    })
+    await _emit_event("agent_step", {
+        "phase": "response",
+        "title": "整理回复",
+        "detail": "正在把地点结果整理成可交互地图卡片",
+        "state": "completed",
+    })
+    return {
+        "reply": reply,
+        "tool_calls": [
+            {"name": "maps_around_search", "args": {"location": center, "keywords": keyword, "radius": "3000"}},
+            {"name": "maps_geo", "args": {"limit": 3}},
+        ],
+        "intent": intent_analysis,
+    }
+
+
 # ==================== 子 Agent 执行器 ====================
 
 async def _run_sub_agent(agent_key: str, agent_name: str, system_prompt: str, tools: list, task: str) -> str:
@@ -1461,6 +1668,10 @@ async def chat(
         and (intent_analysis.get("next_action") or "").lower() == "direct_answer"
     ):
         return await build_general_help_response(intent_analysis)
+
+    direct_read_result = await build_direct_read_response(user_info, user_message, intent_analysis)
+    if direct_read_result:
+        return direct_read_result
 
     await _emit_event("agent_step", {
         "phase": "planning",
