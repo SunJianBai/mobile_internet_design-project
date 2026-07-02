@@ -570,6 +570,101 @@ def _has_any(text: str, cues: tuple[str, ...]) -> bool:
     return any(cue in text for cue in cues)
 
 
+def _looks_like_companion_search(text: str) -> bool:
+    """Detect read-only requests for people/companions rather than places."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        return False
+    if _has_any(text, ("动态", "帖子", "校园圈", "评论区")):
+        return False
+
+    companion_cues = (
+        "找人",
+        "找几个",
+        "找几个人",
+        "找同学",
+        "找搭子",
+        "搭子",
+        "同学一起",
+        "有没有人",
+        "有没有同学",
+        "有人一起",
+        "一起去",
+        "一起打",
+        "一起吃",
+        "一起看",
+        "一起玩",
+        "一起自习",
+        "组队",
+        "约人",
+        "约几个",
+    )
+    activity_cues = (
+        "按摩",
+        "洗脚",
+        "足疗",
+        "吃饭",
+        "烤肉",
+        "电影",
+        "看电影",
+        "羽毛球",
+        "篮球",
+        "跑步",
+        "自习",
+        "健身",
+        "密室",
+        "桌游",
+        "唱歌",
+        "ktv",
+        "骑车",
+        "徒步",
+        "逛街",
+        "咖啡",
+    )
+    negative_place_cues = (
+        "不是找店",
+        "不找店",
+        "不要找店",
+        "别找店",
+        "不要推荐店",
+        "别推荐店",
+        "不用推荐店",
+        "不要给我推荐店",
+        "不要给我店铺推荐",
+        "别给我店铺推荐",
+        "不要店铺推荐",
+        "别店铺推荐",
+        "不是找地方",
+        "不找地方",
+    )
+    explicit_place_cues = (
+        "店",
+        "推荐的店",
+        "找店",
+        "找个店",
+        "找家店",
+        "店吗",
+        "店铺",
+        "商家",
+        "地点",
+        "地方",
+        "地址",
+        "路线",
+        "导航",
+        "怎么走",
+        "地图",
+        "哪家",
+        "哪里",
+    )
+
+    has_companion = _has_any(text, companion_cues)
+    if not has_companion:
+        return False
+    if _has_any(text, negative_place_cues):
+        return True
+    return _has_any(text, activity_cues) and not _has_any(text, explicit_place_cues)
+
+
 def _contains_blocking_write_negation(text: str) -> bool:
     """Return true when the user is negating the write itself, not asking for confirmation first."""
     if _has_any(text, ("取消", "不想")):
@@ -767,6 +862,22 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "资料",
         "信息",
     )
+    if _looks_like_companion_search(text):
+        return {
+            "primary_intent": "order.search",
+            "domain": "order",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.86,
+            "summary": "用户想搜索可一起参加活动的人或约伴机会",
+            "missing_slots": [],
+            "suggested_agents": ["order_query"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "read_shortcut": True,
+            "router_timeout": False,
+        }
+
     if _has_any(text, generic_read_cues) and _has_any(text, ("用户", "主页", "资料")):
         return {
             "primary_intent": "user.profile",
@@ -1089,8 +1200,8 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
     return None
 
 
-def _detect_timeout_read_fallback(user_message: str) -> dict | None:
-    """Conservative read-only fallback used only when the semantic router is unavailable."""
+def _detect_router_error_read_fallback(user_message: str) -> dict | None:
+    """Conservative read-only fallback used when the semantic router is unavailable."""
     text = " ".join(str(user_message or "").split())
     if not text:
         return None
@@ -1099,6 +1210,21 @@ def _detect_timeout_read_fallback(user_message: str) -> dict | None:
 
     read_cues = ("找", "看看", "查询", "查一下", "推荐", "附近", "有没有", "怎么走", "路线", "地图")
     generic_read_cues = read_cues + ("搜索", "搜一下", "列出", "哪些", "信息", "主页")
+
+    if _looks_like_companion_search(text):
+        return {
+            "primary_intent": "order.search",
+            "domain": "order",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "confidence": 0.72,
+            "summary": "用户想搜索可一起参加活动的人或约伴机会，路由模型不可用后降级为订单只读查询",
+            "missing_slots": [],
+            "suggested_agents": ["order_query"],
+            "next_action": "execute_read_tools",
+            "reviewed": False,
+            "router_timeout_fallback": True,
+        }
 
     if _has_any(text, ("天气", "气温", "下雨", "刮风", "适不适合")):
         return {
@@ -1356,15 +1482,20 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
     except Exception as e:
         logger.warning("Intent analysis failed: %s", e)
         router_timeout = isinstance(e, asyncio.TimeoutError)
-        timeout_fallback = _detect_timeout_read_fallback(user_message) if router_timeout else None
+        timeout_fallback = _detect_router_error_read_fallback(user_message)
         if timeout_fallback:
             analysis = _normalize_intent_analysis(timeout_fallback)
-            analysis["router_timeout"] = True
+            analysis["router_timeout"] = router_timeout
             analysis["router_error"] = e.__class__.__name__
+            fallback_detail = (
+                "轻量模型响应超时，已将明确的只读请求降级到本地安全路由"
+                if router_timeout
+                else "轻量模型暂时不可用，已将明确的只读请求降级到本地安全路由"
+            )
             await _emit_event("agent_step", {
                 "phase": "intent_fallback",
                 "title": "意图路由降级",
-                "detail": "轻量模型响应超时，已将明确的地点/店铺推荐请求降级为地图只读查询",
+                "detail": fallback_detail,
                 "state": "completed",
             })
         else:

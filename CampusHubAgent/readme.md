@@ -9,6 +9,7 @@ python scripts/run_intent_eval.py --timeout 10
 python scripts/run_intent_eval.py --suite evals/persona_scenarios.json --timeout 12
 python scripts/run_direct_read_eval.py
 python scripts/run_delegation_guard_eval.py
+python scripts/run_router_fallback_eval.py
 ```
 
 `persona_scenarios.json` 覆盖更接近真人表达的请求，例如先查地图再创建草稿、否定发布动态、草稿追改、记忆偏好、评论/点赞确认等，用来防止意图分析在自然语言场景里退化。
@@ -16,6 +17,8 @@ python scripts/run_delegation_guard_eval.py
 `run_direct_read_eval.py` 使用假地图/天气工具结果验证直读响应，确保地图推荐会返回可渲染地图和下一步引导卡片，同时不访问外部接口。
 
 `run_delegation_guard_eval.py` 不会调用真实大模型、后端或高德接口，只验证同一轮对话内的调度防线：重复任务复用、单个专家调用上限、总委派上限，以及不同用户轮次之间的状态隔离。
+
+`run_router_fallback_eval.py` 会模拟轻量意图路由模型不可用，验证明确只读请求仍能安全降级到地图/约伴查询，而不是退化成 `unknown`。
 
 ## `.env` 示例
 

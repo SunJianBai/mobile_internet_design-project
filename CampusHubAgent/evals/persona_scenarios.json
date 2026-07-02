@@ -57,6 +57,18 @@
       }
     },
     {
+      "id": "persona_order_search_companion_not_store",
+      "category": "persona_order_read",
+      "persona": "想找同伴而不是查店铺的学生",
+      "message": "附近有没有人一起去看电影，别给我店铺推荐，我想找搭子",
+      "expect": {
+        "primary_intent": "order.search",
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
       "id": "persona_order_create_missing_place",
       "category": "persona_order_write",
       "persona": "想发起活动但信息不完整的学生",

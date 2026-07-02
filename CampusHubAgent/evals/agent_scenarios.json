@@ -69,6 +69,18 @@
       }
     },
     {
+      "id": "order_search_companion_not_store",
+      "category": "order_read",
+      "message": "找几个想一起去按摩的人，不是找店，看看有没有类似约伴",
+      "expect": {
+        "primary_intent": "order.search",
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "max_duration_ms": 1000
+      }
+    },
+    {
       "id": "order_search_my_orders",
       "category": "order_read",
       "message": "我最近发布过哪些约伴订单，帮我列出来",
