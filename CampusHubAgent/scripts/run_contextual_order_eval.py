@@ -346,6 +346,65 @@ async def scenario_confirmed_execution_returns_result_artifact() -> EvalResult:
     return EvalResult("confirmed_execution_returns_result_artifact", not failures, failures, actual)
 
 
+async def scenario_short_confirmation_executes_recent_draft_summary() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    original_create_order = agent_module.create_order
+    agent_module._get_router_llm = lambda: FakeRouter()
+    try:
+        analysis = {
+            "primary_intent": "order.create",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+        draft = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            MAP_HISTORY,
+            FOLLOWUP_MESSAGE,
+            analysis,
+        )
+        agent_module.create_order = FakeTool("✅ 约伴订单创建成功！[查看订单详情](/orders/90)")
+        result = await agent_module.build_confirmed_execution_response(
+            DEFAULT_USER,
+            [{"role": "assistant", "content": draft.get("reply") or ""}],
+            "确认",
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+        agent_module.create_order = original_create_order
+
+    tool_calls = result.get("tool_calls") if result else []
+    args = (tool_calls or [{}])[0].get("args") or {}
+    artifact = (result.get("artifacts") or [{}])[0] if result else {}
+    actual = {
+        "draft_reply": draft.get("reply"),
+        "tool_calls": tool_calls,
+        "args": args,
+        "artifact": artifact,
+    }
+    failures: list[str] = []
+    if "确认草稿摘要" not in str(draft.get("reply") or ""):
+        failures.append("confirmation reply should persist a readable draft summary")
+    if not result:
+        failures.append("short confirmation should execute the recent draft summary")
+    if not any((call or {}).get("name") == "create_order" for call in (tool_calls or [])):
+        failures.append("expected create_order tool call after short confirmation")
+    if "景阳阁SPA会所" not in str(args.get("location") or ""):
+        failures.append(f"expected first map location in create args, got {args.get('location')!r}")
+    if args.get("max_people") != 3:
+        failures.append(f"expected max_people 3, got {args.get('max_people')!r}")
+    if not args.get("start_time"):
+        failures.append("expected 明晚八点 to normalize into a start_time")
+    if not any(action.get("route") == "/orders/90" for action in artifact.get("actions") or [] if isinstance(action, dict)):
+        failures.append("expected confirmed result card to link to created order")
+    return EvalResult("short_confirmation_executes_recent_draft_summary", not failures, failures, actual)
+
+
 async def scenario_confirmed_memory_commit_returns_artifact() -> EvalResult:
     from app import agent as agent_module
 
@@ -409,6 +468,7 @@ async def run_all() -> list[EvalResult]:
         scenario_confirmed_action_kind_marker_wins,
         scenario_confirmation_infers_manage_action_kind,
         scenario_confirmed_execution_returns_result_artifact,
+        scenario_short_confirmation_executes_recent_draft_summary,
         scenario_confirmed_memory_commit_returns_artifact,
     ]
     return [await scenario() for scenario in scenarios]

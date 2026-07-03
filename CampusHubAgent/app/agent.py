@@ -2788,6 +2788,48 @@ def _is_confirmed_artifact_message(text: str) -> bool:
     ))
 
 
+def _is_short_confirmation_message(text: str) -> bool:
+    raw = str(text or "").strip()
+    if not raw or len(raw) > 24:
+        return False
+    lowered = raw.lower()
+    if any(cue in lowered for cue in (
+        "取消",
+        "修改",
+        "先别",
+        "不要",
+        "等等",
+        "等一下",
+        "再改",
+        "no",
+        "not",
+        "cancel",
+        "edit",
+        "change",
+    )):
+        return False
+    normalized = re.sub(r"[\s。.!！,，、；;:：]+", "", lowered)
+    return normalized in {
+        "确认",
+        "确认执行",
+        "可以执行",
+        "执行",
+        "执行吧",
+        "没问题",
+        "确认没问题",
+        "就这样",
+        "可以",
+        "好的",
+        "好",
+        "ok",
+        "okay",
+        "yes",
+        "y",
+        "go",
+        "goahead",
+    }
+
+
 def _parse_confirmed_artifact_fields(text: str) -> dict:
     fields = {}
     for raw_line in str(text or "").splitlines():
@@ -2801,6 +2843,78 @@ def _parse_confirmed_artifact_fields(text: str) -> dict:
         if label and value:
             fields[label] = value
     return fields
+
+
+def _build_confirmation_summary_lines(artifact: dict) -> list[str]:
+    lines = []
+    title = str((artifact or {}).get("title") or "").strip()
+    action_kind = str((artifact or {}).get("actionKind") or (artifact or {}).get("action_kind") or "").strip()
+    if title:
+        lines.append(f"标题: {title}")
+    if action_kind:
+        lines.append(f"操作类型: {action_kind}")
+    for field in (artifact or {}).get("fields") or []:
+        if not isinstance(field, dict):
+            continue
+        label = str(field.get("label") or "").strip()
+        if not label:
+            continue
+        value = str(field.get("value") or "").strip()
+        if field.get("missing") and value in {"", "待补充", "未填写", "None", "null"}:
+            value = "待补充"
+        if value:
+            lines.append(f"{label}: {value}")
+    return lines
+
+
+def _append_confirmation_summary_to_reply(reply: str, artifact: dict) -> str:
+    base = str(reply or "").strip()
+    if "确认草稿摘要" in base:
+        return base
+    summary_lines = _build_confirmation_summary_lines(artifact)
+    if not summary_lines:
+        return base
+    missing_fields = (artifact or {}).get("missingFields") or []
+    next_tip = (
+        "请先补充待补充字段，再点击确认执行。"
+        if missing_fields
+        else "确认无误后，可以点击确认执行，或直接回复“确认”。"
+    )
+    summary = "\n".join(f"- {line}" for line in summary_lines)
+    return f"{base}\n\n确认草稿摘要：\n{summary}\n\n{next_tip}".strip()
+
+
+def _extract_recent_confirmation_summary(history: list) -> list[str]:
+    for item in reversed(history or []):
+        if not isinstance(item, dict) or item.get("role") != "assistant":
+            continue
+        content = str(item.get("content") or "")
+        if "确认草稿摘要" not in content:
+            continue
+        summary_text = content.split("确认草稿摘要", 1)[1]
+        lines = []
+        for raw_line in summary_text.splitlines():
+            line = raw_line.strip().lstrip("-*•").strip()
+            if not line:
+                continue
+            if line.startswith(("确认无误后", "请先补充")):
+                break
+            if "：" in line or ":" in line:
+                lines.append(line)
+        if lines:
+            return lines
+    return []
+
+
+def _build_confirmed_message_from_recent_summary(history: list, user_message: str) -> str:
+    if not _is_short_confirmation_message(user_message):
+        return ""
+    lines = _extract_recent_confirmation_summary(history)
+    if not lines:
+        return ""
+    fields = _parse_confirmed_artifact_fields("\n".join(lines))
+    title = fields.get("标题") or "最近确认草稿"
+    return f"我确认执行这个草稿：{title}\n" + "\n".join(lines)
 
 
 def _field_value(fields: dict, keywords: tuple[str, ...]) -> str:
@@ -2914,7 +3028,7 @@ def _normalize_start_time(value: str) -> str:
     day_offset = None
     if "后天" in text:
         day_offset = 2
-    elif "明天" in text:
+    elif any(cue in text for cue in ("明天", "明晚", "明早", "明日")):
         day_offset = 1
     elif any(cue in text for cue in ("今天", "今晚")):
         day_offset = 0
@@ -2923,7 +3037,7 @@ def _normalize_start_time(value: str) -> str:
     if day_offset is not None and match:
         hour = _parse_hour_token(match.group(1))
         if hour is not None:
-            if any(cue in text for cue in ("下午", "晚上", "今晚")) and hour < 12:
+            if any(cue in text for cue in ("下午", "晚上", "今晚", "明晚")) and hour < 12:
                 hour += 12
             minute = int(match.group(2) or 0)
             dt = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=day_offset)
@@ -3637,31 +3751,34 @@ async def _execute_confirmed_order_complete(user_info: dict, fields: dict, user_
 
 async def build_confirmed_execution_response(user_info: dict, history: list, user_message: str) -> dict | None:
     """Execute a structured draft only after the user explicitly confirms it."""
-    if not _is_confirmed_artifact_message(user_message):
-        return None
+    confirmation_message = str(user_message or "")
+    if not _is_confirmed_artifact_message(confirmation_message):
+        confirmation_message = _build_confirmed_message_from_recent_summary(history, confirmation_message)
+        if not confirmation_message:
+            return None
 
-    fields = _parse_confirmed_artifact_fields(user_message)
-    action_kind = _infer_confirmed_action_kind(user_message, fields)
+    fields = _parse_confirmed_artifact_fields(confirmation_message)
+    action_kind = _infer_confirmed_action_kind(confirmation_message, fields)
     if action_kind == "order.create":
-        return await _execute_confirmed_order(user_info, fields, user_message)
+        return await _execute_confirmed_order(user_info, fields, confirmation_message)
     if action_kind == "content.create":
-        return await _execute_confirmed_content(user_info, fields, user_message)
+        return await _execute_confirmed_content(user_info, fields, confirmation_message)
     if action_kind == "content.comment":
-        return await _execute_confirmed_comment(user_info, fields, user_message)
+        return await _execute_confirmed_comment(user_info, fields, confirmation_message)
     if action_kind == "content.like":
-        return await _execute_confirmed_like(user_info, fields, user_message)
+        return await _execute_confirmed_like(user_info, fields, confirmation_message)
     if action_kind == "order.apply":
-        return await _execute_confirmed_order_apply(user_info, fields, user_message)
+        return await _execute_confirmed_order_apply(user_info, fields, confirmation_message)
     if action_kind == "order.cancel_apply":
-        return await _execute_confirmed_order_cancel_apply(user_info, fields, user_message)
+        return await _execute_confirmed_order_cancel_apply(user_info, fields, confirmation_message)
     if action_kind == "order.accept":
-        return await _execute_confirmed_order_accept(user_info, fields, user_message)
+        return await _execute_confirmed_order_accept(user_info, fields, confirmation_message)
     if action_kind == "order.reject_apply":
-        return await _execute_confirmed_order_reject_apply(user_info, fields, user_message)
+        return await _execute_confirmed_order_reject_apply(user_info, fields, confirmation_message)
     if action_kind == "order.complete":
-        return await _execute_confirmed_order_complete(user_info, fields, user_message)
+        return await _execute_confirmed_order_complete(user_info, fields, confirmation_message)
     if action_kind == "memory.manage":
-        return await _execute_confirmed_memory(user_info, fields, user_message)
+        return await _execute_confirmed_memory(user_info, fields, confirmation_message)
 
     return {
         "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单、动态、评论、点赞、报名、撤销申请、拒绝申请或记忆管理草稿，或继续手动处理。",
@@ -3736,6 +3853,7 @@ async def build_confirmation_artifact(
         "cancelMessage": f"取消这个草稿：{title}",
         "reply": reply,
     }
+    artifact["reply"] = _append_confirmation_summary_to_reply(reply, artifact)
     await _emit_event("confirm_required", artifact)
     await _emit_event("agent_step", {
         "phase": "confirmation",
