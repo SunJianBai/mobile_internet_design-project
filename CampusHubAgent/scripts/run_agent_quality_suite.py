@@ -18,6 +18,7 @@ import json
 import subprocess
 import sys
 import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import asdict, dataclass
 from pathlib import Path
 
@@ -106,6 +107,22 @@ def run_step(step: SuiteStep) -> StepResult:
     )
 
 
+def run_steps(steps: list[SuiteStep], jobs: int) -> list[StepResult]:
+    worker_count = max(1, min(int(jobs or 1), len(steps) or 1))
+    if worker_count == 1:
+        return [run_step(step) for step in steps]
+
+    results: list[StepResult | None] = [None] * len(steps)
+    with ThreadPoolExecutor(max_workers=worker_count) as executor:
+        futures = {
+            executor.submit(run_step, step): index
+            for index, step in enumerate(steps)
+        }
+        for future in as_completed(futures):
+            results[futures[future]] = future.result()
+    return [result for result in results if result is not None]
+
+
 def print_step_output(result: StepResult) -> None:
     mark = "PASS" if result.ok else "FAIL"
     print(f"\n[{mark}] {result.name} ({result.duration_ms}ms)")
@@ -134,6 +151,7 @@ def print_summary(results: list[StepResult]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", type=float, default=30.0, help="seconds per regular scenario/turn")
+    parser.add_argument("--jobs", type=int, default=3, help="number of suite steps to run in parallel")
     parser.add_argument(
         "--include-semantic",
         action="store_true",
@@ -143,7 +161,7 @@ def main() -> int:
     parser.add_argument("--json", action="store_true", dest="json_output")
     args = parser.parse_args()
 
-    results = [run_step(step) for step in build_steps(args)]
+    results = run_steps(build_steps(args), args.jobs)
     if args.json_output:
         print(json.dumps([asdict(result) for result in results], ensure_ascii=False, indent=2))
     else:
