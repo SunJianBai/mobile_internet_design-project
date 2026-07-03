@@ -261,6 +261,60 @@ async def scenario_blocks_unplanned_agent() -> GuardResult:
     return GuardResult("blocks_unplanned_agent", not failures, failures, actual)
 
 
+async def scenario_builds_allowed_agents_from_semantic_contract() -> GuardResult:
+    from app import agent as agent_module
+
+    cases = {
+        "map_read_ignores_noisy_write_suggestion": {
+            "analysis": {
+                "primary_intent": "map.search",
+                "domain": "map",
+                "operation_type": "read",
+                "suggested_agents": ["content_draft"],
+            },
+            "expected": ["map"],
+        },
+        "order_write_ignores_noisy_map_suggestion": {
+            "analysis": {
+                "primary_intent": "order.create",
+                "domain": "order",
+                "operation_type": "write",
+                "suggested_agents": ["map_weather"],
+            },
+            "expected": ["order"],
+        },
+        "multi_step_keeps_planned_experts": {
+            "analysis": {
+                "primary_intent": "multi_step",
+                "domain": "multi",
+                "operation_type": "mixed",
+                "suggested_agents": ["map_weather", "order_draft"],
+            },
+            "expected": ["map", "order"],
+        },
+        "unknown_can_fall_back_to_suggestion": {
+            "analysis": {
+                "primary_intent": "unknown",
+                "domain": "general",
+                "operation_type": "unknown",
+                "suggested_agents": ["map_weather"],
+            },
+            "expected": ["map"],
+        },
+    }
+
+    actual: dict[str, Any] = {}
+    failures: list[str] = []
+    for case_id, case in cases.items():
+        allowed = agent_module._build_allowed_delegation_agents(case["analysis"])
+        normalized = sorted(allowed) if allowed else []
+        actual[case_id] = normalized
+        if normalized != case["expected"]:
+            failures.append(f"{case_id}: expected {case['expected']}, got {normalized}")
+
+    return GuardResult("builds_allowed_agents_from_semantic_contract", not failures, failures, actual)
+
+
 async def scenario_isolates_user_turns() -> GuardResult:
     async with GuardHarness() as harness:
         event_token = harness.agent._event_sink.set(harness.capture_event)
@@ -303,6 +357,7 @@ async def run_all() -> list[GuardResult]:
         scenario_caps_single_agent,
         scenario_caps_total_delegations,
         scenario_blocks_unplanned_agent,
+        scenario_builds_allowed_agents_from_semantic_contract,
         scenario_isolates_user_turns,
     ]
     return [await scenario() for scenario in scenarios]

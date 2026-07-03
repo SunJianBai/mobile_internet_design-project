@@ -553,27 +553,38 @@ def _build_allowed_delegation_agents(intent_analysis: dict) -> set[str] | None:
     if not isinstance(intent_analysis, dict):
         return None
 
-    allowed: set[str] = set()
+    suggested_allowed: set[str] = set()
     suggested_agents = intent_analysis.get("suggested_agents")
     if isinstance(suggested_agents, list):
         for item in suggested_agents:
             mapped = AGENT_SUGGESTION_TO_DELEGATION.get(str(item or "").strip().lower())
             if mapped:
-                allowed.add(mapped)
+                suggested_allowed.add(mapped)
 
-    if not allowed:
-        primary_intent = str(intent_analysis.get("primary_intent") or "").strip().lower()
-        mapped = INTENT_TO_DELEGATION.get(primary_intent)
-        if mapped:
-            allowed.add(mapped)
+    base_allowed: set[str] = set()
+    primary_intent = str(intent_analysis.get("primary_intent") or "").strip().lower()
+    mapped = INTENT_TO_DELEGATION.get(primary_intent)
+    if mapped:
+        base_allowed.add(mapped)
 
-    if not allowed:
-        domain = str(intent_analysis.get("domain") or "").strip().lower()
-        mapped = DOMAIN_TO_DELEGATION.get(domain)
-        if mapped:
-            allowed.add(mapped)
+    domain = str(intent_analysis.get("domain") or "").strip().lower()
+    mapped = DOMAIN_TO_DELEGATION.get(domain)
+    if mapped:
+        base_allowed.add(mapped)
 
-    return allowed or None
+    operation_type = str(intent_analysis.get("operation_type") or "").strip().lower()
+    is_multi_step = primary_intent == "multi_step" or domain == "multi" or operation_type == "mixed"
+    if is_multi_step:
+        return suggested_allowed or base_allowed or None
+
+    # For a single-domain turn, the semantic intent/domain are the contract.
+    # A noisy suggested_agents list must not let the orchestrator drift into an
+    # unrelated expert and recreate the "map request becomes post/order draft"
+    # failure mode.
+    if base_allowed:
+        return base_allowed
+
+    return suggested_allowed or None
 
 
 def _get_delegation_state() -> dict:
