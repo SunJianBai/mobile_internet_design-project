@@ -9,7 +9,7 @@
           <text class="page-title">AI 助手</text>
           <text class="page-subtitle">活动推荐、地点查询、校园问询</text>
         </view>
-        <button class="top-action" @click="handleCreateConversation">新对话</button>
+        <button class="top-action" hover-class="top-action-hover" @click="handleCreateConversation">新对话</button>
       </view>
       <view class="toolbar">
         <picker
@@ -106,7 +106,56 @@
                     <text class="artifact-highlight-value">{{ highlight.value }}</text>
                   </view>
                 </view>
-                <view v-if="artifact.items && artifact.items.length" class="artifact-result-list">
+                <template v-if="isRouteGuideArtifact(artifact)">
+                  <view
+                    v-for="routeSummary in [getRouteGuideSummary(artifact)]"
+                    :key="`${artifactIndex}-route-guide`"
+                    class="route-guide-panel"
+                  >
+                    <view class="route-guide-flow">
+                      <view class="route-node origin">起</view>
+                      <view class="route-line"></view>
+                      <view class="route-node destination">终</view>
+                    </view>
+                    <view class="route-guide-main">
+                      <view class="route-place-row">
+                        <view class="route-place">
+                          <text class="route-place-label">起点</text>
+                          <text class="route-place-value">{{ routeSummary.origin }}</text>
+                        </view>
+                        <view class="route-place">
+                          <text class="route-place-label">终点</text>
+                          <text class="route-place-value">{{ routeSummary.destination }}</text>
+                        </view>
+                      </view>
+                      <view class="route-metrics">
+                        <view class="route-metric">
+                          <text>方式</text>
+                          <text>{{ routeSummary.mode }}</text>
+                        </view>
+                        <view class="route-metric">
+                          <text>距离</text>
+                          <text>{{ routeSummary.distance }}</text>
+                        </view>
+                        <view class="route-metric">
+                          <text>耗时</text>
+                          <text>{{ routeSummary.duration }}</text>
+                        </view>
+                      </view>
+                      <view v-if="getRouteGuideSteps(artifact).length" class="route-step-list">
+                        <view
+                          v-for="(step, stepIndex) in getRouteGuideSteps(artifact)"
+                          :key="`${artifactIndex}-route-step-${stepIndex}`"
+                          class="route-step"
+                        >
+                          <view class="route-step-index">{{ stepIndex + 1 }}</view>
+                          <text class="route-step-text">{{ step }}</text>
+                        </view>
+                      </view>
+                    </view>
+                  </view>
+                </template>
+                <view v-if="artifact.items && artifact.items.length && !isRouteGuideArtifact(artifact)" class="artifact-result-list">
                   <button
                     v-for="(item, itemIndex) in artifact.items"
                     :key="`${artifactIndex}-item-${itemIndex}`"
@@ -176,20 +225,21 @@
                 </view>
                 <view v-if="artifact.type === 'confirmation'" class="artifact-actions">
                   <template v-if="artifact.editing">
-                    <button class="artifact-action" :disabled="isArtifactActionDisabled(artifact, 'save-edit')" @click.stop.prevent="requestArtifactAction(artifact, 'save-edit')">保存修改</button>
-                    <button class="artifact-action primary" :disabled="isArtifactActionDisabled(artifact, 'confirm-edited')" @click.stop.prevent="requestArtifactAction(artifact, 'confirm-edited')">保存并确认</button>
-                    <button class="artifact-action ghost" :disabled="isArtifactActionDisabled(artifact, 'cancel-edit')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel-edit')">退出编辑</button>
+                    <button class="artifact-action" hover-class="artifact-action-hover" :disabled="isArtifactActionDisabled(artifact, 'save-edit')" @click.stop.prevent="requestArtifactAction(artifact, 'save-edit')">保存修改</button>
+                    <button class="artifact-action primary" hover-class="artifact-action-hover" :disabled="isArtifactActionDisabled(artifact, 'confirm-edited')" @click.stop.prevent="requestArtifactAction(artifact, 'confirm-edited')">保存并确认</button>
+                    <button class="artifact-action ghost" hover-class="artifact-action-hover" :disabled="isArtifactActionDisabled(artifact, 'cancel-edit')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel-edit')">退出编辑</button>
                   </template>
                   <template v-else>
                     <button
                       class="artifact-action primary"
+                      hover-class="artifact-action-hover"
                       :disabled="isArtifactActionDisabled(artifact, artifactHasMissingFields(artifact) ? 'edit' : 'confirm')"
                       @click.stop.prevent="requestArtifactAction(artifact, artifactHasMissingFields(artifact) ? 'edit' : 'confirm')"
                     >
                       {{ artifactHasMissingFields(artifact) ? '补充信息' : '确认执行' }}
                     </button>
-                    <button class="artifact-action" :disabled="isArtifactActionDisabled(artifact, 'edit')" @click.stop.prevent="requestArtifactAction(artifact, 'edit')">修改草稿</button>
-                    <button class="artifact-action ghost" :disabled="isArtifactActionDisabled(artifact, 'cancel')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel')">取消</button>
+                    <button class="artifact-action" hover-class="artifact-action-hover" :disabled="isArtifactActionDisabled(artifact, 'edit')" @click.stop.prevent="requestArtifactAction(artifact, 'edit')">修改草稿</button>
+                    <button class="artifact-action ghost" hover-class="artifact-action-hover" :disabled="isArtifactActionDisabled(artifact, 'cancel')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel')">取消</button>
                   </template>
                 </view>
                 <view
@@ -202,6 +252,7 @@
                     :key="`${artifactIndex}-action-${actionIndex}`"
                     class="artifact-action"
                     :class="{ primary: action.primary, 'guide-action-card': isActionCardArtifact(artifact) }"
+                    hover-class="artifact-action-hover"
                     :disabled="loading"
                     @click="handleArtifactPromptAction(action)"
                   >
@@ -224,6 +275,53 @@
               :nodes="formatContent(msg.content)"
               @itemclick="handleRichTextItemClick"
             />
+            <view
+              v-for="routeSummary in getRouteContentSummaries(msg)"
+              :key="`${msg.mid || msg.localId || 'msg'}-content-route`"
+              class="route-guide-panel content-route-guide"
+            >
+              <view class="route-guide-flow">
+                <view class="route-node origin">起</view>
+                <view class="route-line"></view>
+                <view class="route-node destination">终</view>
+              </view>
+              <view class="route-guide-main">
+                <view class="route-place-row">
+                  <view class="route-place">
+                    <text class="route-place-label">起点</text>
+                    <text class="route-place-value">{{ routeSummary.origin }}</text>
+                  </view>
+                  <view class="route-place">
+                    <text class="route-place-label">终点</text>
+                    <text class="route-place-value">{{ routeSummary.destination }}</text>
+                  </view>
+                </view>
+                <view class="route-metrics">
+                  <view class="route-metric">
+                    <text>方式</text>
+                    <text>{{ routeSummary.mode }}</text>
+                  </view>
+                  <view class="route-metric">
+                    <text>距离</text>
+                    <text>{{ routeSummary.distance }}</text>
+                  </view>
+                  <view class="route-metric">
+                    <text>耗时</text>
+                    <text>{{ routeSummary.duration }}</text>
+                  </view>
+                </view>
+                <view v-if="routeSummary.steps.length" class="route-step-list">
+                  <view
+                    v-for="(step, stepIndex) in routeSummary.steps"
+                    :key="`${msg.mid || msg.localId || 'msg'}-content-route-step-${stepIndex}`"
+                    class="route-step"
+                  >
+                    <view class="route-step-index">{{ stepIndex + 1 }}</view>
+                    <text class="route-step-text">{{ step }}</text>
+                  </view>
+                </view>
+              </view>
+            </view>
             <view v-if="getInteractiveMapCards(msg).length" class="inline-map-list">
               <view
                 v-for="mapCard in getInteractiveMapCards(msg)"
@@ -331,7 +429,7 @@
         :disabled="loading"
         @input="saveDraft"
       />
-      <button class="send-btn" :disabled="loading || !inputText.trim()" @click="sendMessage">
+      <button class="send-btn" hover-class="send-btn-hover" :disabled="loading || !inputText.trim()" @click="sendMessage">
         {{ loading ? '发送中' : '发送' }}
       </button>
     </view>
@@ -654,6 +752,86 @@ const getArtifactIcon = (artifact) => {
 }
 
 const isActionCardArtifact = (artifact) => ['guide', 'weather', 'order', 'content', 'memory', 'user'].includes(artifact?.type)
+
+const isRouteGuideArtifact = (artifact) => {
+  if (artifact?.type !== 'guide') return false
+  const title = String(artifact?.title || '')
+  const labels = (artifact?.fields || []).map(field => String(field?.label || ''))
+  return title.includes('路线') || (labels.includes('起点') && labels.includes('终点'))
+}
+
+const getArtifactFieldValue = (artifact, label, fallback = '待确认') => {
+  const field = (artifact?.fields || []).find(item => String(item?.label || '') === label)
+  const value = formatArtifactValue(field?.value)
+  return ['未填写', '待补充'].includes(value) ? fallback : value
+}
+
+const getRouteGuideSummary = (artifact) => ({
+  origin: getArtifactFieldValue(artifact, '起点'),
+  destination: getArtifactFieldValue(artifact, '终点'),
+  mode: getArtifactFieldValue(artifact, '方式'),
+  distance: getArtifactFieldValue(artifact, '距离'),
+  duration: getArtifactFieldValue(artifact, '耗时')
+})
+
+const getRouteGuideSteps = (artifact) => {
+  if (!isRouteGuideArtifact(artifact)) return []
+  return (artifact?.items || [])
+    .map(item => String(item?.title || item?.detail || item?.subtitle || '').replace(/^\d+\.\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
+const extractRouteLineValue = (content, label, fallback = '待确认') => {
+  const match = String(content || '').match(new RegExp(`${label}[：:]\\s*([^\\n]+)`))
+  return match ? match[1].replace(/\*\*/g, '').trim() : fallback
+}
+
+const extractRouteMode = (content) => {
+  const text = String(content || '')
+  const strongMatch = text.match(/按\s+\*\*([^*]+)\*\*/)
+  if (strongMatch) return strongMatch[1].trim()
+  const plainMatch = text.match(/按\s+(.{1,8}?)\s+帮你规划/)
+  return plainMatch ? plainMatch[1].replace(/\*\*/g, '').trim() : '路线'
+}
+
+const extractRouteStepsFromContent = (content) => {
+  const text = String(content || '')
+  const index = text.indexOf('路线要点')
+  if (index < 0) return []
+  return text
+    .slice(index)
+    .split('\n')
+    .map(line => {
+      const match = line.match(/^\s*\d+\.\s*(.+)$/)
+      return match ? match[1].replace(/\*\*/g, '').trim() : ''
+    })
+    .filter(Boolean)
+    .slice(0, 5)
+}
+
+const parseRouteContentSummary = (content) => {
+  const text = String(content || '')
+  if (!/路线要点|预计距离|预计耗时/.test(text)) return null
+  const mapProps = extractMapProps(text)
+  if (mapProps.length < 2) return null
+  return {
+    origin: mapProps[0].title || '起点',
+    destination: mapProps[1].title || '终点',
+    mode: extractRouteMode(text),
+    distance: extractRouteLineValue(text, '预计距离'),
+    duration: extractRouteLineValue(text, '预计耗时'),
+    steps: extractRouteStepsFromContent(text)
+  }
+}
+
+const getRouteContentSummaries = (message) => {
+  if (!message?.content) return []
+  const hasRouteArtifact = (message.artifacts || []).some(isRouteGuideArtifact)
+  if (hasRouteArtifact) return []
+  const summary = parseRouteContentSummary(message.content)
+  return summary ? [summary] : []
+}
 
 const truncateArtifactValue = (value, maxLength = 18) => {
   const text = String(value || '')
@@ -2449,6 +2627,145 @@ onUnmounted(detachActiveStream)
   white-space: nowrap;
 }
 
+.route-guide-panel {
+  display: flex;
+  align-items: stretch;
+  gap: 16rpx;
+  margin-top: 16rpx;
+  padding: 16rpx;
+  border: 1rpx solid rgba(37, 99, 235, 0.16);
+  border-radius: 16rpx;
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.96) 0%, rgba(248, 251, 255, 0.96) 100%);
+}
+
+.content-route-guide {
+  margin-top: 14rpx;
+}
+
+.route-guide-flow {
+  width: 42rpx;
+  flex: 0 0 42rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 4rpx 0;
+}
+
+.route-node {
+  width: 42rpx;
+  height: 42rpx;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 42rpx;
+  box-shadow: 0 8rpx 18rpx rgba(37, 99, 235, 0.18);
+}
+
+.route-node.origin {
+  background: #2563eb;
+}
+
+.route-node.destination {
+  background: #078669;
+}
+
+.route-line {
+  width: 3rpx;
+  flex: 1;
+  min-height: 74rpx;
+  margin: 8rpx 0;
+  border-radius: 999rpx;
+  background: linear-gradient(180deg, #60a5fa 0%, #34d399 100%);
+}
+
+.route-guide-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 14rpx;
+}
+
+.route-place-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12rpx;
+}
+
+.route-place,
+.route-metric {
+  min-width: 0;
+  padding: 12rpx;
+  border: 1rpx solid rgba(148, 163, 184, 0.18);
+  border-radius: 14rpx;
+  background: rgba(255, 255, 255, 0.72);
+  box-sizing: border-box;
+}
+
+.route-place-label,
+.route-metric text:first-child {
+  display: block;
+  color: #667085;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 1.25;
+}
+
+.route-place-value,
+.route-metric text:last-child {
+  display: block;
+  margin-top: 5rpx;
+  color: #172033;
+  font-size: 23rpx;
+  font-weight: 900;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.route-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 10rpx;
+}
+
+.route-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 9rpx;
+}
+
+.route-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 10rpx;
+}
+
+.route-step-index {
+  width: 32rpx;
+  height: 32rpx;
+  flex: 0 0 32rpx;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  font-size: 18rpx;
+  font-weight: 900;
+  line-height: 32rpx;
+  text-align: center;
+}
+
+.route-step-text {
+  flex: 1;
+  min-width: 0;
+  color: #475467;
+  font-size: 22rpx;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
 .artifact-result-list {
   display: flex;
   flex-direction: column;
@@ -2761,6 +3078,39 @@ onUnmounted(detachActiveStream)
 .artifact-action.disabled {
   opacity: 0.52;
   pointer-events: none;
+}
+
+.artifact-action::after,
+.send-btn::after,
+.top-action::after {
+  border: none;
+}
+
+.artifact-action-hover {
+  background: #edf4ff !important;
+  border-color: #b6ccff !important;
+  color: #1f447a !important;
+  box-shadow: 0 12rpx 24rpx rgba(29, 78, 216, 0.12);
+}
+
+.artifact-action.primary.artifact-action-hover,
+.send-btn-hover {
+  background: #183760 !important;
+  border-color: #1f447a !important;
+  color: #ffffff !important;
+  box-shadow: 0 12rpx 26rpx rgba(31, 68, 122, 0.22);
+}
+
+.artifact-action.ghost.artifact-action-hover {
+  background: rgba(31, 68, 122, 0.10) !important;
+  border-color: rgba(31, 68, 122, 0.18) !important;
+  color: #1f447a !important;
+}
+
+.top-action-hover {
+  background: rgba(255, 255, 255, 0.24) !important;
+  border-color: rgba(255, 255, 255, 0.44) !important;
+  color: #ffffff !important;
 }
 
 .reply-actions {
@@ -4011,12 +4361,35 @@ onUnmounted(detachActiveStream)
   .artifact-field,
   .artifact-highlight,
   .artifact-result-item,
+  .route-place,
+  .route-metric,
   .plan-step,
   .artifact-edit-input,
   .input {
     background: #101a2a;
     border-color: rgba(148, 163, 184, 0.22);
     color: #edf4ff;
+  }
+
+  .route-guide-panel {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.16) 0%, rgba(16, 26, 42, 0.96) 100%);
+    border-color: rgba(96, 165, 250, 0.24);
+  }
+
+  .route-place-label,
+  .route-metric text:first-child,
+  .route-step-text {
+    color: #94a3b8;
+  }
+
+  .route-place-value,
+  .route-metric text:last-child {
+    color: #edf4ff;
+  }
+
+  .route-step-index {
+    background: rgba(96, 165, 250, 0.18);
+    color: #bfdbfe;
   }
 
   .artifact-field.missing {
@@ -4118,6 +4491,8 @@ onUnmounted(detachActiveStream)
   }
 
   .reply-action-hover,
+  .artifact-action-hover,
+  .artifact-action:hover,
   .reply-action:hover {
     background: #1f2d44 !important;
     border-color: rgba(154, 184, 255, 0.38) !important;
@@ -4125,6 +4500,7 @@ onUnmounted(detachActiveStream)
   }
 
   .tool-btn-hover,
+  .top-action-hover,
   .inline-map-control-hover,
   .inline-map-control:hover,
   .inline-map-open-hover,
@@ -4140,6 +4516,8 @@ onUnmounted(detachActiveStream)
 
   .inline-map-order-hover,
   .inline-map-order:hover,
+  .send-btn-hover,
+  .artifact-action.primary.artifact-action-hover,
   .artifact-action.primary:hover {
     background: #4f7ff0 !important;
     border-color: #7aa2ff !important;
