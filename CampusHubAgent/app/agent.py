@@ -1101,6 +1101,71 @@ def _has_any(text: str, cues: tuple[str, ...]) -> bool:
     return any(cue in text for cue in cues)
 
 
+def _has_negated_action(text: str, action_cues: tuple[str, ...]) -> bool:
+    """Detect colloquial negation immediately before an action cue."""
+    lowered = " ".join(str(text or "").split()).lower()
+    if not lowered:
+        return False
+    negation_markers = (
+        "不要",
+        "别",
+        "不用",
+        "不必",
+        "不需要",
+        "无需",
+        "先不",
+        "暂时不",
+        "no ",
+        "not ",
+        "don't ",
+        "dont ",
+        "do not ",
+        "without ",
+    )
+    for cue in action_cues:
+        cue = str(cue or "").lower()
+        if not cue:
+            continue
+        start = lowered.find(cue)
+        while start != -1:
+            window = lowered[max(0, start - 12):start]
+            if _has_any(window, negation_markers):
+                return True
+            start = lowered.find(cue, start + len(cue))
+    return False
+
+
+def _has_negated_write_action(text: str) -> bool:
+    return _has_negated_action(
+        text,
+        (
+            "创建",
+            "发起",
+            "发布",
+            "发动态",
+            "发订单",
+            "建订单",
+            "建活动",
+            "报名",
+            "申请",
+            "申请加入",
+            "加入订单",
+            "加入活动",
+            "评论",
+            "回复",
+            "留言",
+            "点赞",
+            "post",
+            "publish",
+            "apply",
+            "join",
+            "comment",
+            "reply",
+            "like",
+        ),
+    )
+
+
 WEATHER_CONTEXT_CUES = (
     "天气",
     "下雨",
@@ -1281,6 +1346,8 @@ def _contains_blocking_write_negation(text: str) -> bool:
     )
     if _has_any(text, direct_confirmation_cues):
         return False
+    if _has_negated_write_action(text):
+        return True
     return _has_any(
         text,
         (
@@ -1306,16 +1373,29 @@ def _contains_blocking_write_negation(text: str) -> bool:
             "别建订单",
             "不要报名",
             "别报名",
+            "不用报名",
+            "不要替我报名",
+            "别替我报名",
+            "不用帮我报名",
+            "先不要报名",
+            "先别报名",
             "不要申请",
             "别申请",
+            "不用申请",
             "不要评论",
             "别评论",
             "不要替我评论",
             "别替我评论",
             "不要帮我评论",
             "别帮我评论",
+            "不用帮我评论",
+            "不用替我评论",
             "不要点赞",
             "别点赞",
+            "不用点赞",
+            "不要帮我点赞",
+            "别帮我点赞",
+            "不用帮我点赞",
         ),
     )
 
@@ -1424,6 +1504,10 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "发一条动态",
         "发个动态",
         "发动态",
+        "写动态",
+        "写个动态",
+        "写一条动态",
+        "动态草稿",
         "创建",
         "发起",
         "报名",
@@ -1475,7 +1559,11 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "只是",
         "仅",
     )
-    if _has_any(text, hard_write_cues) and not _has_any(text, read_only_overrides):
+    if (
+        _has_any(text, hard_write_cues)
+        and not _has_any(text, read_only_overrides)
+        and not _has_negated_action(text, hard_write_cues)
+    ):
         return None
 
     place_lookup_context_cues = (
@@ -1666,9 +1754,12 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
     negated_order_write = _has_any(text, ("不要创建订单", "别创建订单", "不用创建订单", "不要发订单", "别发订单"))
     has_positive_order_context = (
         ("订单" in text and not negated_order_write)
-        or _has_any(text, ("约伴", "我发布过", "我参加过", "报名记录", "申请记录"))
+        or _has_any(text, ("约伴", "我发布过", "我参加过", "报名记录", "申请记录", "篮球局", "羽毛球局", "自习局"))
     )
-    has_order_activity_context = "活动" in text and _has_any(text, ("约伴", "报名", "加入", "我发布过", "我参加过"))
+    has_order_activity_context = (
+        ("活动" in text and _has_any(text, ("约伴", "报名", "加入", "我发布过", "我参加过")))
+        or (_has_any(text, ("局", "场", "名额", "空位")) and _has_any(text, ("篮球", "羽毛球", "跑步", "自习", "健身", "桌游")))
+    )
     if (
         _has_any(text, generic_read_cues)
         and (has_positive_order_context or has_order_activity_context)
@@ -2168,7 +2259,7 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
             "next_action": "ask_clarification" if missing_slots else "prepare_draft",
         }
 
-    if _has_any(text, ("发布动态", "发一条动态", "发个动态", "发动态")):
+    if _has_any(text, ("发布动态", "发一条动态", "发个动态", "发动态", "写动态", "写个动态", "写一条动态", "动态草稿")):
         return {
             **base,
             "primary_intent": "content.create",

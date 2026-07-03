@@ -1,9 +1,10 @@
 """Run the CampusHub agent quality gate.
 
-This script groups the intent, journey, direct-read, contextual-order,
-memory-filter, delegation-guard, and fallback checks that represent the current
-"real user" regression suite. Semantic-only routing is optional because it calls
-the LLM router directly and is much slower than the normal guarded path.
+This script groups the intent, realistic, persona, journey, direct-read,
+contextual-order, memory-filter, delegation-guard, and fallback checks that
+represent the current "real user" regression suite. Semantic-only routing is
+optional because it calls the LLM router directly and is much slower than the
+normal guarded path.
 
 Examples:
   python scripts/run_agent_quality_suite.py
@@ -56,6 +57,17 @@ def build_steps(args: argparse.Namespace) -> list[SuiteStep]:
                 "scripts/run_intent_eval.py",
                 "--suite",
                 "evals/persona_scenarios.json",
+                "--timeout",
+                str(args.timeout),
+            ],
+        ),
+        SuiteStep(
+            "intent_realistic",
+            [
+                py,
+                "scripts/run_intent_eval.py",
+                "--suite",
+                "evals/realistic_scenarios.json",
                 "--timeout",
                 str(args.timeout),
             ],

@@ -1,0 +1,255 @@
+{
+  "version": 1,
+  "description": "Realistic CampusHub agent scenarios from colloquial multi-turn student requests. These focus on ambiguous read/write boundaries, draft edits, and context carry-over.",
+  "default_user": {
+    "uid": 4,
+    "nickname": "Codex QA",
+    "campus": "LIANGXIANG"
+  },
+  "scenarios": [
+    {
+      "id": "realistic_map_foot_massage_store_not_people",
+      "category": "realistic_guardrail",
+      "persona": "想查店但话里带着约人的学生",
+      "message": "我和两个舍友想去洗脚按摩，先帮我看看附近哪家店合适，不要找搭子也别发订单",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "realistic_order_foot_massage_people_not_store",
+      "category": "realistic_order_read",
+      "persona": "想找现成约伴而不是查店的人",
+      "message": "不是查按摩店，我想看看今晚有没有人已经发了足疗约伴，有的话我再考虑加入",
+      "expect": {
+        "primary_intent": "order.search",
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "realistic_map_only_even_if_says_group",
+      "category": "realistic_guardrail",
+      "persona": "当前只要地点建议的人",
+      "message": "周末想拉几个人出去放松一下，这轮只要地点推荐和地图，不要帮我发布任何东西",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "realistic_map_first_choice_to_order_draft",
+      "category": "realistic_context_write",
+      "persona": "先看地图后选择第一家创建约伴草稿的人",
+      "message": "第一家就行，帮我整理成今晚八点三个人去的约伴订单草稿，别直接发布",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我找几家良乡附近适合三个人去的足疗按摩店，只看地图"
+        },
+        {
+          "role": "assistant",
+          "content": "1. 景阳阁SPA会所，地址：良乡大学城附近，经纬度：116.181457,39.730239\n2. 悦康足道，地址：长阳路附近，经纬度：116.170492,39.728167\n我已展示地图卡片，请确认你想选哪一家。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action_any": ["ask_clarification", "prepare_draft"]
+      }
+    },
+    {
+      "id": "realistic_map_second_choice_to_content_draft",
+      "category": "realistic_context_write",
+      "persona": "先查地点后想发动态召集同学的人",
+      "message": "第二家看起来可以，帮我写个动态问问有没有同学一起去，先给我草稿确认",
+      "history": [
+        {
+          "role": "user",
+          "content": "良乡附近有没有适合四个人吃夜宵的地方？"
+        },
+        {
+          "role": "assistant",
+          "content": "1. 阿强烧烤，地址：良乡大学城附近\n2. 春风小馆，地址：长阳路附近\n3. 夜市小串，地址：拱辰大街附近"
+        }
+      ],
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "realistic_order_search_no_apply",
+      "category": "realistic_order_read",
+      "persona": "只想看订单详情但不想报名的人",
+      "message": "帮我看看今晚有没有篮球局，还剩几个名额，先别替我报名",
+      "expect": {
+        "primary_intent_any": ["order.search", "order.manage"],
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "realistic_order_apply_after_read",
+      "category": "realistic_context_write",
+      "persona": "看过订单后决定报名的人",
+      "message": "就第一个篮球局吧，帮我申请加入，但执行前先让我确认",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我看看今晚有没有篮球约伴"
+        },
+        {
+          "role": "assistant",
+          "content": "1. 订单 12：今晚 8 点良乡体育馆篮球，剩余 2 个名额。\n2. 订单 18：明晚操场慢跑。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "realistic_content_edit_existing_draft",
+      "category": "realistic_draft_followup",
+      "persona": "点击修改草稿后继续描述修改要求的人",
+      "message": "别发出去，先把语气改轻松一点，时间改成明晚八点，保留地点",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我发个动态找人一起去自习"
+        },
+        {
+          "role": "assistant",
+          "content": "已生成校园动态草稿，等待你确认或修改后再发布。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "realistic_order_edit_existing_draft",
+      "category": "realistic_draft_followup",
+      "persona": "正在修改约伴订单草稿的人",
+      "message": "人数改成 5 个，标题别写按摩，就写周末放松局，还是先确认",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我创建一个周末足疗约伴订单草稿"
+        },
+        {
+          "role": "assistant",
+          "content": "已生成约伴订单确认草稿，请确认或修改后再执行。"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "realistic_content_comment_read_only",
+      "category": "realistic_content_read",
+      "persona": "只想看评论、不想互动的人",
+      "message": "动态 23 下面大家怎么说的？帮我看看就行，别替我评论",
+      "expect": {
+        "primary_intent": "content.search",
+        "domain": "content",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "realistic_content_comment_requires_confirm",
+      "category": "realistic_content_write",
+      "persona": "想让 AI 代发评论的人",
+      "message": "给动态 23 回一句我也想去，先给我确认一下再发",
+      "expect": {
+        "primary_intent": "content.interact",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "realistic_memory_preference_from_recommendation",
+      "category": "realistic_memory_write",
+      "persona": "想让 AI 记住长期偏好的人",
+      "message": "以后给我推荐聚餐地点时记住两点：别太辣，最好离良乡校区近一点，改记忆前先确认",
+      "expect": {
+        "primary_intent": "memory.manage",
+        "domain": "memory",
+        "operation_type_any": ["write", "mixed"],
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "realistic_weather_then_indoor_plan",
+      "category": "realistic_weather_read",
+      "persona": "根据天气决定活动安排的人",
+      "message": "明天晚上北京会下雨吗？如果下雨我就不约操场跑步了，先查天气就行",
+      "expect": {
+        "primary_intent": "weather.query",
+        "domain": "weather",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "realistic_multi_search_then_draft_if_none",
+      "category": "realistic_multi_step",
+      "persona": "先找现成约伴，没有合适的再建草稿的人",
+      "message": "先看看今晚有没有人约自习，没有合适的再帮我起草一个动态，别直接发布",
+      "expect": {
+        "primary_intent_any": ["multi_step", "content.search", "order.search"],
+        "domain_any": ["multi", "content", "order"],
+        "operation_type_any": ["mixed", "read"],
+        "requires_confirmation": true,
+        "confirmation_gate": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "realistic_user_profile_then_no_follow_action",
+      "category": "realistic_user_read",
+      "persona": "只想查看同学主页的人",
+      "message": "看看 12 号同学主页和他最近发过的动态，不用帮我点赞评论",
+      "expect": {
+        "primary_intent": "user.profile",
+        "domain": "user",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    }
+  ]
+}
