@@ -976,6 +976,30 @@ def _has_any(text: str, cues: tuple[str, ...]) -> bool:
     return any(cue in text for cue in cues)
 
 
+WEATHER_CONTEXT_CUES = (
+    "天气",
+    "下雨",
+    "降雨",
+    "气温",
+    "温度",
+    "适不适合",
+    "适合不适合",
+    "weather",
+    "rain",
+    "rains",
+    "raining",
+    "rainy",
+    "temperature",
+    "forecast",
+    "sunny",
+    "snow",
+)
+
+
+def _has_weather_context(text: str) -> bool:
+    return _has_any(" ".join(str(text or "").split()).lower(), WEATHER_CONTEXT_CUES)
+
+
 def _looks_like_memory_preference_update(text: str) -> bool:
     """Detect durable user preferences that should be confirmed before saving."""
     text = " ".join(str(text or "").split())
@@ -1302,8 +1326,54 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
     if _has_any(text, hard_write_cues) and not _has_any(text, read_only_overrides):
         return None
 
-    weather_read_cues = ("天气", "下雨", "气温", "温度", "适不适合", "适合不适合")
-    if _has_any(text, weather_read_cues) and _has_any(text, ("查", "查询", "看看", "今天", "明天", "北京", "户外", "跑步")):
+    place_lookup_context_cues = (
+        "店",
+        "地方",
+        "地点",
+        "商家",
+        "场馆",
+        "附近",
+        "餐厅",
+        "咖啡",
+        "路线",
+        "地图",
+        "place",
+        "places",
+        "shop",
+        "store",
+        "venue",
+        "venues",
+        "restaurant",
+        "restaurants",
+        "coffee",
+        "cafe",
+        "cafes",
+        "cinema",
+        "movie",
+        "route",
+        "map",
+        "nearby",
+    )
+    weather_action_cues = (
+        "查",
+        "查询",
+        "看看",
+        "今天",
+        "明天",
+        "北京",
+        "户外",
+        "跑步",
+        "check",
+        "show",
+        "look up",
+        "weather",
+        "forecast",
+    )
+    if (
+        _has_weather_context(text)
+        and _has_any(lowered, weather_action_cues)
+        and not _has_any(lowered, place_lookup_context_cues)
+    ):
         return {
             "primary_intent": "weather.query",
             "domain": "weather",
@@ -1375,7 +1445,38 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
             "router_timeout": False,
         }
 
-    negated_content_write = _has_any(text, ("不要发布动态", "别发布动态", "不用发布动态", "不要发动态", "别发动态", "不用发动态"))
+    negated_content_write = _has_any(
+        text,
+        ("不要发布动态", "别发布动态", "不用发布动态", "不要发动态", "别发动态", "不用发动态"),
+    ) or _has_any(
+        lowered,
+        (
+            "no post",
+            "no posting",
+            "do not post",
+            "don't post",
+            "dont post",
+            "without posting",
+            "not post",
+            "no publish",
+            "do not publish",
+            "don't publish",
+            "dont publish",
+        ),
+    )
+    content_negation_place_cues = place_lookup_context_cues + (
+        "按摩",
+        "洗脚",
+        "足疗",
+        "密室",
+        "吃饭",
+        "dinner",
+        "lunch",
+        "food",
+        "massage",
+        "board game",
+        "escape room",
+    )
     english_content_read = _has_any(lowered, generic_read_cues) and _has_any(
         lowered,
         (
@@ -1394,7 +1495,7 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
             _has_any(text, generic_read_cues)
             and _has_any(text, ("动态", "帖子", "评论区", "校园圈"))
         ) or english_content_read
-    ) and not (negated_content_write and _has_any(text, ("店", "地方", "地点", "附近", "密室", "商家"))):
+    ) and not (negated_content_write and _has_any(lowered, content_negation_place_cues)):
         return {
             "primary_intent": "content.search",
             "domain": "content",
@@ -1535,6 +1636,7 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
             "reviewed": False,
             "read_shortcut": True,
             "router_timeout": False,
+            "weather_context": _has_weather_context(text),
         }
 
     return None
@@ -3338,6 +3440,7 @@ def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
     primary_intent = (intent_analysis.get("primary_intent") or "").lower()
     operation_type = (intent_analysis.get("operation_type") or "").lower()
     next_action = (intent_analysis.get("next_action") or "").lower()
+    has_weather_context = bool(intent_analysis.get("weather_context"))
     missing_slots = _missing_slots_display(intent_analysis)
     suggested_agents = [
         _agent_display_name(agent)
@@ -3369,6 +3472,12 @@ def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
             {"title": "生成天气建议卡", "detail": "给出户外/室内备选入口", "state": "pending"},
         ])
     elif primary_intent in {"map.search", "multi_step"} and next_action == "execute_read_tools":
+        if has_weather_context:
+            steps.append({
+                "title": "查询天气参考",
+                "detail": "同一轮先获取天气数据，再继续查询附近地点",
+                "state": "running",
+            })
         steps.extend([
             {"title": "搜索附近地点", "detail": "调用地图工具获取候选地点", "state": "running"},
             {"title": "补全坐标并渲染地图", "detail": "前端会直接显示可交互地图卡片", "state": "pending"},
@@ -4101,6 +4210,29 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
 
     keyword = _extract_map_keyword(user_message)
     center, center_name = _select_campus_center(user_info, user_message)
+    include_weather_context = bool(intent_analysis.get("weather_context")) or _has_weather_context(user_message)
+    weather_reply = ""
+    weather_artifact = None
+    weather_tool_calls = []
+    if include_weather_context:
+        await _emit_event("agent_step", {
+            "phase": "weather_direct",
+            "title": "查询天气参考",
+            "detail": "这轮请求同时提到天气和地点，先直接查询天气数据",
+            "state": "running",
+        })
+        weather_text = await _invoke_tool_text(maps_weather, {"city": "北京"})
+        weather_reply = _format_weather_direct_reply(weather_text)
+        weather_artifact = _build_weather_artifact(weather_text, weather_reply, intent_analysis) if weather_reply else None
+        weather_tool_calls.append({"name": "maps_weather", "args": {"city": "北京"}})
+        if weather_artifact:
+            await _emit_event("artifact", weather_artifact)
+        await _emit_event("agent_step", {
+            "phase": "weather_direct",
+            "title": "天气参考完成",
+            "detail": "已把天气结果整理成卡片，并继续查询地点",
+            "state": "completed",
+        })
     await _emit_event("agent_step", {
         "phase": "map_direct",
         "title": "查询附近地点",
@@ -4146,14 +4278,17 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
         "detail": "正在把地点结果整理成可交互地图卡片",
         "state": "completed",
     })
+    artifacts = [artifact for artifact in (weather_artifact, followup_artifact) if artifact]
+    if weather_reply:
+        reply = f"{weather_reply}\n\n---\n\n{reply}"
     return {
         "reply": reply,
-        "tool_calls": [
+        "tool_calls": weather_tool_calls + [
             {"name": "maps_around_search", "args": {"location": center, "keywords": keyword, "radius": "3000"}},
             {"name": "maps_geo", "args": {"limit": 3}},
         ],
         "intent": intent_analysis,
-        "artifacts": [followup_artifact],
+        "artifacts": artifacts,
     }
 
 

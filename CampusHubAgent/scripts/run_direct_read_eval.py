@@ -306,6 +306,52 @@ async def scenario_weather_direct_returns_artifact() -> DirectReadResult:
     return DirectReadResult("weather_direct_returns_artifact", not failures, failures, actual)
 
 
+async def scenario_map_weather_combo_returns_two_artifacts() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="Tomorrow night I want to watch a movie with roommates, check weather, route, and nearby restaurants, no post",
+            intent_analysis={
+                "primary_intent": "map.search",
+                "domain": "map",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+                "weather_context": True,
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts", []) if result else [],
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifacts = actual.get("artifacts") or []
+    artifact_types = [artifact.get("type") for artifact in artifacts if isinstance(artifact, dict)]
+    tool_names = [call.get("name") for call in actual.get("tool_calls", []) if isinstance(call, dict)]
+    event_artifact_types = [
+        item.get("data", {}).get("type")
+        for item in actual.get("events", [])
+        if item.get("event") == "artifact" and isinstance(item.get("data"), dict)
+    ]
+    if "北京今日天气" not in actual.get("reply", ""):
+        failures.append("combined map/weather reply should include weather guidance")
+    if ":::map" not in actual.get("reply", ""):
+        failures.append("combined map/weather reply should include map directives")
+    if artifact_types[:2] != ["weather", "guide"]:
+        failures.append(f"expected weather and guide artifacts, got {artifact_types!r}")
+    if "maps_weather" not in tool_names:
+        failures.append(f"expected maps_weather tool call, got {tool_names!r}")
+    if not any(call.get("args", {}).get("location") for call in actual.get("tool_calls", []) if isinstance(call, dict)):
+        failures.append("expected a map around-search tool call with location args")
+    if event_artifact_types[:2] != ["weather", "guide"]:
+        failures.append(f"expected streaming artifact events for weather and guide, got {event_artifact_types!r}")
+    return DirectReadResult("map_weather_combo_returns_two_artifacts", not failures, failures, actual)
+
+
 async def scenario_order_search_returns_result_artifact() -> DirectReadResult:
     async def check(harness: DirectReadHarness) -> dict[str, Any]:
         result = await harness.agent.build_direct_read_response(
@@ -524,6 +570,7 @@ async def run_all() -> list[DirectReadResult]:
         scenario_noisy_english_map_restaurant_uses_precise_keyword,
         scenario_multi_step_marks_primary_draft_action,
         scenario_weather_direct_returns_artifact,
+        scenario_map_weather_combo_returns_two_artifacts,
         scenario_order_search_returns_result_artifact,
         scenario_order_search_empty_returns_action_card,
         scenario_content_search_returns_result_artifact,

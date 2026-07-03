@@ -71,6 +71,19 @@
       }
     },
     {
+      "id": "map_weather_restaurants_no_post",
+      "category": "map_read",
+      "message": "Tomorrow night I want to watch a movie with roommates, check weather, route, and nearby restaurants, no post",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools",
+        "max_duration_ms": 1000
+      }
+    },
+    {
       "id": "weather_outdoor_advice",
       "category": "weather_read",
       "message": "查一下今天北京天气，适不适合晚上去操场跑步",
