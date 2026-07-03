@@ -498,51 +498,53 @@
 
     <view v-if="showMemoryPanel" class="memory-mask" @click="closeMemoryPanel"></view>
     <view v-if="showMemoryPanel" class="memory-panel">
-      <view class="memory-header">
-        <view class="memory-heading-row">
-          <view class="memory-heading">
-            <text class="memory-title">AI 记忆</text>
-            <text class="memory-subtitle">{{ memoryPanelSubtitle }}</text>
-          </view>
-        </view>
-        <view class="memory-actions">
-          <text class="memory-text-action primary" :class="{ disabled: memoryLoading }" @click.stop="loadMemories">刷新记忆</text>
-          <text class="memory-text-action" @click="closeMemoryPanel">关闭面板</text>
-        </view>
-      </view>
-      <scroll-view class="memory-list" scroll-y>
-        <view v-if="memoryLoading" class="memory-state">
-          <view class="memory-spinner"></view>
-          <view class="memory-state-copy">
-            <text class="memory-state-title">正在加载记忆</text>
-            <text class="memory-state-text">同步你确认保存过的偏好和上下文</text>
-          </view>
-        </view>
-        <view v-else-if="memoryError" class="memory-state error">
-          <text class="memory-state-icon">!</text>
-          <view class="memory-state-copy">
-            <text class="memory-state-title">加载失败</text>
-            <text class="memory-state-text">{{ memoryError }}</text>
-          </view>
-          <button class="memory-retry" hover-class="memory-retry-hover" @click.stop="loadMemories">重试</button>
-        </view>
-        <view v-else-if="memories.length === 0" class="memory-empty">
-          <text class="memory-empty-icon">记</text>
-          <text class="memory-empty-title">暂时没有 AI 记忆</text>
-          <text class="memory-empty-text">只有经过你确认保存的偏好才会出现在这里。</text>
-        </view>
-        <view v-for="mem in memories" :key="mem.memId || mem.id" class="memory-item">
-          <view class="memory-main">
-            <view class="memory-item-head">
-              <text class="memory-tag">{{ mem.category || '偏好' }}</text>
-              <text class="memory-delete" :class="{ disabled: deletingMemoryId === (mem.memId || mem.id) }" @click="deleteMemory(mem)">
-                {{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}
-              </text>
+      <view class="memory-surface">
+        <view class="memory-header">
+          <view class="memory-heading-row">
+            <view class="memory-heading">
+              <text class="memory-title">AI 记忆</text>
+              <text class="memory-subtitle">{{ memoryPanelSubtitle }}</text>
             </view>
-            <text class="memory-content">{{ mem.content }}</text>
+            <button class="memory-icon-close" hover-class="memory-icon-close-hover" @click.stop="closeMemoryPanel">×</button>
+          </view>
+          <view class="memory-actions">
+            <text class="memory-text-action primary" :class="{ disabled: memoryLoading }" @click.stop="loadMemories">刷新记忆</text>
           </view>
         </view>
-      </scroll-view>
+        <scroll-view class="memory-list" scroll-y>
+          <view v-if="memoryLoading" class="memory-state">
+            <view class="memory-spinner"></view>
+            <view class="memory-state-copy">
+              <text class="memory-state-title">正在加载记忆</text>
+              <text class="memory-state-text">同步你确认保存过的偏好和上下文</text>
+            </view>
+          </view>
+          <view v-else-if="memoryError" class="memory-state error">
+            <text class="memory-state-icon">!</text>
+            <view class="memory-state-copy">
+              <text class="memory-state-title">加载失败</text>
+              <text class="memory-state-text">{{ memoryError }}</text>
+            </view>
+            <button class="memory-retry" hover-class="memory-retry-hover" @click.stop="loadMemories">重试</button>
+          </view>
+          <view v-else-if="memories.length === 0" class="memory-empty">
+            <text class="memory-empty-icon">记</text>
+            <text class="memory-empty-title">暂时没有 AI 记忆</text>
+            <text class="memory-empty-text">只有经过你确认保存的偏好才会出现在这里。</text>
+          </view>
+          <view v-for="mem in memories" :key="mem.memId || mem.id" class="memory-item">
+            <view class="memory-main">
+              <view class="memory-item-head">
+                <text class="memory-tag">{{ mem.category || '偏好' }}</text>
+                <text class="memory-delete" :class="{ disabled: deletingMemoryId === (mem.memId || mem.id) }" @click="deleteMemory(mem)">
+                  {{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}
+                </text>
+              </view>
+              <text class="memory-content">{{ mem.content }}</text>
+            </view>
+          </view>
+        </scroll-view>
+      </view>
     </view>
   </view>
 </template>
@@ -4658,6 +4660,7 @@ onUnmounted(detachActiveStream)
 
 .tool-btn-hover,
 .inline-map-control-hover,
+.memory-icon-close-hover,
 .memory-retry-hover {
   background: rgba(31, 68, 122, 0.12) !important;
   border-color: rgba(31, 68, 122, 0.2) !important;
@@ -4840,27 +4843,40 @@ onUnmounted(detachActiveStream)
 }
 
 .memory-mask {
-  position: absolute;
-  inset: 0;
-  z-index: 40;
+  position: fixed;
+  top: 0;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 998;
   background: rgba(15, 23, 42, 0.46);
   backdrop-filter: blur(4rpx);
 }
 
 .memory-panel {
-  position: absolute;
-  top: 0;
-  right: 0;
-  bottom: 0;
-  z-index: 41;
-  width: 680rpx;
+  position: fixed;
+  top: calc(24rpx + env(safe-area-inset-top));
+  right: calc(24rpx + env(safe-area-inset-right));
+  bottom: calc(24rpx + env(safe-area-inset-bottom));
+  z-index: 999;
+  width: min(680rpx, calc(100vw - 48rpx));
   max-width: 92vw;
+  display: block;
+  box-sizing: border-box;
+}
+
+.memory-surface {
+  width: 100%;
+  height: 100%;
   background: rgba(248, 251, 255, 0.96);
-  border-left: 1rpx solid rgba(148, 163, 184, 0.22);
-  box-shadow: -18rpx 0 48rpx rgba(15, 23, 42, 0.18);
+  background-color: rgba(248, 251, 255, 0.96);
+  border: 1rpx solid rgba(148, 163, 184, 0.22);
+  border-radius: 28rpx;
+  box-shadow: -18rpx 0 48rpx rgba(15, 23, 42, 0.18), 0 20rpx 58rpx rgba(15, 23, 42, 0.16);
   display: flex;
   flex-direction: column;
   overflow: hidden;
+  box-sizing: border-box;
 }
 
 .memory-header {
@@ -4886,7 +4902,7 @@ onUnmounted(detachActiveStream)
   width: 100%;
   min-width: 0;
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   justify-content: space-between;
   gap: 14rpx;
 }
@@ -4912,6 +4928,23 @@ onUnmounted(detachActiveStream)
   gap: 10rpx;
   justify-content: flex-start;
   flex-wrap: wrap;
+}
+
+.memory-icon-close {
+  flex: 0 0 auto;
+  width: 58rpx;
+  height: 58rpx;
+  padding: 0;
+  border: 1rpx solid rgba(148, 163, 184, 0.24);
+  border-radius: 18rpx;
+  background: rgba(255, 255, 255, 0.82);
+  color: #475467;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 34rpx;
+  font-weight: 900;
+  line-height: 56rpx;
 }
 
 .memory-text-action {
@@ -4945,6 +4978,7 @@ onUnmounted(detachActiveStream)
 }
 
 .memory-retry::after,
+.memory-icon-close::after,
 .memory-delete::after {
   border: none;
 }
@@ -4952,6 +4986,7 @@ onUnmounted(detachActiveStream)
 .memory-list {
   flex: 1;
   height: 0;
+  min-height: 0;
   padding: 20rpx 24rpx 28rpx;
   box-sizing: border-box;
   scrollbar-color: rgba(96, 165, 250, 0.42) rgba(15, 23, 42, 0.48);
@@ -5169,6 +5204,39 @@ onUnmounted(detachActiveStream)
 }
 
 @media screen and (max-width: 520px) {
+  .memory-panel {
+    top: auto;
+    right: calc(18rpx + env(safe-area-inset-right));
+    bottom: calc(18rpx + env(safe-area-inset-bottom));
+    left: calc(18rpx + env(safe-area-inset-left));
+    width: auto;
+    max-width: none;
+    height: min(78vh, 860rpx);
+    border-radius: 32rpx 32rpx 24rpx 24rpx;
+    box-shadow: 0 -18rpx 56rpx rgba(15, 23, 42, 0.24);
+  }
+
+  .memory-surface {
+    border-radius: 32rpx 32rpx 24rpx 24rpx;
+    box-shadow: 0 -18rpx 56rpx rgba(15, 23, 42, 0.24);
+  }
+
+  .memory-header {
+    min-height: auto;
+    padding: 22rpx 24rpx 18rpx;
+  }
+
+  .memory-list {
+    padding: 18rpx 20rpx 24rpx;
+  }
+
+  .memory-icon-close {
+    width: 54rpx;
+    height: 54rpx;
+    border-radius: 16rpx;
+    font-size: 32rpx;
+  }
+
   .agent-live-bar {
     align-items: flex-start;
   }
@@ -5220,6 +5288,7 @@ onUnmounted(detachActiveStream)
   .starter-card:hover,
   .inline-map-control:hover,
   .inline-map-open:hover,
+  .memory-icon-close:hover,
   .memory-text-action:hover,
   .memory-retry:hover {
     background: rgba(31, 68, 122, 0.12);
@@ -5248,6 +5317,7 @@ onUnmounted(detachActiveStream)
   .back-button,
   .top-action,
   .picker-view,
+  .memory-icon-close,
   .tool-btn.subtle {
     background: rgba(148, 163, 184, 0.12);
     border-color: rgba(148, 163, 184, 0.22);
@@ -5296,8 +5366,9 @@ onUnmounted(detachActiveStream)
   .artifact-card,
   .starter-card,
   .inline-map-card,
-  .memory-panel {
+  .memory-surface {
     background: #172235 !important;
+    background-color: #172235 !important;
     color: #edf4ff !important;
     border-color: rgba(148, 163, 184, 0.22) !important;
     box-shadow: 0 16rpx 34rpx rgba(0, 0, 0, 0.22) !important;
@@ -5637,6 +5708,7 @@ onUnmounted(detachActiveStream)
   .reply-action,
   .inline-map-control,
   .inline-map-open,
+  .memory-icon-close,
   .memory-text-action,
   .memory-retry,
   .markdown-body :deep(.map-card-action),
@@ -5698,6 +5770,8 @@ onUnmounted(detachActiveStream)
   .inline-map-control:hover,
   .inline-map-open-hover,
   .inline-map-open:hover,
+  .memory-icon-close-hover,
+  .memory-icon-close:hover,
   .memory-text-action:hover,
   .memory-retry:hover {
     background: #1f2d44 !important;
