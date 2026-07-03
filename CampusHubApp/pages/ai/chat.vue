@@ -603,6 +603,7 @@ const getFollowupSuggestions = (message) => {
 let activeStreamController = null
 let activeMapDrag = null
 let streamStateSyncTimer = null
+let hashChangeHandler = null
 
 const AGENT_EVENT_TITLES = {
   agent_step: '智能体执行中',
@@ -1092,7 +1093,7 @@ const conversationTitles = computed(() => {
 })
 
 const currentConversationIndex = computed(() => {
-  const index = conversations.value.findIndex(item => item.cid === currentCid.value)
+  const index = conversations.value.findIndex(item => Number(item.cid) === Number(currentCid.value))
   return index >= 0 ? index : 0
 })
 
@@ -1180,13 +1181,39 @@ const switchConversation = async (cid) => {
   await loadMessages(cid)
 }
 
-const loadConversations = async (selectFirst = false, { reloadCurrent = true } = {}) => {
+const normalizeConversationId = (value) => {
+  const cid = Number(value)
+  return Number.isFinite(cid) && cid > 0 ? cid : null
+}
+
+const getPreferredConversationId = (options = {}) => {
+  const optionCid = normalizeConversationId(options.cid || options.conversationId)
+  if (optionCid) return optionCid
+
+  // #ifdef H5
+  if (typeof window !== 'undefined') {
+    const query = String(window.location.hash || '').split('?')[1]?.split('#')[0] || ''
+    const params = new URLSearchParams(query)
+    return normalizeConversationId(params.get('cid') || params.get('conversationId'))
+  }
+  // #endif
+
+  return null
+}
+
+const loadConversations = async (selectFirst = false, { reloadCurrent = true, preferredCid = null } = {}) => {
   if (!ensureLogin()) return
 
   const list = await aiApi.listConversations()
   conversations.value = normalizeList(list)
 
-  const currentExists = conversations.value.some(item => item.cid === currentCid.value)
+  const targetCid = normalizeConversationId(preferredCid)
+  if (targetCid && conversations.value.some(item => Number(item.cid) === targetCid)) {
+    await switchConversation(targetCid)
+    return
+  }
+
+  const currentExists = conversations.value.some(item => Number(item.cid) === Number(currentCid.value))
   if (currentCid.value && currentExists) {
     if (reloadCurrent) {
       await loadMessages(currentCid.value)
@@ -1201,6 +1228,24 @@ const loadConversations = async (selectFirst = false, { reloadCurrent = true } =
     currentCid.value = null
     messages.value = []
   }
+}
+
+const applyPreferredConversationFromRoute = async (options = {}) => {
+  const preferredCid = getPreferredConversationId(options)
+  if (!preferredCid || preferredCid === Number(currentCid.value)) return false
+
+  if (!conversations.value.length) {
+    await loadConversations(true, { preferredCid })
+    return true
+  }
+
+  if (conversations.value.some(item => Number(item.cid) === preferredCid)) {
+    await switchConversation(preferredCid)
+    return true
+  }
+
+  await loadConversations(false, { preferredCid, reloadCurrent: false })
+  return Number(currentCid.value) === preferredCid
 }
 
 const createConversation = async () => {
@@ -2063,20 +2108,52 @@ const handleRichTextItemClick = (event) => {
   }
 }
 
-onLoad(async () => {
+onLoad(async (options = {}) => {
   inputText.value = uni.getStorageSync(DRAFT_KEY) || ''
   try {
-    await loadConversations(true)
+    const preferredCid = getPreferredConversationId(options)
+    await loadConversations(true, { preferredCid })
+    bindHashChangeHandler()
     startStreamStateSync()
   } catch (error) {
     showError(error.message || '加载 AI 会话失败')
   }
 })
 
-onShow(() => {
-  syncStoredStreamMessage()
-  startStreamStateSync()
+onShow(async () => {
+  try {
+    const switched = await applyPreferredConversationFromRoute()
+    if (!switched) {
+      syncStoredStreamMessage()
+    }
+    bindHashChangeHandler()
+    startStreamStateSync()
+  } catch (error) {
+    showError(error.message || '切换 AI 会话失败')
+  }
 })
+
+const bindHashChangeHandler = () => {
+  // #ifdef H5
+  if (hashChangeHandler || typeof window === 'undefined') return
+  hashChangeHandler = async () => {
+    try {
+      await applyPreferredConversationFromRoute()
+    } catch (error) {
+      showError(error.message || '切换 AI 会话失败')
+    }
+  }
+  window.addEventListener('hashchange', hashChangeHandler)
+  // #endif
+}
+
+const unbindHashChangeHandler = () => {
+  // #ifdef H5
+  if (!hashChangeHandler || typeof window === 'undefined') return
+  window.removeEventListener('hashchange', hashChangeHandler)
+  hashChangeHandler = null
+  // #endif
+}
 
 const startStreamStateSync = () => {
   if (streamStateSyncTimer) return
@@ -2092,6 +2169,7 @@ const stopStreamStateSync = () => {
 const detachActiveStream = () => {
   activeStreamController = null
   stopStreamStateSync()
+  unbindHashChangeHandler()
 }
 
 onUnload(detachActiveStream)
