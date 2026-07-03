@@ -2445,6 +2445,25 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
         })
         return analysis
 
+    contextual_content_analysis = _detect_contextual_content_interact_shortcut(history, user_message)
+    if contextual_content_analysis:
+        analysis = _normalize_intent_analysis(contextual_content_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_contextual_content",
+            "title": "沿用动态结果生成互动草稿",
+            "detail": "识别到用户选中了上一轮动态候选，先生成评论或点赞确认草稿",
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
     safety_analysis = _detect_safety_intent_shortcut(user_message)
     if safety_analysis:
         analysis = _normalize_intent_analysis(safety_analysis)
@@ -2891,6 +2910,180 @@ def _extract_contextual_order_selection(history: list, user_message: str) -> dic
     return _match_recent_order_candidate(candidates, user_message)
 
 
+def _extract_content_id_reference(text: str) -> int | None:
+    text = str(text or "")
+    patterns = (
+        r"(?:动态|帖子|内容)\s*(?:ID|id|编号|#|号)?\s*[:：#]?\s*(\d+)",
+        r"\bcontent\s*#?\s*(\d+)\b",
+        r"/contents/(\d+)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _extract_recent_content_candidates(history: list) -> list[dict]:
+    """Recover recent content-result candidates so follow-up comments/likes keep target context."""
+    candidates: list[dict] = []
+    seen: set[str] = set()
+
+    def add_candidate(content_id: str, author: str = "", text: str = "") -> None:
+        content_id = str(content_id or "").strip()
+        if not content_id or content_id in seen:
+            return
+        seen.add(content_id)
+        candidates.append({
+            "id": content_id,
+            "author": str(author or "").strip(),
+            "text": str(text or "").strip(),
+        })
+
+    for item in reversed(history or []):
+        if not isinstance(item, dict) or item.get("role") == "user":
+            continue
+        content = str(item.get("content") or "")
+        if not content:
+            continue
+
+        parsed_contents = _parse_content_result_lines(content)
+        for entry in parsed_contents:
+            add_candidate(entry.get("id"), entry.get("author"), entry.get("text"))
+
+        if not parsed_contents:
+            for line in content.splitlines():
+                match = re.search(r"(?:动态|帖子|内容)\s*#?\s*(\d+)", line, flags=re.IGNORECASE)
+                if not match:
+                    continue
+                add_candidate(match.group(1), text=line.strip())
+
+        if candidates:
+            break
+    return candidates[:5]
+
+
+def _content_candidate_aliases(candidate: dict) -> list[str]:
+    content_id = str(candidate.get("id") or "").strip()
+    aliases = []
+    if content_id:
+        aliases.extend([content_id, f"动态{content_id}", f"动态#{content_id}", f"content{content_id}", f"content#{content_id}"])
+    for key in ("author", "text"):
+        value = str(candidate.get(key) or "").strip()
+        if not value:
+            continue
+        aliases.append(value)
+        for part in re.split(r"[|｜·,，:：\s]+", value):
+            part = part.strip()
+            if len(part) >= 2:
+                aliases.append(part)
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        normalized = _normalize_map_match_text(alias)
+        if len(normalized) < 2 or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(alias)
+    return unique
+
+
+def _match_recent_content_candidate(candidates: list[dict], user_message: str) -> dict | None:
+    explicit_id = _extract_content_id_reference(user_message)
+    if explicit_id:
+        for candidate in candidates or []:
+            if str(candidate.get("id") or "") == str(explicit_id):
+                return candidate
+        return {"id": str(explicit_id)}
+
+    selected_index = _map_selection_index(user_message)
+    if selected_index is not None:
+        if selected_index < len(candidates or []):
+            return candidates[selected_index]
+        return None
+
+    user_text = _normalize_map_match_text(user_message)
+    if not user_text:
+        return None
+
+    scored: list[tuple[int, int, dict]] = []
+    for index, candidate in enumerate(candidates or []):
+        best_score = 0
+        for alias in _content_candidate_aliases(candidate):
+            normalized_alias = _normalize_map_match_text(alias)
+            if normalized_alias and normalized_alias in user_text:
+                best_score = max(best_score, len(normalized_alias))
+        if best_score:
+            scored.append((best_score, -index, candidate))
+
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][2]
+
+
+def _extract_contextual_content_selection(history: list, user_message: str) -> dict | None:
+    candidates = _extract_recent_content_candidates(history)
+    return _match_recent_content_candidate(candidates, user_message)
+
+
+def _extract_inline_comment_text(text: str) -> str:
+    text = str(text or "").strip()
+    patterns = (
+        r"(?:评论(?:一下|一条|一句)?|回复(?:一下|一条|一句)?|留言(?:一下|一条|一句)?)[：:，,]?\s*(.{2,120})$",
+        r"(?:帮我|给我)?(?:回一句|回一条)[：:，,]?\s*(.{2,120})$",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text)
+        if not match:
+            continue
+        value = re.sub(r"(?:先生成确认草稿|不要直接发布|发布前先确认|先让我确认).*$", "", match.group(1)).strip()
+        value = value.strip("：:，,。.!！ ")
+        if value and not _has_any(value, ("评论", "回复", "留言", "点赞", "确认草稿")):
+            return value[:120]
+    return ""
+
+
+def _detect_contextual_content_interact_shortcut(history: list, user_message: str) -> dict | None:
+    """Route follow-ups like '就第一条评论一下' to a safe content interaction draft."""
+    text = " ".join(str(user_message or "").split())
+    if not text or _contains_blocking_write_negation(text):
+        return None
+    selected_content = _extract_contextual_content_selection(history, text)
+    if not selected_content:
+        return None
+
+    lowered = text.lower()
+    comment_cues = ("评论", "回复", "回一句", "回一条", "留言", "comment", "reply")
+    like_cues = ("点赞", "赞一下", "点个赞", "like")
+    wants_comment = _has_any(lowered, comment_cues)
+    wants_like = _has_any(lowered, like_cues)
+    if not wants_comment and not wants_like:
+        return None
+
+    missing_slots = []
+    if wants_comment and not _extract_inline_comment_text(text):
+        missing_slots.append("评论内容")
+
+    return {
+        "primary_intent": "content.interact",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "confidence": 0.9,
+        "summary": "用户想基于上一轮动态搜索结果进行评论或点赞",
+        "missing_slots": missing_slots,
+        "suggested_agents": ["content_draft"],
+        "next_action": "prepare_draft",
+        "reviewed": False,
+        "contextual_content_shortcut": True,
+        "router_timeout": False,
+    }
+
+
 def _infer_activity_label(text: str) -> str:
     lowered = str(text or "").lower()
     activity_rules = [
@@ -3037,6 +3230,52 @@ def _enrich_order_confirmation_fields(
     if group_size:
         _set_artifact_field(enriched_fields, ("参与人数", "人数", "人"), "参与人数", f"{group_size}人")
         enriched_missing = _drop_missing_fields(enriched_missing, ("参与人数", "人数", "人"))
+
+    return enriched_fields, enriched_missing
+
+
+def _enrich_content_confirmation_fields(
+    fields: list,
+    missing_fields: list,
+    history: list,
+    user_message: str,
+    intent_analysis: dict,
+) -> tuple[list, list]:
+    primary_intent = (intent_analysis.get("primary_intent") or "").lower()
+    if primary_intent != "content.interact":
+        return fields, missing_fields
+
+    enriched_fields = [dict(item) if isinstance(item, dict) else item for item in (fields or [])]
+    enriched_missing = list(missing_fields or [])
+    selected_content = _extract_contextual_content_selection(history, user_message) or {}
+    selected_content_id = str(selected_content.get("id") or "").strip()
+    content_id = _extract_content_id_reference(user_message)
+    if not content_id and selected_content_id.isdigit():
+        content_id = int(selected_content_id)
+
+    if content_id:
+        _set_artifact_field(enriched_fields, ("动态ID", "帖子ID", "内容ID"), "动态ID", str(content_id))
+        enriched_missing = _drop_missing_fields(enriched_missing, ("动态ID", "帖子ID", "内容ID"))
+
+    summary_parts = []
+    author = str(selected_content.get("author") or "").strip()
+    text = str(selected_content.get("text") or "").strip()
+    if author:
+        summary_parts.append(author)
+    if text:
+        summary_parts.append(text)
+    if summary_parts:
+        _set_artifact_field(enriched_fields, ("动态信息", "动态摘要", "帖子信息", "内容信息"), "动态信息", " — ".join(summary_parts))
+
+    inline_comment = _extract_inline_comment_text(user_message)
+    if inline_comment:
+        _set_artifact_field(
+            enriched_fields,
+            ("评论内容", "评论文本", "回复内容", "留言内容"),
+            "评论内容",
+            inline_comment,
+        )
+        enriched_missing = _drop_missing_fields(enriched_missing, ("评论内容", "评论文本", "回复内容", "留言内容"))
 
     return enriched_fields, enriched_missing
 
@@ -4161,6 +4400,13 @@ async def build_confirmation_artifact(
         raw_fields,
         missing_fields,
         user_info,
+        history,
+        user_message,
+        intent_analysis,
+    )
+    raw_fields, missing_fields = _enrich_content_confirmation_fields(
+        raw_fields,
+        missing_fields,
         history,
         user_message,
         intent_analysis,

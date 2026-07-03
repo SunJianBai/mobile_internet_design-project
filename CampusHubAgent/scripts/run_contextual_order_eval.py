@@ -64,11 +64,28 @@ ORDER_HISTORY = [
     },
 ]
 
+CONTENT_HISTORY = [
+    {
+        "role": "user",
+        "content": "搜索一下关于自习的校园动态",
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "找到 2 条动态：\n\n"
+            "- **[动态#77](/contents/77)** by 小白 — 今晚图书馆二楼自习，有同学一起吗\n"
+            "- **[动态#78](/contents/78)** by 晚风 — 求一个自习搭子，期末周互相监督"
+        ),
+    },
+]
+
 FOLLOWUP_MESSAGE = "就第一家吧，帮我约三个人，明晚八点，先生成草稿"
 SECOND_FOLLOWUP_MESSAGE = "就第二家吧，帮我约三个人，周六晚上8点，先生成草稿"
 NAMED_FOLLOWUP_MESSAGE = "还是选悦康足道，帮我创建一个4人的按摩约伴，明晚八点，先生成草稿"
 ORDER_APPLY_FOLLOWUP_MESSAGE = "就第二个吧，帮我报名，先生成确认草稿，不要直接提交"
 ORDER_APPLY_NAMED_MESSAGE = "羽毛球馆那个约伴我想加入，先让我确认"
+CONTENT_COMMENT_FOLLOWUP_MESSAGE = "就第一条帮我评论一下：我也想去，先让我确认"
+CONTENT_LIKE_NAMED_MESSAGE = "小白那条动态帮我点个赞，先确认"
 
 MAP_ACTION_MESSAGE = (
     "我想基于刚才查询到的这个地点创建一个约伴订单草稿。\n"
@@ -120,6 +137,32 @@ class FakeApplyRouter:
             "action_kind": "order.apply",
             "fields": [{"label": "申请留言", "value": "我会准时到"}],
             "missing_fields": ["订单ID"],
+            "reply": "",
+        }
+        return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
+
+
+class FakeCommentRouter:
+    async def ainvoke(self, _messages):
+        content = {
+            "title": "确认评论动态",
+            "description": "用户想基于上一轮动态搜索结果发表评论。",
+            "action_kind": "content.comment",
+            "fields": [],
+            "missing_fields": ["动态ID", "评论内容"],
+            "reply": "",
+        }
+        return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
+
+
+class FakeLikeRouter:
+    async def ainvoke(self, _messages):
+        content = {
+            "title": "确认点赞动态",
+            "description": "用户想基于上一轮动态搜索结果点赞。",
+            "action_kind": "content.like",
+            "fields": [],
+            "missing_fields": ["动态ID"],
             "reply": "",
         }
         return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
@@ -205,6 +248,32 @@ async def scenario_selects_named_order_candidate() -> EvalResult:
     return EvalResult("selects_named_order_candidate", not failures, failures, actual)
 
 
+async def scenario_selects_first_content_candidate() -> EvalResult:
+    from app import agent as agent_module
+
+    candidate = agent_module._extract_contextual_content_selection(CONTENT_HISTORY, CONTENT_COMMENT_FOLLOWUP_MESSAGE)
+    actual = {"candidate": candidate}
+    failures: list[str] = []
+    if not candidate:
+        failures.append("expected a selected content candidate")
+    elif candidate.get("id") != "77":
+        failures.append(f"expected first content id 77, got {candidate.get('id')!r}")
+    return EvalResult("selects_first_content_candidate", not failures, failures, actual)
+
+
+async def scenario_selects_named_content_candidate() -> EvalResult:
+    from app import agent as agent_module
+
+    candidate = agent_module._extract_contextual_content_selection(CONTENT_HISTORY, CONTENT_LIKE_NAMED_MESSAGE)
+    actual = {"candidate": candidate}
+    failures: list[str] = []
+    if not candidate:
+        failures.append("expected a named content candidate")
+    elif candidate.get("id") != "77":
+        failures.append(f"expected named content id 77, got {candidate.get('id')!r}")
+    return EvalResult("selects_named_content_candidate", not failures, failures, actual)
+
+
 async def scenario_contextual_intent_routes_to_order_create() -> EvalResult:
     from app import agent as agent_module
 
@@ -251,6 +320,28 @@ async def scenario_map_action_payload_routes_to_order_create() -> EvalResult:
     if not analysis.get("contextual_map_shortcut"):
         failures.append("expected contextual_map_shortcut marker")
     return EvalResult("map_action_payload_routes_to_order_create", not failures, failures, actual)
+
+
+async def scenario_contextual_content_comment_routes_to_confirmed_write() -> EvalResult:
+    from app import agent as agent_module
+
+    agent_module._intent_cache.clear()
+    analysis = await agent_module.analyze_intent(DEFAULT_USER, [], CONTENT_HISTORY, CONTENT_COMMENT_FOLLOWUP_MESSAGE)
+    actual = dict(analysis)
+    failures: list[str] = []
+    expected = {
+        "primary_intent": "content.interact",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "next_action": "prepare_draft",
+    }
+    for key, value in expected.items():
+        if actual.get(key) != value:
+            failures.append(f"{key}: expected {value!r}, got {actual.get(key)!r}")
+    if not actual.get("contextual_content_shortcut"):
+        failures.append("expected contextual_content_shortcut marker")
+    return EvalResult("contextual_content_comment_routes_to_confirmed_write", not failures, failures, actual)
 
 
 async def scenario_contextual_order_apply_routes_to_confirmed_write() -> EvalResult:
@@ -406,6 +497,94 @@ async def scenario_confirmation_enriches_order_apply_fields() -> EvalResult:
     if artifact.get("missingFields"):
         failures.append(f"expected no missing fields after order selection enrichment, got {artifact.get('missingFields')!r}")
     return EvalResult("confirmation_enriches_order_apply_fields", not failures, failures, actual)
+
+
+async def scenario_confirmation_enriches_content_comment_fields() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeCommentRouter()
+    try:
+        analysis = {
+            "primary_intent": "content.interact",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            CONTENT_HISTORY,
+            CONTENT_COMMENT_FOLLOWUP_MESSAGE,
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "actionKind": artifact.get("actionKind"),
+        "fields": fields,
+        "missingFields": artifact.get("missingFields") or [],
+        "reply": artifact.get("reply"),
+    }
+    failures: list[str] = []
+    if artifact.get("actionKind") != "content.comment":
+        failures.append(f"expected content.comment actionKind, got {artifact.get('actionKind')!r}")
+    if fields.get("动态ID") != "77":
+        failures.append(f"expected selected content id 77, got {fields.get('动态ID')!r}")
+    if "小白" not in fields.get("动态信息", ""):
+        failures.append(f"expected selected content summary with 小白, got {fields.get('动态信息')!r}")
+    if "我也想去" not in fields.get("评论内容", ""):
+        failures.append(f"expected inline comment text, got {fields.get('评论内容')!r}")
+    if artifact.get("missingFields"):
+        failures.append(f"expected no missing fields after content comment enrichment, got {artifact.get('missingFields')!r}")
+    return EvalResult("confirmation_enriches_content_comment_fields", not failures, failures, actual)
+
+
+async def scenario_confirmation_enriches_content_like_fields() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeLikeRouter()
+    try:
+        analysis = {
+            "primary_intent": "content.interact",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            CONTENT_HISTORY,
+            CONTENT_LIKE_NAMED_MESSAGE,
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "actionKind": artifact.get("actionKind"),
+        "fields": fields,
+        "missingFields": artifact.get("missingFields") or [],
+        "reply": artifact.get("reply"),
+    }
+    failures: list[str] = []
+    if artifact.get("actionKind") != "content.like":
+        failures.append(f"expected content.like actionKind, got {artifact.get('actionKind')!r}")
+    if fields.get("动态ID") != "77":
+        failures.append(f"expected selected content id 77, got {fields.get('动态ID')!r}")
+    if "小白" not in fields.get("动态信息", ""):
+        failures.append(f"expected selected content summary with 小白, got {fields.get('动态信息')!r}")
+    if artifact.get("missingFields"):
+        failures.append(f"expected no missing fields after content like enrichment, got {artifact.get('missingFields')!r}")
+    return EvalResult("confirmation_enriches_content_like_fields", not failures, failures, actual)
 
 
 async def scenario_high_confidence_gated_write_skips_review() -> EvalResult:
@@ -658,12 +837,17 @@ async def run_all() -> list[EvalResult]:
         scenario_selects_named_map_candidate,
         scenario_selects_second_order_candidate,
         scenario_selects_named_order_candidate,
+        scenario_selects_first_content_candidate,
+        scenario_selects_named_content_candidate,
         scenario_contextual_intent_routes_to_order_create,
         scenario_map_action_payload_routes_to_order_create,
+        scenario_contextual_content_comment_routes_to_confirmed_write,
         scenario_contextual_order_apply_routes_to_confirmed_write,
         scenario_confirmation_enriches_map_fields,
         scenario_named_confirmation_enriches_map_fields,
         scenario_confirmation_enriches_order_apply_fields,
+        scenario_confirmation_enriches_content_comment_fields,
+        scenario_confirmation_enriches_content_like_fields,
         scenario_high_confidence_gated_write_skips_review,
         scenario_confirmed_action_kind_marker_wins,
         scenario_confirmation_infers_manage_action_kind,
