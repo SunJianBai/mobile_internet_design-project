@@ -283,18 +283,44 @@
     <view v-if="showMemoryPanel" class="memory-mask" @click="closeMemoryPanel"></view>
     <view v-if="showMemoryPanel" class="memory-panel">
       <view class="memory-header">
-        <text class="memory-title">AI 记忆</text>
-        <button class="memory-close" @click="closeMemoryPanel">关闭</button>
+        <view class="memory-heading">
+          <text class="memory-title">AI 记忆</text>
+          <text class="memory-subtitle">{{ memoryPanelSubtitle }}</text>
+        </view>
+        <view class="memory-actions">
+          <button class="memory-icon-btn" :disabled="memoryLoading" @click.stop="loadMemories">刷新</button>
+          <button class="memory-icon-btn ghost" @click="closeMemoryPanel">关闭</button>
+        </view>
       </view>
       <scroll-view class="memory-list" scroll-y>
-        <view v-if="memoryLoading" class="memory-empty">加载中...</view>
-        <view v-else-if="memories.length === 0" class="memory-empty">AI 还没有记住关于你的任何信息</view>
+        <view v-if="memoryLoading" class="memory-state">
+          <view class="memory-spinner"></view>
+          <view class="memory-state-copy">
+            <text class="memory-state-title">正在加载记忆</text>
+            <text class="memory-state-text">同步你确认保存过的偏好和上下文</text>
+          </view>
+        </view>
+        <view v-else-if="memoryError" class="memory-state error">
+          <text class="memory-state-icon">!</text>
+          <view class="memory-state-copy">
+            <text class="memory-state-title">加载失败</text>
+            <text class="memory-state-text">{{ memoryError }}</text>
+          </view>
+          <button class="memory-retry" @click.stop="loadMemories">重试</button>
+        </view>
+        <view v-else-if="memories.length === 0" class="memory-empty">
+          <text class="memory-empty-icon">记</text>
+          <text class="memory-empty-title">暂时没有 AI 记忆</text>
+          <text class="memory-empty-text">只有经过你确认保存的偏好才会出现在这里。</text>
+        </view>
         <view v-for="mem in memories" :key="mem.memId || mem.id" class="memory-item">
           <view class="memory-main">
             <text class="memory-tag">{{ mem.category || '偏好' }}</text>
             <text class="memory-content">{{ mem.content }}</text>
           </view>
-          <button class="memory-delete" @click="deleteMemory(mem)">删除</button>
+          <button class="memory-delete" :disabled="deletingMemoryId === (mem.memId || mem.id)" @click="deleteMemory(mem)">
+            {{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}
+          </button>
         </view>
       </scroll-view>
     </view>
@@ -317,6 +343,8 @@ const memories = ref([])
 const inputText = ref('')
 const loading = ref(false)
 const memoryLoading = ref(false)
+const memoryError = ref('')
+const deletingMemoryId = ref(null)
 const showMemoryPanel = ref(false)
 const scrollTop = ref(0)
 const mapStates = ref({})
@@ -628,6 +656,12 @@ const currentConversationIndex = computed(() => {
 const currentConversationTitle = computed(() => {
   if (!conversations.value.length) return '暂无对话'
   return conversationTitles.value[currentConversationIndex.value]
+})
+
+const memoryPanelSubtitle = computed(() => {
+  if (memoryLoading.value) return '正在同步'
+  if (memoryError.value) return '需要重试'
+  return memories.value.length ? `${memories.value.length} 条长期记忆` : '发布前确认后才会保存'
 })
 
 const normalizeList = (value) => {
@@ -1095,11 +1129,13 @@ const sendMessage = async () => {
 
 const loadMemories = async () => {
   memoryLoading.value = true
+  memoryError.value = ''
   try {
     const list = await aiApi.getMemories()
     memories.value = normalizeList(list)
   } catch (error) {
-    showError(error.message || '加载记忆失败')
+    memoryError.value = error.message || '加载记忆失败'
+    showError(memoryError.value)
   } finally {
     memoryLoading.value = false
   }
@@ -1118,7 +1154,7 @@ const closeMemoryPanel = () => {
 
 const deleteMemory = (mem) => {
   const memoryId = mem.memId || mem.id
-  if (!memoryId) return
+  if (!memoryId || deletingMemoryId.value) return
 
   uni.showModal({
     title: '删除记忆',
@@ -1127,11 +1163,14 @@ const deleteMemory = (mem) => {
       if (!res.confirm) return
 
       try {
+        deletingMemoryId.value = memoryId
         await aiApi.deleteMemory(memoryId)
         memories.value = memories.value.filter(item => (item.memId || item.id) !== memoryId)
         showSuccess('已删除')
       } catch (error) {
         showError(error.message || '删除失败')
+      } finally {
+        deletingMemoryId.value = null
       }
     }
   })
@@ -2946,8 +2985,9 @@ onUnmounted(detachActiveStream)
 .memory-mask {
   position: absolute;
   inset: 0;
-  z-index: 10;
-  background: rgba(0, 0, 0, 0.35);
+  z-index: 40;
+  background: rgba(15, 23, 42, 0.46);
+  backdrop-filter: blur(4rpx);
 }
 
 .memory-panel {
@@ -2955,61 +2995,194 @@ onUnmounted(detachActiveStream)
   top: 0;
   right: 0;
   bottom: 0;
-  z-index: 11;
-  width: 620rpx;
-  max-width: 86%;
-  background: #ffffff;
-  box-shadow: -8rpx 0 24rpx rgba(0, 0, 0, 0.12);
+  z-index: 41;
+  width: 680rpx;
+  max-width: 92vw;
+  background: rgba(248, 251, 255, 0.96);
+  border-left: 1rpx solid rgba(148, 163, 184, 0.22);
+  box-shadow: -18rpx 0 48rpx rgba(15, 23, 42, 0.18);
   display: flex;
   flex-direction: column;
+  overflow: hidden;
 }
 
 .memory-header {
-  height: 96rpx;
+  min-height: 112rpx;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 28rpx;
-  border-bottom: 1rpx solid #e8edf5;
+  gap: 18rpx;
+  padding: 20rpx 28rpx;
+  border-bottom: 1rpx solid rgba(226, 232, 240, 0.9);
+}
+
+.memory-heading {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
 }
 
 .memory-title {
   font-size: 32rpx;
-  font-weight: 800;
+  font-weight: 900;
   color: #172033;
+  line-height: 1.25;
 }
 
-.memory-close {
+.memory-subtitle {
+  color: #667085;
+  font-size: 22rpx;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.memory-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+}
+
+.memory-icon-btn {
   height: 56rpx;
-  padding: 0 20rpx;
-  border: none;
-  border-radius: 999rpx;
+  min-width: 84rpx;
+  padding: 0 18rpx;
+  border: 1rpx solid #dbeafe;
+  border-radius: 14rpx;
   background: #edf4ff;
   color: #1f447a;
-  font-size: 24rpx;
-  line-height: 56rpx;
+  font-size: 22rpx;
+  font-weight: 900;
+  line-height: 54rpx;
+}
+
+.memory-icon-btn.ghost {
+  background: #ffffff;
+  color: #475467;
+  border-color: #e2e8f0;
+}
+
+.memory-icon-btn[disabled] {
+  opacity: 0.62;
+}
+
+.memory-icon-btn::after,
+.memory-retry::after,
+.memory-delete::after {
+  border: none;
 }
 
 .memory-list {
   flex: 1;
   height: 0;
-  padding: 12rpx 24rpx;
+  padding: 20rpx 24rpx 28rpx;
   box-sizing: border-box;
 }
 
+.memory-state,
 .memory-empty {
-  padding: 80rpx 20rpx;
-  text-align: center;
-  color: #8a94a6;
+  border: 1rpx dashed rgba(148, 163, 184, 0.42);
+  border-radius: 18rpx;
+  background: rgba(255, 255, 255, 0.78);
+  color: #667085;
+}
+
+.memory-state {
+  display: flex;
+  align-items: center;
+  gap: 18rpx;
+  padding: 24rpx;
+}
+
+.memory-state.error {
+  border-color: rgba(248, 113, 113, 0.45);
+  background: rgba(254, 242, 242, 0.82);
+}
+
+.memory-spinner,
+.memory-state-icon,
+.memory-empty-icon {
+  flex: 0 0 auto;
+  width: 56rpx;
+  height: 56rpx;
+  border-radius: 18rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.memory-spinner {
+  border: 5rpx solid #dbeafe;
+  border-top-color: #3768d8;
+  animation: memory-spin 0.85s linear infinite;
+}
+
+.memory-state-icon,
+.memory-empty-icon {
+  background: #edf4ff;
+  color: #1f447a;
   font-size: 26rpx;
+  font-weight: 900;
+}
+
+.memory-state-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.memory-state-title,
+.memory-empty-title {
+  color: #172033;
+  font-size: 26rpx;
+  font-weight: 900;
+  line-height: 1.35;
+}
+
+.memory-state-text,
+.memory-empty-text {
+  color: #667085;
+  font-size: 22rpx;
+  line-height: 1.5;
+}
+
+.memory-retry {
+  flex: 0 0 auto;
+  height: 52rpx;
+  padding: 0 18rpx;
+  border: 1rpx solid #bfdbfe;
+  border-radius: 14rpx;
+  background: #eff6ff;
+  color: #1d4ed8;
+  font-size: 22rpx;
+  font-weight: 900;
+  line-height: 50rpx;
+}
+
+.memory-empty {
+  min-height: 280rpx;
+  padding: 48rpx 24rpx;
+  text-align: center;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12rpx;
 }
 
 .memory-item {
   display: flex;
   align-items: flex-start;
   gap: 16rpx;
-  padding: 24rpx 0;
-  border-bottom: 1rpx solid #edf1f6;
+  padding: 20rpx;
+  margin-bottom: 14rpx;
+  border: 1rpx solid rgba(226, 232, 240, 0.96);
+  border-radius: 18rpx;
+  background: rgba(255, 255, 255, 0.88);
+  box-shadow: 0 10rpx 22rpx rgba(15, 23, 42, 0.05);
 }
 
 .memory-main {
@@ -3022,11 +3195,17 @@ onUnmounted(detachActiveStream)
 
 .memory-tag {
   align-self: flex-start;
-  padding: 4rpx 14rpx;
+  max-width: 100%;
+  padding: 5rpx 14rpx;
   border-radius: 999rpx;
   background: #edf4ff;
   color: #1f447a;
-  font-size: 22rpx;
+  font-size: 21rpx;
+  font-weight: 900;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .memory-content {
@@ -3034,18 +3213,36 @@ onUnmounted(detachActiveStream)
   color: #344054;
   line-height: 1.5;
   word-break: break-word;
+  overflow-wrap: anywhere;
 }
 
 .memory-delete {
   width: 96rpx;
   height: 52rpx;
-  border: none;
-  border-radius: 999rpx;
+  border: 1rpx solid transparent;
+  border-radius: 14rpx;
   background: #fff1f0;
   color: #b42318;
-  font-size: 24rpx;
-  line-height: 52rpx;
+  font-size: 22rpx;
+  font-weight: 900;
+  line-height: 50rpx;
   padding: 0;
+}
+
+.memory-delete[disabled] {
+  opacity: 0.55;
+}
+
+@keyframes memory-spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
+@media screen and (min-width: 768px) {
+  .memory-panel {
+    width: 420px;
+    max-width: 42vw;
+  }
 }
 
 @media (hover: hover) {
@@ -3057,7 +3254,8 @@ onUnmounted(detachActiveStream)
   .starter-card:hover,
   .inline-map-control:hover,
   .inline-map-open:hover,
-  .memory-close:hover {
+  .memory-icon-btn:hover,
+  .memory-retry:hover {
     background: rgba(31, 68, 122, 0.12);
   }
 
@@ -3245,7 +3443,8 @@ onUnmounted(detachActiveStream)
   .artifact-action,
   .inline-map-control,
   .inline-map-open,
-  .memory-close,
+  .memory-icon-btn,
+  .memory-retry,
   .markdown-body :deep(.map-card-action),
   .markdown-body :deep(.entity-link-card) {
     background: #101a2a;
@@ -3289,6 +3488,41 @@ onUnmounted(detachActiveStream)
 
   .memory-mask {
     background: rgba(0, 0, 0, 0.56);
+  }
+
+  .memory-subtitle,
+  .memory-state-text,
+  .memory-empty-text {
+    color: #94a3b8;
+  }
+
+  .memory-state,
+  .memory-empty,
+  .memory-item {
+    background: #101a2a;
+    border-color: rgba(148, 163, 184, 0.22);
+    box-shadow: 0 12rpx 26rpx rgba(0, 0, 0, 0.2);
+  }
+
+  .memory-state.error {
+    background: rgba(239, 68, 68, 0.1);
+    border-color: rgba(248, 113, 113, 0.28);
+  }
+
+  .memory-state-title,
+  .memory-empty-title {
+    color: #edf4ff;
+  }
+
+  .memory-state-icon,
+  .memory-empty-icon {
+    background: #223554;
+    color: #bfdbfe;
+  }
+
+  .memory-spinner {
+    border-color: rgba(96, 165, 250, 0.2);
+    border-top-color: #93c5fd;
   }
 
   .memory-tag {
