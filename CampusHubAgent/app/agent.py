@@ -951,18 +951,81 @@ def _extract_recent_map_candidates(history: list) -> list[dict]:
     return candidates[:5]
 
 
+def _normalize_map_match_text(text: str) -> str:
+    return re.sub(r"[\s\-_:：,，.。()（）【】\\[\\]「」\"'“”]+", "", str(text or "").lower())
+
+
+def _map_candidate_title_aliases(title: str) -> list[str]:
+    title = str(title or "").strip()
+    if not title:
+        return []
+
+    aliases: list[str] = [title]
+    for part in re.split(r"[()（）【】\\[\\]「」,，/／|｜\-—]+", title):
+        part = part.strip()
+        if len(part) >= 2:
+            aliases.append(part)
+
+    for alias in list(aliases):
+        simplified = re.sub(
+            r"(?:spa|会所|足道|按摩|推拿|养生|店|馆|餐厅|咖啡|影院|电影院|篮球场|体育馆)+$",
+            "",
+            alias,
+            flags=re.IGNORECASE,
+        ).strip()
+        if len(simplified) >= 2:
+            aliases.append(simplified)
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        normalized = _normalize_map_match_text(alias)
+        if len(normalized) < 2 or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(alias)
+    return unique
+
+
+def _match_recent_map_candidate_by_name(candidates: list[dict], user_message: str) -> dict | None:
+    user_text = _normalize_map_match_text(user_message)
+    if not user_text:
+        return None
+
+    scored: list[tuple[int, int, dict]] = []
+    for index, candidate in enumerate(candidates or []):
+        best_score = 0
+        for alias in _map_candidate_title_aliases(str(candidate.get("title") or "")):
+            normalized_alias = _normalize_map_match_text(alias)
+            if normalized_alias and normalized_alias in user_text:
+                best_score = max(best_score, len(normalized_alias))
+        if best_score:
+            scored.append((best_score, -index, candidate))
+
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][2]
+
+
 def _extract_contextual_map_selection(history: list, user_message: str) -> tuple[str, str]:
     title, coords = _extract_map_selection(user_message)
     if title or coords:
         return title, coords
 
-    selected_index = _map_selection_index(user_message)
-    if selected_index is None:
-        return "", ""
     candidates = _extract_recent_map_candidates(history)
-    if selected_index >= len(candidates):
+    selected_index = _map_selection_index(user_message)
+    if selected_index is not None:
+        if selected_index >= len(candidates):
+            return "", ""
+        candidate = candidates[selected_index]
+        return candidate.get("title", ""), candidate.get("coords", "")
+
+    candidate = _match_recent_map_candidate_by_name(candidates, user_message)
+    if not candidate:
         return "", ""
-    candidate = candidates[selected_index]
     return candidate.get("title", ""), candidate.get("coords", "")
 
 
@@ -971,9 +1034,9 @@ def _detect_contextual_order_create_shortcut(history: list, user_message: str) -
     text = " ".join(str(user_message or "").split())
     if not text or _contains_blocking_write_negation(text):
         return None
-    title, coords = _extract_map_selection(text)
-    has_explicit_map_payload = bool(title or coords)
-    if not has_explicit_map_payload and (_map_selection_index(text) is None or not _extract_recent_map_candidates(history)):
+    title, coords = _extract_contextual_map_selection(history, text)
+    has_contextual_map_selection = bool(title or coords)
+    if not has_contextual_map_selection:
         return None
 
     write_cues = (

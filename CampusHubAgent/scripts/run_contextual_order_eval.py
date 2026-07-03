@@ -50,6 +50,8 @@ MAP_HISTORY = [
 ]
 
 FOLLOWUP_MESSAGE = "就第一家吧，帮我约三个人，明晚八点，先生成草稿"
+SECOND_FOLLOWUP_MESSAGE = "就第二家吧，帮我约三个人，周六晚上8点，先生成草稿"
+NAMED_FOLLOWUP_MESSAGE = "还是选悦康足道，帮我创建一个4人的按摩约伴，明晚八点，先生成草稿"
 
 MAP_ACTION_MESSAGE = (
     "我想基于刚才查询到的这个地点创建一个约伴订单草稿。\n"
@@ -119,6 +121,32 @@ async def scenario_selects_first_map_candidate() -> EvalResult:
     if coords != "116.181457, 39.730239":
         failures.append(f"expected first map coords, got {coords!r}")
     return EvalResult("selects_first_map_candidate", not failures, failures, actual)
+
+
+async def scenario_selects_second_map_candidate() -> EvalResult:
+    from app import agent as agent_module
+
+    title, coords = agent_module._extract_contextual_map_selection(MAP_HISTORY, SECOND_FOLLOWUP_MESSAGE)
+    actual = {"title": title, "coords": coords}
+    failures: list[str] = []
+    if title != "悦康足道":
+        failures.append(f"expected second map title, got {title!r}")
+    if coords != "116.170492, 39.728167":
+        failures.append(f"expected second map coords, got {coords!r}")
+    return EvalResult("selects_second_map_candidate", not failures, failures, actual)
+
+
+async def scenario_selects_named_map_candidate() -> EvalResult:
+    from app import agent as agent_module
+
+    title, coords = agent_module._extract_contextual_map_selection(MAP_HISTORY, NAMED_FOLLOWUP_MESSAGE)
+    actual = {"title": title, "coords": coords}
+    failures: list[str] = []
+    if title != "悦康足道":
+        failures.append(f"expected named map title, got {title!r}")
+    if coords != "116.170492, 39.728167":
+        failures.append(f"expected named map coords, got {coords!r}")
+    return EvalResult("selects_named_map_candidate", not failures, failures, actual)
 
 
 async def scenario_contextual_intent_routes_to_order_create() -> EvalResult:
@@ -213,6 +241,52 @@ async def scenario_confirmation_enriches_map_fields() -> EvalResult:
     if artifact.get("missingFields"):
         failures.append(f"expected no missing fields after enrichment, got {artifact.get('missingFields')!r}")
     return EvalResult("confirmation_enriches_map_fields", not failures, failures, actual)
+
+
+async def scenario_named_confirmation_enriches_map_fields() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeRouter()
+    try:
+        analysis = {
+            "primary_intent": "order.create",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            MAP_HISTORY,
+            NAMED_FOLLOWUP_MESSAGE,
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "fields": fields,
+        "missingFields": artifact.get("missingFields") or [],
+        "reply": artifact.get("reply"),
+    }
+    failures: list[str] = []
+    expected_fields = {
+        "地点名称": "悦康足道",
+        "地点坐标": "116.170492, 39.728167",
+        "参与人数": "4人",
+        "活动类型": "OTHER（足疗按摩）",
+        "校区": "LIANGXIANG（良乡校区）",
+    }
+    for label, expected in expected_fields.items():
+        if fields.get(label) != expected:
+            failures.append(f"{label}: expected {expected!r}, got {fields.get(label)!r}")
+    if artifact.get("missingFields"):
+        failures.append(f"expected no missing fields after named enrichment, got {artifact.get('missingFields')!r}")
+    return EvalResult("named_confirmation_enriches_map_fields", not failures, failures, actual)
 
 
 async def scenario_high_confidence_gated_write_skips_review() -> EvalResult:
@@ -461,9 +535,12 @@ async def scenario_confirmed_memory_commit_returns_artifact() -> EvalResult:
 async def run_all() -> list[EvalResult]:
     scenarios = [
         scenario_selects_first_map_candidate,
+        scenario_selects_second_map_candidate,
+        scenario_selects_named_map_candidate,
         scenario_contextual_intent_routes_to_order_create,
         scenario_map_action_payload_routes_to_order_create,
         scenario_confirmation_enriches_map_fields,
+        scenario_named_confirmation_enriches_map_fields,
         scenario_high_confidence_gated_write_skips_review,
         scenario_confirmed_action_kind_marker_wins,
         scenario_confirmation_infers_manage_action_kind,
