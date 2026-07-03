@@ -703,9 +703,17 @@ async def scenario_execution_plan_describes_tool_path() -> DirectReadResult:
         failures.append(f"expected deterministic tool strategy, got {fields.get('策略')!r}")
     if fields.get("调度守卫") != "仅允许：订单专家":
         failures.append(f"expected order-only delegation guard, got {fields.get('调度守卫')!r}")
+    if "确认门" not in fields:
+        failures.append("plan should surface the confirmation-gate policy field")
+    if "越界处理" not in fields:
+        failures.append("plan should surface the delegation-boundary field")
     titles = [step.get("title") for step in plan.get("steps", []) if isinstance(step, dict)]
     if "锁定本轮专家范围" not in titles:
         failures.append("plan should include the delegation guard step")
+    if "确认门策略" not in titles:
+        failures.append("plan should include the confirmation-gate step")
+    if "越界委派拦截" not in titles:
+        failures.append("plan should include the delegation-boundary step")
     if "查询约伴活动" not in titles:
         failures.append("plan should include an order query step")
     if "生成订单结果卡" not in titles:
@@ -732,9 +740,15 @@ async def scenario_execution_plan_surfaces_missing_slots() -> DirectReadResult:
     fields = {field.get("label"): field.get("value") for field in plan.get("fields", []) if isinstance(field, dict)}
     if fields.get("待补充") != "地点、时间":
         failures.append(f"expected missing slot field, got {fields.get('待补充')!r}")
+    if fields.get("确认门") != "先补齐缺失字段，再生成可确认草稿":
+        failures.append(f"expected missing-slot confirmation gate, got {fields.get('确认门')!r}")
     titles = [step.get("title") for step in plan.get("steps", []) if isinstance(step, dict)]
     if "标出待补充信息" not in titles:
         failures.append("plan should include a missing-slot explanation step")
+    if "确认门策略" not in titles:
+        failures.append("plan should include the confirmation-gate step")
+    if "越界委派拦截" not in titles:
+        failures.append("plan should include the delegation-boundary step")
     intent = plan.get("intent") if isinstance(plan.get("intent"), dict) else {}
     if intent.get("missing_slots") != ["地点", "时间"]:
         failures.append(f"expected normalized missing slots in intent, got {intent.get('missing_slots')!r}")

@@ -5041,6 +5041,34 @@ def _operation_display_name(operation_type: str) -> str:
     return labels.get(str(operation_type or ""), operation_type or "待确认")
 
 
+def _confirmation_gate_display(intent_analysis: dict) -> str:
+    primary_intent = str(intent_analysis.get("primary_intent") or "").lower()
+    operation_type = str(intent_analysis.get("operation_type") or "").lower()
+    next_action = str(intent_analysis.get("next_action") or "").lower()
+    missing_slots = _missing_slots_list(intent_analysis)
+    requires_confirmation = bool(intent_analysis.get("requires_confirmation"))
+
+    if primary_intent == "chat.general":
+        return "普通问答不会触发业务写操作"
+    if operation_type == "read" and not requires_confirmation:
+        return "只读查询可直接调用工具，不需要发布前确认"
+    if missing_slots:
+        return "先补齐缺失字段，再生成可确认草稿"
+    if next_action == "execute_read_tools" and operation_type == "mixed":
+        return "先执行只读查询，后续创建/发布仍必须再次确认"
+    if requires_confirmation:
+        return "写操作只生成草稿，用户确认后才会执行"
+    return "本轮不会绕过确认门"
+
+
+def _delegation_boundary_display(intent_analysis: dict) -> str:
+    allowed_agents = _build_allowed_delegation_agents(intent_analysis)
+    if allowed_agents:
+        names = "、".join(_delegation_agent_display_name(agent) for agent in _ordered_delegation_agents(allowed_agents))
+        return f"仅允许 {names}；计划外专家会被拦截"
+    return "未限定专家时仍受总委派次数、单专家次数和重复任务复用保护"
+
+
 def _missing_slots_list(intent_analysis: dict) -> list[str]:
     slots = intent_analysis.get("missing_slots") if isinstance(intent_analysis, dict) else []
     if not isinstance(slots, list):
@@ -5074,6 +5102,16 @@ def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
     steps.append({
         "title": "锁定本轮专家范围",
         "detail": _delegation_guard_detail(intent_analysis),
+        "state": "completed",
+    })
+    steps.append({
+        "title": "确认门策略",
+        "detail": _confirmation_gate_display(intent_analysis),
+        "state": "completed",
+    })
+    steps.append({
+        "title": "越界委派拦截",
+        "detail": _delegation_boundary_display(intent_analysis),
         "state": "completed",
     })
     if missing_slots:
@@ -5154,11 +5192,13 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
         fields.append({"label": "待补充", "value": "、".join(missing_slots)})
     fields.extend([
         {"label": "策略", "value": strategy},
+        {"label": "确认门", "value": _confirmation_gate_display(intent_analysis)},
         {
             "label": "专家",
             "value": "、".join(_agent_display_name(agent) for agent in suggested_agents[:3]) or "无需额外专家",
         },
         {"label": "调度守卫", "value": _delegation_guard_display(intent_analysis)},
+        {"label": "越界处理", "value": _delegation_boundary_display(intent_analysis)},
     ])
 
     return {
