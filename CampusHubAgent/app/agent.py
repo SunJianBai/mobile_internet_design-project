@@ -36,7 +36,7 @@ from app.tools_order import (
     reject_order_application,
 )
 from app.tools_content import CONTENT_TOOLS, search_contents, create_content, create_comment, like_content
-from app.tools_user import USER_TOOLS
+from app.tools_user import USER_TOOLS, get_user_profile, search_users
 from app.mcp_tools import MCP_TOOLS, maps_around_search, maps_geo, maps_weather
 from app.tools_utils import UTIL_TOOLS
 from app.prompts import (
@@ -4029,6 +4029,11 @@ def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
             {"title": "搜索校园动态", "detail": "直接调用动态搜索工具", "state": "running"},
             {"title": "生成动态结果卡", "detail": "评论、点赞或发布前仍会先确认", "state": "pending"},
         ])
+    elif primary_intent == "user.profile":
+        steps.extend([
+            {"title": "查询用户资料", "detail": "直接调用用户资料或搜索工具", "state": "running"},
+            {"title": "生成用户资料卡", "detail": "资料查询只读，后续评论、发布或报名仍需确认", "state": "pending"},
+        ])
     elif operation_type in {"write", "mixed"} or intent_analysis.get("requires_confirmation"):
         steps.extend([
             {"title": "整理待确认草稿", "detail": "提取关键字段和缺失信息", "state": "running"},
@@ -4054,7 +4059,7 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
     strategy = "确认门控" if requires_confirmation else "直接执行只读工具"
     if primary_intent == "chat.general":
         strategy = "直接回答"
-    elif primary_intent in {"order.search", "content.search", "weather.query", "map.search", "multi_step"}:
+    elif primary_intent in {"order.search", "content.search", "user.profile", "weather.query", "map.search", "multi_step"}:
         strategy = "确定性工具路径"
     elif suggested_agents:
         strategy = "领域专家委派"
@@ -4450,6 +4455,196 @@ def _build_content_result_artifact(content_text: str, keyword: str, intent_analy
     }
 
 
+def _extract_user_profile_id(user_message: str) -> int | None:
+    text = str(user_message or "")
+    patterns = (
+        r"(?:用户|同学|主页|个人主页|资料)\s*(?:ID|id|编号|#|号)?\s*[:：#]?\s*(\d+)",
+        r"(\d+)\s*号?(?:同学|用户)",
+        r"\b(?:user|uid)\s*#?\s*(\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _extract_user_search_keyword(user_message: str) -> str:
+    text = str(user_message or "").strip()
+    patterns = (
+        r"(?:搜索|查找|找|看看|查看|瞅瞅)\s*([A-Za-z0-9_\-\u4e00-\u9fff]{2,20})\s*(?:同学|用户)?(?:的)?(?:主页|资料|个人主页)",
+        r"([A-Za-z0-9_\-\u4e00-\u9fff]{2,20})\s*(?:同学|用户)(?:的)?(?:主页|资料|个人主页)",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            keyword = match.group(1).strip()
+            if keyword not in {"用户", "同学", "主页", "资料", "个人主页"}:
+                return keyword[:20]
+    return ""
+
+
+def _parse_user_profile_text(profile_text: str) -> dict:
+    user = {}
+    for raw_line in str(profile_text or "").splitlines():
+        line = raw_line.strip().lstrip("-*•").strip()
+        if not line or ("：" not in line and ":" not in line):
+            continue
+        separator = "：" if "：" in line else ":"
+        label, value = line.split(separator, 1)
+        label = label.strip()
+        value = value.strip()
+        if "用户ID" in label or label.lower() in {"id", "uid", "user id"}:
+            user["id"] = value
+        elif "昵称" in label or "nickname" in label.lower():
+            user["nickname"] = value
+        elif "签名" in label or "signature" in label.lower():
+            user["signature"] = value
+        elif "邮箱" in label or "email" in label.lower():
+            user["email"] = value
+        elif "加入时间" in label or "created" in label.lower():
+            user["created_at"] = value
+    return user
+
+
+def _parse_user_search_lines(search_text: str) -> list[dict]:
+    users = []
+    pattern = re.compile(r"-\s*(?P<nickname>.+?)\s*\(ID:\s*(?P<id>\d+)\)")
+    for line in str(search_text or "").splitlines():
+        match = pattern.match(line.strip())
+        if not match:
+            continue
+        users.append({
+            "id": match.group("id"),
+            "nickname": match.group("nickname").strip(),
+        })
+    return users
+
+
+def _build_user_profile_artifact(profile_text: str, user_id: int | None, intent_analysis: dict) -> dict | None:
+    user = _parse_user_profile_text(profile_text)
+    if not user and "未找到" in str(profile_text or ""):
+        return {
+            "type": "user",
+            "title": "未找到用户资料",
+            "description": "没有匹配到这个用户 ID，可以换一个 ID 或昵称继续查。",
+            "fields": [
+                {"label": "用户ID", "value": str(user_id or "未识别")},
+                {"label": "查询结果", "value": "未找到"},
+            ],
+            "actions": [
+                {
+                    "label": "换昵称搜索",
+                    "prompt": "帮我按昵称搜索用户主页，先只查询资料不要发布或评论。",
+                    "primary": True,
+                }
+            ],
+            "state": "completed",
+        }
+    if not user:
+        return None
+
+    uid = user.get("id") or str(user_id or "")
+    nickname = user.get("nickname") or "用户"
+    signature = user.get("signature") or "无"
+    email = user.get("email") or "未知"
+    created_at = user.get("created_at") or "未知"
+    return {
+        "type": "user",
+        "title": f"{nickname} 的用户资料",
+        "description": "已把用户资料整理成可继续查询的卡片；查看资料不会触发写操作。",
+        "fields": [
+            {"label": "用户ID", "value": uid},
+            {"label": "昵称", "value": nickname},
+            {"label": "签名", "value": signature},
+            {"label": "邮箱", "value": email},
+            {"label": "加入时间", "value": created_at},
+        ],
+        "actions": [
+            {
+                "label": "搜索 TA 的动态",
+                "prompt": f"帮我搜索用户 {uid} 或昵称「{nickname}」相关的校园动态，先只查询不要评论或点赞。",
+                "primary": True,
+            },
+            {
+                "label": "看 TA 的约伴",
+                "prompt": f"帮我看看用户 {uid} 最近发布过哪些约伴活动，先只查询不要报名。",
+            },
+            {
+                "label": "基于资料写动态草稿",
+                "prompt": f"参考「{nickname}」的资料，帮我整理一条友好的校园动态草稿，发布前先让我确认。",
+            },
+        ],
+        "state": "completed",
+        "intent": {
+            "primary_intent": intent_analysis.get("primary_intent"),
+            "next_action": intent_analysis.get("next_action"),
+        },
+    }
+
+
+def _build_user_search_artifact(search_text: str, keyword: str, intent_analysis: dict) -> dict | None:
+    users = _parse_user_search_lines(search_text)
+    if not users:
+        return {
+            "type": "user",
+            "title": "暂未找到相关用户",
+            "description": "可以换昵称、邮箱或用户 ID 继续查。",
+            "fields": [
+                {"label": "搜索关键词", "value": keyword or "未识别"},
+                {"label": "匹配数量", "value": "0 个用户"},
+            ],
+            "actions": [
+                {
+                    "label": "换关键词搜索",
+                    "prompt": "帮我换一个关键词继续搜索用户资料。",
+                    "primary": True,
+                }
+            ],
+            "state": "completed",
+        }
+
+    first = users[0]
+    return {
+        "type": "user",
+        "title": "用户搜索结果",
+        "description": "已把匹配用户整理成可继续查询的卡片。",
+        "fields": [
+            {"label": "搜索关键词", "value": keyword},
+            {"label": "匹配数量", "value": f"{len(users)} 个用户"},
+            {"label": "第一条", "value": f"{first.get('nickname')} · 用户ID {first.get('id')}"},
+        ],
+        "items": [
+            {
+                "title": user.get("nickname") or "用户",
+                "subtitle": f"用户ID {user.get('id')}",
+                "meta": "资料",
+                "badge": "用户",
+                "actionLabel": "查看资料",
+                "hint": "只读查询",
+                "prompt": f"帮我查看用户 {user.get('id')} 的主页资料，先只查询。",
+            }
+            for user in users[:5]
+        ],
+        "actions": [
+            {
+                "label": f"查看 {first.get('nickname')}",
+                "prompt": f"帮我查看用户 {first.get('id')} 的主页资料，先只查询。",
+                "primary": True,
+            },
+            {
+                "label": "换关键词搜索",
+                "prompt": "帮我换一个关键词继续搜索用户资料。",
+            },
+        ],
+        "state": "completed",
+        "intent": {
+            "primary_intent": intent_analysis.get("primary_intent"),
+            "next_action": intent_analysis.get("next_action"),
+        },
+    }
+
+
 async def _resolve_poi_locations(pois: list[dict], limit: int = 3) -> list[dict]:
     resolved = []
     for poi in pois[:limit]:
@@ -4738,6 +4933,60 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
             "tool_calls": [{"name": "search_contents", "args": content_args}],
             "intent": intent_analysis,
             "artifacts": [content_artifact],
+        }
+
+    if primary_intent == "user.profile":
+        await _emit_event("agent_step", {
+            "phase": "user_direct",
+            "title": "查询用户资料",
+            "detail": "正在直接调用用户资料工具，整理成可继续操作的资料卡片",
+            "state": "running",
+        })
+        profile_user_id = _extract_user_profile_id(user_message)
+        if profile_user_id:
+            profile_text = await _invoke_tool_text(get_user_profile, {"user_id": profile_user_id})
+            profile_artifact = _build_user_profile_artifact(profile_text, profile_user_id, intent_analysis)
+            if not profile_artifact:
+                return None
+            await _emit_event("artifact", profile_artifact)
+            await _emit_event("agent_step", {
+                "phase": "user_direct",
+                "title": "用户资料查询完成",
+                "detail": "已把用户资料整理成结果卡片",
+                "state": "completed",
+            })
+            return {
+                "reply": profile_text + "\n\n我把资料整理成了用户卡片；后续如果要评论、发布或报名，我仍会先生成确认草稿。",
+                "tool_calls": [{"name": "get_user_profile", "args": {"user_id": profile_user_id}}],
+                "intent": intent_analysis,
+                "artifacts": [profile_artifact],
+            }
+
+        keyword = _extract_user_search_keyword(user_message)
+        if not keyword:
+            return {
+                "reply": "我需要一个用户 ID 或昵称才能查看主页资料。你可以直接说“查看用户 12 的主页”或“搜索小白的用户资料”。",
+                "tool_calls": [],
+                "intent": intent_analysis,
+                "artifacts": [],
+            }
+
+        search_text = await _invoke_tool_text(search_users, {"keyword": keyword})
+        search_artifact = _build_user_search_artifact(search_text, keyword, intent_analysis)
+        if not search_artifact:
+            return None
+        await _emit_event("artifact", search_artifact)
+        await _emit_event("agent_step", {
+            "phase": "user_direct",
+            "title": "用户搜索完成",
+            "detail": "已把匹配用户整理成结果卡片",
+            "state": "completed",
+        })
+        return {
+            "reply": search_text + "\n\n可以从结果卡继续查看某个用户资料；所有后续写操作都会先确认。",
+            "tool_calls": [{"name": "search_users", "args": {"keyword": keyword}}],
+            "intent": intent_analysis,
+            "artifacts": [search_artifact],
         }
 
     if primary_intent not in {"map.search", "multi_step"}:

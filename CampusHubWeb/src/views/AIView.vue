@@ -935,15 +935,16 @@ function getArtifactIcon(artifact) {
   if (artifact?.type === 'order') return '约'
   if (artifact?.type === 'content') return '动'
   if (artifact?.type === 'memory') return '记'
+  if (artifact?.type === 'user') return '人'
   return 'i'
 }
 
 function isActionCardArtifact(artifact) {
-  return ['guide', 'weather', 'order', 'content', 'memory'].includes(artifact?.type)
+  return ['guide', 'weather', 'order', 'content', 'memory', 'user'].includes(artifact?.type)
 }
 
 function getArtifactHighlights(artifact) {
-  if (!['guide', 'weather', 'order', 'content', 'memory', 'plan'].includes(artifact?.type)) return []
+  if (!['guide', 'weather', 'order', 'content', 'memory', 'user', 'plan'].includes(artifact?.type)) return []
   const lowPriorityLabels = new Set(['安全策略', '写操作保护', '摘要', '建议', '下一步', '结果预览'])
   const fields = (artifact?.fields || [])
     .filter(field => field && field.label && !isArtifactFieldMissing(field))
@@ -2328,6 +2329,13 @@ onBeforeUnmount(() => {
 .artifact-memory .artifact-field:last-child {
   grid-column: 1 / -1;
 }
+.artifact-user {
+  border-color: #fed7aa;
+  background: linear-gradient(180deg, #ffffff 0%, #fff7ed 100%);
+}
+.artifact-user .artifact-icon {
+  background: #ea580c;
+}
 .artifact-header {
   display: flex;
   gap: 10px;
@@ -3510,6 +3518,11 @@ onBeforeUnmount(() => {
   border-color: rgba(45, 212, 191, 0.3);
 }
 
+:global(:root[data-theme='dark']) .artifact-user {
+  background: linear-gradient(180deg, #172235 0%, #2d2318 100%);
+  border-color: rgba(251, 146, 60, 0.32);
+}
+
 :global(:root[data-theme='dark']) .artifact-guide .artifact-icon {
   background: #0f766e;
   color: #ccfbf1;
@@ -3538,6 +3551,11 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .artifact-memory .artifact-icon {
   background: #0f766e;
   color: #ccfbf1;
+}
+
+:global(:root[data-theme='dark']) .artifact-user .artifact-icon {
+  background: #ea580c;
+  color: #ffedd5;
 }
 
 :global(:root[data-theme='dark']) .artifact-title,
@@ -3938,6 +3956,11 @@ onBeforeUnmount(() => {
   border-color: rgba(45, 212, 191, 0.3) !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .artifact-user) {
+  background: linear-gradient(180deg, #172235 0%, #2d2318 100%) !important;
+  border-color: rgba(251, 146, 60, 0.32) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .artifact-weather .artifact-icon) {
   background: #2563eb !important;
   color: #dbeafe !important;
@@ -3961,6 +3984,11 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-memory .artifact-icon) {
   background: #0f766e !important;
   color: #ccfbf1 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-user .artifact-icon) {
+  background: #ea580c !important;
+  color: #ffedd5 !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-field) {

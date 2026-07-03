@@ -59,6 +59,24 @@ class DirectReadHarness:
                     "- **[动态#77](/contents/77)** by 小白 — 今晚图书馆二楼自习，有同学一起吗\n"
                     "- **[动态#78](/contents/78)** by 晚风 — 求一个自习搭子，期末周互相监督"
                 )
+            if tool_name == "get_user_profile":
+                user_id = args.get("user_id")
+                if str(user_id) == "12":
+                    return (
+                        "**用户资料**\n\n"
+                        "- 用户ID: 12\n"
+                        "- 昵称: 小白\n"
+                        "- 签名: 爱自习和羽毛球\n"
+                        "- 邮箱: xiaobai@example.com\n"
+                        "- 加入时间: 2026-06-01T09:00:00"
+                    )
+                return f"未找到ID为 {user_id} 的用户。"
+            if tool_name == "search_users":
+                return (
+                    "找到 2 个用户：\n\n"
+                    "- 小白 (ID: 12)\n"
+                    "- 小白同学 (ID: 15)"
+                )
             if "city" in args:
                 return json.dumps({
                     "city": "北京",
@@ -504,6 +522,84 @@ async def scenario_content_search_returns_result_artifact() -> DirectReadResult:
     return DirectReadResult("content_search_returns_result_artifact", not failures, failures, actual)
 
 
+async def scenario_user_profile_returns_result_artifact() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="那个 12 号同学的主页给我瞅瞅，他以前发过啥",
+            intent_analysis={
+                "primary_intent": "user.profile",
+                "domain": "user",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts") if result else [],
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifact = (actual.get("artifacts") or [{}])[0]
+    fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
+    actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
+    if artifact.get("type") != "user":
+        failures.append(f"expected user artifact, got {artifact.get('type')!r}")
+    if fields.get("用户ID") != "12":
+        failures.append(f"expected user id 12, got {fields.get('用户ID')!r}")
+    if fields.get("昵称") != "小白":
+        failures.append(f"expected nickname 小白, got {fields.get('昵称')!r}")
+    if not any((call or {}).get("name") == "get_user_profile" for call in actual.get("tool_calls", [])):
+        failures.append("expected get_user_profile tool call")
+    if not any(action.get("label") == "搜索 TA 的动态" and "不要评论或点赞" in action.get("prompt", "") for action in actions):
+        failures.append("user profile card should offer guarded content follow-up")
+    if not any(item.get("event") == "artifact" for item in actual.get("events", [])):
+        failures.append("user profile direct flow should emit an artifact event")
+    return DirectReadResult("user_profile_returns_result_artifact", not failures, failures, actual)
+
+
+async def scenario_user_search_returns_result_artifact() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="搜索小白同学的主页资料",
+            intent_analysis={
+                "primary_intent": "user.profile",
+                "domain": "user",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts") if result else [],
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifact = (actual.get("artifacts") or [{}])[0]
+    items = artifact.get("items") or []
+    fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
+    if artifact.get("type") != "user":
+        failures.append(f"expected user search artifact, got {artifact.get('type')!r}")
+    if fields.get("匹配数量") != "2 个用户":
+        failures.append(f"expected 2 user matches, got {fields.get('匹配数量')!r}")
+    if len(items) != 2:
+        failures.append(f"expected 2 user result items, got {len(items)}")
+    if not any((call or {}).get("name") == "search_users" for call in actual.get("tool_calls", [])):
+        failures.append("expected search_users tool call")
+    if not any("用户 12" in item.get("prompt", "") for item in items if isinstance(item, dict)):
+        failures.append("user result item should offer profile lookup prompt")
+    return DirectReadResult("user_search_returns_result_artifact", not failures, failures, actual)
+
+
 async def scenario_execution_plan_describes_tool_path() -> DirectReadResult:
     from app import agent as agent_module
 
@@ -574,6 +670,8 @@ async def run_all() -> list[DirectReadResult]:
         scenario_order_search_returns_result_artifact,
         scenario_order_search_empty_returns_action_card,
         scenario_content_search_returns_result_artifact,
+        scenario_user_profile_returns_result_artifact,
+        scenario_user_search_returns_result_artifact,
         scenario_execution_plan_describes_tool_path,
         scenario_execution_plan_surfaces_missing_slots,
     ]

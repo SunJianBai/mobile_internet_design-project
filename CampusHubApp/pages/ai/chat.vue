@@ -649,10 +649,11 @@ const getArtifactIcon = (artifact) => {
   if (artifact?.type === 'order') return '约'
   if (artifact?.type === 'content') return '动'
   if (artifact?.type === 'memory') return '记'
+  if (artifact?.type === 'user') return '人'
   return 'i'
 }
 
-const isActionCardArtifact = (artifact) => ['guide', 'weather', 'order', 'content', 'memory'].includes(artifact?.type)
+const isActionCardArtifact = (artifact) => ['guide', 'weather', 'order', 'content', 'memory', 'user'].includes(artifact?.type)
 
 const truncateArtifactValue = (value, maxLength = 18) => {
   const text = String(value || '')
@@ -660,7 +661,7 @@ const truncateArtifactValue = (value, maxLength = 18) => {
 }
 
 const getArtifactHighlights = (artifact) => {
-  if (!['guide', 'weather', 'order', 'content', 'memory', 'plan'].includes(artifact?.type)) return []
+  if (!['guide', 'weather', 'order', 'content', 'memory', 'user', 'plan'].includes(artifact?.type)) return []
   const lowPriorityLabels = ['安全策略', '写操作保护', '摘要', '建议', '下一步', '结果预览']
   const fields = (artifact?.fields || [])
     .filter(field => field && field.label && !field.missing && !['未填写', '待补充'].includes(formatArtifactValue(field.value)))
@@ -2360,6 +2361,15 @@ onUnmounted(detachActiveStream)
   background: #0f766e;
 }
 
+.artifact-user {
+  border-color: #fed7aa;
+  background: #fff7ed;
+}
+
+.artifact-user .artifact-icon {
+  background: #ea580c;
+}
+
 .artifact-header {
   display: flex;
   align-items: flex-start;
@@ -3887,6 +3897,16 @@ onUnmounted(detachActiveStream)
   .artifact-memory .artifact-icon {
     background: #0f766e;
     color: #ccfbf1;
+  }
+
+  .artifact-user {
+    background: #2d2318;
+    border-color: rgba(251, 146, 60, 0.32);
+  }
+
+  .artifact-user .artifact-icon {
+    background: #ea580c;
+    color: #ffedd5;
   }
 
   .operation-overview {

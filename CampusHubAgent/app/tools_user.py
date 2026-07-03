@@ -17,11 +17,14 @@ async def get_user_profile(user_id: int) -> str:
     if not u:
         return f"未找到ID为 {user_id} 的用户。"
 
+    uid = u.get("id") or u.get("uid") or user_id
     return (
-        f"**用户资料** [查看主页](/user/profile)\n\n"
+        "**用户资料**\n\n"
+        f"- 用户ID: {uid}\n"
         f"- 昵称: {u.get('nickname', '未知')}\n"
         f"- 签名: {u.get('signature', '无')}\n"
-        f"- 邮箱: {u.get('email', '未知')}"
+        f"- 邮箱: {u.get('email', '未知')}\n"
+        f"- 加入时间: {u.get('createdAt', '未知')}"
     )
 
 
