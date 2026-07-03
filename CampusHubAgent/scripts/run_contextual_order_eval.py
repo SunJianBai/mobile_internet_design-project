@@ -51,6 +51,14 @@ MAP_HISTORY = [
 
 FOLLOWUP_MESSAGE = "就第一家吧，帮我约三个人，明晚八点，先生成草稿"
 
+MAP_ACTION_MESSAGE = (
+    "我想基于刚才查询到的这个地点创建一个约伴订单草稿。\n"
+    "请先生成可编辑确认卡片，等我确认后再执行，不要直接发布。\n"
+    "地点：悦康足道\n"
+    "坐标：116.170492, 39.728167\n"
+    "请结合上文的人数、活动类型、时间偏好和校区信息；如果缺少订单必填项，请先让我补充。"
+)
+
 
 @dataclass
 class EvalResult:
@@ -113,6 +121,32 @@ async def scenario_contextual_intent_routes_to_order_create() -> EvalResult:
     if not actual.get("contextual_map_shortcut"):
         failures.append("expected contextual_map_shortcut marker")
     return EvalResult("contextual_intent_routes_to_order_create", not failures, failures, actual)
+
+
+async def scenario_map_action_payload_routes_to_order_create() -> EvalResult:
+    from app import agent as agent_module
+
+    agent_module._intent_cache.clear()
+    title, coords = agent_module._extract_contextual_map_selection(MAP_HISTORY, MAP_ACTION_MESSAGE)
+    analysis = await agent_module.analyze_intent(DEFAULT_USER, [], MAP_HISTORY, MAP_ACTION_MESSAGE)
+    actual = {"title": title, "coords": coords, "analysis": dict(analysis)}
+    failures: list[str] = []
+    if title != "悦康足道":
+        failures.append(f"expected explicit map action title, got {title!r}")
+    if coords != "116.170492, 39.728167":
+        failures.append(f"expected explicit map action coords, got {coords!r}")
+    expected = {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": True,
+    }
+    for key, value in expected.items():
+        if analysis.get(key) != value:
+            failures.append(f"{key}: expected {value!r}, got {analysis.get(key)!r}")
+    if not analysis.get("contextual_map_shortcut"):
+        failures.append("expected contextual_map_shortcut marker")
+    return EvalResult("map_action_payload_routes_to_order_create", not failures, failures, actual)
 
 
 async def scenario_confirmation_enriches_map_fields() -> EvalResult:
@@ -184,6 +218,7 @@ async def run_all() -> list[EvalResult]:
     scenarios = [
         scenario_selects_first_map_candidate,
         scenario_contextual_intent_routes_to_order_create,
+        scenario_map_action_payload_routes_to_order_create,
         scenario_confirmation_enriches_map_fields,
         scenario_high_confidence_gated_write_skips_review,
     ]

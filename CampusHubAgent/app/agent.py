@@ -838,7 +838,9 @@ def _detect_contextual_order_create_shortcut(history: list, user_message: str) -
     text = " ".join(str(user_message or "").split())
     if not text or _contains_blocking_write_negation(text):
         return None
-    if _map_selection_index(text) is None or not _extract_recent_map_candidates(history):
+    title, coords = _extract_map_selection(text)
+    has_explicit_map_payload = bool(title or coords)
+    if not has_explicit_map_payload and (_map_selection_index(text) is None or not _extract_recent_map_candidates(history)):
         return None
 
     write_cues = (
@@ -2076,6 +2078,10 @@ def _extract_map_selection(text: str) -> tuple[str, str]:
     title_match = re.search(r"[「\"]([^」\"]{1,80})[」\"]", text)
     if title_match:
         title = title_match.group(1).strip()
+    else:
+        label_match = re.search(r"(?:地点|位置)[:：]\s*([^\n\r,，]{1,80})", text)
+        if label_match:
+            title = label_match.group(1).strip()
 
     coords = ""
     coord_match = re.search(r"坐标[:：]?\s*([0-9]{2,3}\.\d+)\s*[,，]\s*([0-9]{1,2}\.\d+)", text)

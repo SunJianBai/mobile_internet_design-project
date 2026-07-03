@@ -258,7 +258,16 @@
                     <text class="inline-map-title">{{ mapCard.title }}</text>
                     <text class="inline-map-coords">{{ mapCard.lng.toFixed(6) }}, {{ mapCard.lat.toFixed(6) }} · zoom {{ mapCard.zoom }}</text>
                   </view>
-                  <button class="inline-map-open" @click="openExternalUrl(mapCard.link)">打开高德地图</button>
+                  <view class="inline-map-actions">
+                    <button
+                      class="inline-map-open inline-map-order"
+                      :disabled="loading"
+                      @click="createOrderDraftFromMap(mapCard)"
+                    >
+                      用此地点约伴
+                    </button>
+                    <button class="inline-map-open" @click="openExternalUrl(mapCard.link)">打开高德地图</button>
+                  </view>
                 </view>
                 <text class="inline-map-hint">可拖拽地图，也可以使用缩放和平移按钮。</text>
               </view>
@@ -1390,6 +1399,25 @@ const getInteractiveMapCards = (msg) => {
     const link = `https://uri.amap.com/marker?position=${current.lng},${current.lat}&name=${encodeURIComponent(current.title)}&coordinate=gaode&callnative=0`
     return { key, ...current, ...grid, link }
   })
+}
+
+const buildMapOrderDraftPrompt = (card) => {
+  const title = String(card?.title || '这个地点').trim()
+  const lng = Number.isFinite(card?.lng) ? card.lng.toFixed(6) : ''
+  const lat = Number.isFinite(card?.lat) ? card.lat.toFixed(6) : ''
+  const coords = lng && lat ? `${lng}, ${lat}` : '未提供'
+  return [
+    '我想基于刚才查询到的这个地点创建一个约伴订单草稿。',
+    '请先生成可编辑确认卡片，等我确认后再执行，不要直接发布。',
+    `地点：${title}`,
+    `坐标：${coords}`,
+    '请结合上文的人数、活动类型、时间偏好和校区信息；如果缺少订单必填项，请先让我补充。'
+  ].join('\n')
+}
+
+const createOrderDraftFromMap = (card) => {
+  if (loading.value || !card) return
+  sendMessageText(buildMapOrderDraftPrompt(card))
 }
 
 const setMapCardState = (key, nextState) => {
@@ -3063,10 +3091,20 @@ onUnmounted(detachActiveStream)
   font-family: monospace;
 }
 
+.inline-map-actions {
+  flex: 0 0 auto;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 10rpx;
+}
+
 .inline-map-open {
   flex: 0 0 auto;
   height: 58rpx;
   line-height: 58rpx;
+  margin: 0;
   padding: 0 16rpx;
   border: none;
   border-radius: 14rpx;
@@ -3074,6 +3112,20 @@ onUnmounted(detachActiveStream)
   color: #1f447a;
   font-size: 22rpx;
   font-weight: 800;
+  box-sizing: border-box;
+  white-space: nowrap;
+}
+
+.inline-map-order {
+  min-width: 154rpx;
+  background: #1f447a;
+  color: #ffffff;
+  box-shadow: 0 10rpx 24rpx rgba(31, 68, 122, 0.22);
+}
+
+.inline-map-open[disabled] {
+  opacity: 0.58;
+  box-shadow: none;
 }
 
 .inline-map-hint {
@@ -3510,6 +3562,21 @@ onUnmounted(detachActiveStream)
   .overview-metric-value {
     max-width: 210rpx;
   }
+
+  .inline-map-meta {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .inline-map-actions {
+    width: 100%;
+    justify-content: stretch;
+  }
+
+  .inline-map-actions .inline-map-open {
+    flex: 1 1 0;
+    min-width: 0;
+  }
 }
 
 @media (hover: hover) {
@@ -3767,6 +3834,7 @@ onUnmounted(detachActiveStream)
   }
 
   .artifact-action.primary,
+  .inline-map-order,
   .send-btn {
     background: #3768d8;
     border-color: #5b8cff;
