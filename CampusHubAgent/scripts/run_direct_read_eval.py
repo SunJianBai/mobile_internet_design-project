@@ -154,6 +154,39 @@ async def scenario_map_search_returns_followup_artifact() -> DirectReadResult:
     return DirectReadResult("map_search_returns_followup_artifact", not failures, failures, actual)
 
 
+async def scenario_english_map_restaurant_uses_precise_keyword() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="find restaurants near BIT Liangxiang for three people, show map, no order",
+            intent_analysis={
+                "primary_intent": "map.search",
+                "domain": "map",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "tool_calls": harness.tool_calls,
+            "artifacts": result.get("artifacts") if result else [],
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    map_calls = [
+        call for call in actual.get("tool_calls", [])
+        if call.get("args", {}).get("location")
+    ]
+    first_args = map_calls[0].get("args", {}) if map_calls else {}
+    if first_args.get("keywords") != "餐厅":
+        failures.append(f"expected English restaurant request to search 餐厅, got {first_args.get('keywords')!r}")
+    if "餐厅" not in actual.get("reply", ""):
+        failures.append("map reply should describe the restaurant category instead of generic campus surroundings")
+    return DirectReadResult("english_map_restaurant_uses_precise_keyword", not failures, failures, actual)
+
+
 async def scenario_multi_step_marks_primary_draft_action() -> DirectReadResult:
     async def check(harness: DirectReadHarness) -> dict[str, Any]:
         result = await harness.agent.build_direct_read_response(
@@ -400,6 +433,7 @@ async def scenario_execution_plan_describes_tool_path() -> DirectReadResult:
 async def run_all() -> list[DirectReadResult]:
     scenarios = [
         scenario_map_search_returns_followup_artifact,
+        scenario_english_map_restaurant_uses_precise_keyword,
         scenario_multi_step_marks_primary_draft_action,
         scenario_weather_direct_returns_artifact,
         scenario_order_search_returns_result_artifact,

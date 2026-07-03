@@ -1356,6 +1356,16 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "地址",
         "导航",
         "比较",
+        "find",
+        "search",
+        "recommend",
+        "near",
+        "nearby",
+        "around",
+        "show map",
+        "route",
+        "directions",
+        "where",
     )
     place_cues = (
         "店",
@@ -1385,6 +1395,29 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "酒吧",
         "公园",
         "密室",
+        "place",
+        "places",
+        "shop",
+        "store",
+        "venue",
+        "venues",
+        "restaurant",
+        "restaurants",
+        "dinner",
+        "lunch",
+        "food",
+        "massage",
+        "coffee",
+        "cafe",
+        "cafes",
+        "cinema",
+        "movie",
+        "theater",
+        "supermarket",
+        "pharmacy",
+        "hospital",
+        "bar",
+        "park",
     )
     if _has_any(lowered, map_read_cues) and _has_any(lowered, place_cues):
         return {
@@ -1619,8 +1652,11 @@ def _detect_router_error_read_fallback(user_message: str) -> dict | None:
     if _detect_safety_intent_shortcut(text):
         return None
 
-    read_cues = ("找", "看看", "查询", "查一下", "推荐", "附近", "有没有", "怎么走", "路线", "地图")
-    generic_read_cues = read_cues + ("搜索", "搜一下", "列出", "哪些", "信息", "主页")
+    read_cues = (
+        "找", "看看", "查询", "查一下", "推荐", "附近", "有没有", "怎么走", "路线", "地图",
+        "find", "search", "recommend", "near", "nearby", "around", "show map", "route", "directions", "where",
+    )
+    generic_read_cues = read_cues + ("搜索", "搜一下", "列出", "哪些", "信息", "主页", "list", "show", "check")
 
     if _looks_like_companion_search(text):
         return {
@@ -1712,6 +1748,21 @@ def _detect_router_error_read_fallback(user_message: str) -> dict | None:
         "玩",
         "电影院",
         "影院",
+        "place",
+        "places",
+        "shop",
+        "store",
+        "venue",
+        "restaurant",
+        "restaurants",
+        "dinner",
+        "food",
+        "massage",
+        "coffee",
+        "cafe",
+        "cinema",
+        "movie",
+        "theater",
     )
     if not (_has_any(text, read_cues) and _has_any(text, place_cues)):
         return None
@@ -2882,15 +2933,19 @@ def _select_campus_center(user_info: dict, user_message: str) -> tuple[str, str]
 def _extract_map_keyword(user_message: str) -> str:
     text = str(user_message or "").lower()
     keyword_groups = [
-        (("按摩", "洗脚", "足疗", "推拿", "spa"), "按摩"),
-        (("吃饭", "餐厅", "饭店", "美食", "约饭"), "餐厅"),
-        (("咖啡", "奶茶"), "咖啡"),
-        (("电影院", "影院", "电影"), "电影院"),
-        (("篮球",), "篮球场"),
-        (("羽毛球",), "羽毛球馆"),
-        (("自习", "图书馆"), "图书馆"),
-        (("超市", "便利店"), "超市"),
-        (("玩", "放松", "休闲"), "休闲娱乐"),
+        (("按摩", "洗脚", "足疗", "推拿", "spa", "massage", "foot massage", "foot bath", "relaxing massage"), "按摩"),
+        (("吃饭", "餐厅", "饭店", "美食", "约饭", "restaurant", "restaurants", "dinner", "lunch", "meal", "food", "hotpot", "bbq"), "餐厅"),
+        (("咖啡", "奶茶", "coffee", "cafe", "cafes", "milk tea", "bubble tea"), "咖啡"),
+        (("电影院", "影院", "电影", "cinema", "movie", "movies", "theater", "theatre"), "电影院"),
+        (("篮球", "basketball"), "篮球场"),
+        (("羽毛球", "badminton"), "羽毛球馆"),
+        (("自习", "图书馆", "study", "library", "quiet place"), "图书馆"),
+        (("超市", "便利店", "supermarket", "grocery", "convenience store"), "超市"),
+        (("药店", "pharmacy", "drugstore"), "药店"),
+        (("医院", "诊所", "hospital", "clinic"), "医院"),
+        (("ktv", "karaoke"), "KTV"),
+        (("酒吧", "bar", "pub"), "酒吧"),
+        (("玩", "放松", "休闲", "娱乐", "fun", "hang out", "hangout", "board game", "escape room"), "休闲娱乐"),
     ]
     for cues, keyword in keyword_groups:
         if any(cue in text for cue in cues):
