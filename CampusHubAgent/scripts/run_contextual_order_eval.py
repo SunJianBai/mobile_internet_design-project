@@ -93,6 +93,14 @@ class FakeGenericManageRouter:
         return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
 
 
+class FakeTool:
+    def __init__(self, result: str):
+        self.result = result
+
+    async def ainvoke(self, _args):
+        return self.result
+
+
 def _field_map(fields: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
     for field in fields:
@@ -294,6 +302,50 @@ async def scenario_confirmation_infers_manage_action_kind() -> EvalResult:
     return EvalResult("confirmation_infers_manage_action_kind", not failures, failures, actual)
 
 
+async def scenario_confirmed_execution_returns_result_artifact() -> EvalResult:
+    from app import agent as agent_module
+
+    original_create_order = agent_module.create_order
+    agent_module.create_order = FakeTool("✅ 约伴订单创建成功！[查看订单详情](/orders/88)")
+    try:
+        result = await agent_module.build_confirmed_execution_response(
+            DEFAULT_USER,
+            [],
+            (
+                "我确认执行这个草稿：确认创建约伴活动\n"
+                "操作类型: order.create\n"
+                "活动类型: BASKETBALL\n"
+                "校区: LIANGXIANG\n"
+                "地点: 良乡体育馆\n"
+                "时间: 2026-07-03 19:00:00\n"
+                "参与人数: 4"
+            ),
+        )
+    finally:
+        agent_module.create_order = original_create_order
+
+    artifact = (result.get("artifacts") or [{}])[0] if result else {}
+    actions = artifact.get("actions") or []
+    tool_calls = result.get("tool_calls") if result else []
+    actual = {
+        "reply": result.get("reply") if result else None,
+        "tool_calls": tool_calls,
+        "artifact": artifact,
+    }
+    failures: list[str] = []
+    if not result:
+        failures.append("expected confirmed execution response")
+    if artifact.get("type") != "order":
+        failures.append(f"expected order artifact, got {artifact.get('type')!r}")
+    if artifact.get("title") != "约伴订单已创建":
+        failures.append(f"expected creation result title, got {artifact.get('title')!r}")
+    if not any(action.get("route") == "/orders/88" for action in actions if isinstance(action, dict)):
+        failures.append("expected a /orders/88 detail action")
+    if not any((call or {}).get("name") == "create_order" for call in (tool_calls or [])):
+        failures.append("expected create_order tool call")
+    return EvalResult("confirmed_execution_returns_result_artifact", not failures, failures, actual)
+
+
 async def run_all() -> list[EvalResult]:
     scenarios = [
         scenario_selects_first_map_candidate,
@@ -303,6 +355,7 @@ async def run_all() -> list[EvalResult]:
         scenario_high_confidence_gated_write_skips_review,
         scenario_confirmed_action_kind_marker_wins,
         scenario_confirmation_infers_manage_action_kind,
+        scenario_confirmed_execution_returns_result_artifact,
     ]
     return [await scenario() for scenario in scenarios]
 

@@ -3041,6 +3041,119 @@ def _intent_for_confirmed_execution(action_kind: str) -> dict:
     }
 
 
+def _plain_result_text(result_text: str) -> str:
+    text = re.sub(r"\[([^\]]+)\]\([^)]+\)", r"\1", str(result_text or ""))
+    text = text.replace("✅", "").strip()
+    return text or "操作已返回结果"
+
+
+def _extract_route_from_result_text(result_text: str) -> str:
+    match = re.search(r"\]\((/(?:orders|contents)/\d+)\)", str(result_text or ""))
+    return match.group(1) if match else ""
+
+
+def _confirmed_action_title(action_kind: str, success: bool) -> str:
+    if not success:
+        return "操作未完成"
+    titles = {
+        "order.create": "约伴订单已创建",
+        "content.create": "校园动态已发布",
+        "content.comment": "评论已发表",
+        "content.like": "动态互动已完成",
+        "order.apply": "报名申请已提交",
+        "order.cancel_apply": "报名申请已撤销",
+        "order.accept": "申请已接受",
+        "order.reject_apply": "申请已拒绝",
+        "order.complete": "订单已标记完成",
+    }
+    return titles.get(action_kind, "操作已完成")
+
+
+def _confirmed_action_route(action_kind: str, args: dict, result_text: str) -> str:
+    route = _extract_route_from_result_text(result_text)
+    if route:
+        return route
+    if action_kind.startswith("content."):
+        content_id = args.get("content_id")
+        return f"/contents/{content_id}" if content_id else ""
+    order_id = args.get("order_id")
+    return f"/orders/{order_id}" if order_id else ""
+
+
+def _build_confirmed_execution_artifact(action_kind: str, result_text: str, args: dict) -> dict:
+    success = "失败" not in str(result_text or "") and "不能" not in str(result_text or "")
+    route = _confirmed_action_route(action_kind, args, result_text)
+    result_summary = _plain_result_text(result_text)
+    artifact_type = "content" if action_kind.startswith("content.") else "order" if action_kind.startswith("order.") else "guide"
+    fields = [
+        {"label": "执行状态", "value": "已完成" if success else "未完成"},
+        {"label": "操作类型", "value": action_kind},
+        {"label": "结果摘要", "value": result_summary},
+    ]
+
+    if args.get("order_id"):
+        fields.insert(2, {"label": "订单ID", "value": str(args.get("order_id"))})
+    if args.get("content_id"):
+        fields.insert(2, {"label": "动态ID", "value": str(args.get("content_id"))})
+    if args.get("apply_id"):
+        fields.insert(2, {"label": "申请ID", "value": str(args.get("apply_id"))})
+    if args.get("accepter_id"):
+        fields.insert(3, {"label": "申请者ID", "value": str(args.get("accepter_id"))})
+
+    actions = []
+    if route:
+        actions.append({
+            "label": "查看详情",
+            "route": route,
+            "primary": True,
+        })
+    if action_kind == "order.create":
+        actions.append({
+            "label": "发布配套动态",
+            "prompt": "基于刚才创建的约伴订单，帮我整理一条校园动态草稿，发布前先让我确认。",
+        })
+    elif action_kind == "content.create":
+        actions.append({
+            "label": "继续搜索相关动态",
+            "prompt": "帮我看看最近有没有相关校园动态，先只查询不要评论或点赞。",
+        })
+    elif action_kind.startswith("order."):
+        actions.append({
+            "label": "查看我的订单",
+            "prompt": "帮我看看我最近发布和参与的约伴订单，先只查询。",
+        })
+    elif action_kind.startswith("content."):
+        actions.append({
+            "label": "查看相关动态",
+            "prompt": "帮我看看这条动态附近还有哪些相关评论或校园动态，先只查询。",
+        })
+
+    return {
+        "type": artifact_type,
+        "title": _confirmed_action_title(action_kind, success),
+        "description": "已把确认后的执行结果整理成可操作卡片。",
+        "fields": fields,
+        "actions": actions,
+        "state": "completed" if success else "failed",
+        "intent": {
+            "primary_intent": action_kind,
+            "next_action": "execute_confirmed_write",
+        },
+    }
+
+
+async def _confirmed_success_response(result_text: str, tool_name: str, args: dict, intent: dict) -> dict:
+    action_kind = intent.get("primary_intent") or "other.write"
+    artifact = _build_confirmed_execution_artifact(action_kind, result_text, args)
+    await _emit_event("artifact", artifact)
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": tool_name, "args": args}],
+        "intent": intent,
+        "artifacts": [artifact],
+    }
+
+
 async def _execute_confirmed_order(user_info: dict, fields: dict, user_message: str) -> dict:
     user_id = _current_user_id(user_info)
     context_text = user_message
@@ -3096,11 +3209,7 @@ async def _execute_confirmed_order(user_info: dict, fields: dict, user_message: 
         "detail": "订单创建工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "create_order", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "create_order", args, intent)
 
 
 async def _execute_confirmed_content(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3142,11 +3251,7 @@ async def _execute_confirmed_content(user_info: dict, fields: dict, user_message
         "detail": "动态发布工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "create_content", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "create_content", args, intent)
 
 
 async def _execute_confirmed_comment(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3184,11 +3289,7 @@ async def _execute_confirmed_comment(user_info: dict, fields: dict, user_message
         "detail": "评论工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "create_comment", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "create_comment", args, intent)
 
 
 async def _execute_confirmed_like(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3222,11 +3323,7 @@ async def _execute_confirmed_like(user_info: dict, fields: dict, user_message: s
         "detail": "点赞工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "like_content", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "like_content", args, intent)
 
 
 async def _execute_confirmed_order_apply(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3261,11 +3358,7 @@ async def _execute_confirmed_order_apply(user_info: dict, fields: dict, user_mes
         "detail": "申请加入工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "apply_to_order", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "apply_to_order", args, intent)
 
 
 async def _execute_confirmed_order_cancel_apply(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3299,11 +3392,7 @@ async def _execute_confirmed_order_cancel_apply(user_info: dict, fields: dict, u
         "detail": "撤销申请工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "cancel_order_application", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "cancel_order_application", args, intent)
 
 
 async def _execute_confirmed_order_accept(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3340,11 +3429,7 @@ async def _execute_confirmed_order_accept(user_info: dict, fields: dict, user_me
         "detail": "接受申请工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "accept_applicant", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "accept_applicant", args, intent)
 
 
 async def _execute_confirmed_order_reject_apply(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3378,11 +3463,7 @@ async def _execute_confirmed_order_reject_apply(user_info: dict, fields: dict, u
         "detail": "拒绝申请工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "reject_order_application", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "reject_order_application", args, intent)
 
 
 async def _execute_confirmed_order_complete(user_info: dict, fields: dict, user_message: str) -> dict:
@@ -3416,11 +3497,7 @@ async def _execute_confirmed_order_complete(user_info: dict, fields: dict, user_
         "detail": "完成订单工具已返回结果",
         "state": "completed",
     })
-    return {
-        "reply": result_text,
-        "tool_calls": [{"name": "complete_order", "args": args}],
-        "intent": intent,
-    }
+    return await _confirmed_success_response(result_text, "complete_order", args, intent)
 
 
 async def build_confirmed_execution_response(user_info: dict, history: list, user_message: str) -> dict | None:
