@@ -148,6 +148,21 @@
                     <text v-if="artifact.edited" class="artifact-review-chip changed">已修改</text>
                   </view>
                 </view>
+                <view v-if="isContentDraftConfirmation(artifact)" class="content-draft-preview">
+                  <view class="content-draft-head">
+                    <view class="content-draft-avatar">{{ getContentDraftAvatar(artifact) }}</view>
+                    <view class="content-draft-meta-main">
+                      <text class="content-draft-author">校园动态草稿</text>
+                      <text class="content-draft-subtitle">{{ getContentDraftSubtitle(artifact) }}</text>
+                    </view>
+                    <text class="content-draft-state">{{ artifact.edited ? '已修改' : '预览' }}</text>
+                  </view>
+                  <view class="content-draft-body">{{ getContentDraftBody(artifact) }}</view>
+                  <view class="content-draft-foot">
+                    <text v-if="getContentDraftOrderId(artifact)" class="content-draft-link">关联订单 #{{ getContentDraftOrderId(artifact) }}</text>
+                    <text class="content-draft-media">{{ getContentDraftMediaType(artifact) }}</text>
+                  </view>
+                </view>
                 <template v-if="isRouteGuideArtifact(artifact)">
                   <view
                     v-for="routeSummary in [getRouteGuideSummary(artifact)]"
@@ -925,6 +940,50 @@ const getArtifactFieldValue = (artifact, label, fallback = '待确认') => {
   const field = (artifact?.fields || []).find(item => String(item?.label || '') === label)
   const value = formatArtifactValue(field?.value)
   return ['未填写', '待补充'].includes(value) ? fallback : value
+}
+
+const getArtifactActionKind = (artifact) => String(artifact?.actionKind || artifact?.action_kind || '').trim()
+
+const getArtifactFieldByLabels = (artifact, labels) => {
+  const wanted = Array.isArray(labels) ? labels : [labels]
+  return (artifact?.fields || []).find(field => wanted.includes(String(field?.label || '').trim()))
+}
+
+const getArtifactResolvedFieldValue = (artifact, labels, fallback = '') => {
+  const field = getArtifactFieldByLabels(artifact, labels)
+  if (!field) return fallback
+  const rawValue = artifact?.editing ? field.editValue : field.value
+  const value = formatArtifactValue(rawValue)
+  return ['未填写', '待补充'].includes(value) ? fallback : value
+}
+
+const isContentDraftConfirmation = (artifact) =>
+  artifact?.type === 'confirmation' && getArtifactActionKind(artifact) === 'content.create'
+
+const getContentDraftBody = (artifact) =>
+  getArtifactResolvedFieldValue(artifact, ['动态内容', '正文', '内容', '文本'], '这条动态还没有正文，请先补充后再确认。')
+
+const getContentDraftOrderId = (artifact) =>
+  getArtifactResolvedFieldValue(artifact, ['订单ID', '关联订单'], '')
+
+const getContentDraftMediaType = (artifact) => {
+  const mediaType = getArtifactResolvedFieldValue(artifact, ['媒体类型', 'mediaType'], 'TEXT_ONLY')
+  const labels = {
+    TEXT_ONLY: '纯文本',
+    IMAGE: '图片动态',
+    VIDEO: '视频动态'
+  }
+  return labels[String(mediaType).toUpperCase()] || mediaType
+}
+
+const getContentDraftSubtitle = (artifact) => {
+  const orderId = getContentDraftOrderId(artifact)
+  return orderId ? `发布后将关联订单 #${orderId}` : '发布前仍会等待确认'
+}
+
+const getContentDraftAvatar = (artifact) => {
+  const body = getContentDraftBody(artifact).trim()
+  return body ? body.slice(0, 1) : '动'
 }
 
 const getRouteGuideSummary = (artifact) => ({
@@ -3401,6 +3460,102 @@ onUnmounted(detachActiveStream)
   color: #15803d;
 }
 
+.content-draft-preview {
+  margin-top: 14rpx;
+  padding: 16rpx;
+  border: 1rpx solid rgba(20, 184, 166, 0.18);
+  border-radius: 16rpx;
+  background: linear-gradient(135deg, rgba(240, 253, 250, 0.86) 0%, rgba(248, 251, 255, 0.94) 100%);
+}
+
+.content-draft-head {
+  display: flex;
+  align-items: center;
+  gap: 12rpx;
+}
+
+.content-draft-avatar {
+  width: 54rpx;
+  height: 54rpx;
+  border-radius: 18rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 54rpx;
+  background: #0f766e;
+  color: #ffffff;
+  font-size: 24rpx;
+  font-weight: 950;
+  line-height: 54rpx;
+}
+
+.content-draft-meta-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+}
+
+.content-draft-author {
+  color: #172033;
+  font-size: 24rpx;
+  font-weight: 950;
+  line-height: 1.3;
+}
+
+.content-draft-subtitle {
+  color: #667085;
+  font-size: 20rpx;
+  font-weight: 700;
+  line-height: 1.35;
+}
+
+.content-draft-state {
+  flex: 0 0 auto;
+  padding: 6rpx 10rpx;
+  border-radius: 999rpx;
+  background: rgba(20, 184, 166, 0.12);
+  color: #0f766e;
+  font-size: 20rpx;
+  font-weight: 950;
+  line-height: 1.2;
+}
+
+.content-draft-body {
+  margin-top: 14rpx;
+  color: #263244;
+  font-size: 25rpx;
+  font-weight: 750;
+  line-height: 1.52;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.content-draft-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 14rpx;
+}
+
+.content-draft-link,
+.content-draft-media {
+  padding: 7rpx 11rpx;
+  border: 1rpx solid rgba(20, 184, 166, 0.18);
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.72);
+  color: #0f766e;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.content-draft-media {
+  color: #1f447a;
+  border-color: rgba(31, 68, 122, 0.16);
+}
+
 .route-guide-panel {
   display: flex;
   align-items: stretch;
@@ -5372,6 +5527,42 @@ onUnmounted(detachActiveStream)
   .artifact-review-chip.changed {
     background: rgba(34, 197, 94, 0.16);
     color: #bbf7d0;
+  }
+
+  .content-draft-preview {
+    background: linear-gradient(135deg, rgba(20, 184, 166, 0.13) 0%, rgba(16, 26, 42, 0.96) 100%);
+    border-color: rgba(45, 212, 191, 0.24);
+  }
+
+  .content-draft-avatar {
+    background: #0f766e;
+    color: #ccfbf1;
+  }
+
+  .content-draft-author,
+  .content-draft-body {
+    color: #edf4ff;
+  }
+
+  .content-draft-subtitle {
+    color: #94a3b8;
+  }
+
+  .content-draft-state {
+    background: rgba(45, 212, 191, 0.14);
+    color: #99f6e4;
+  }
+
+  .content-draft-link,
+  .content-draft-media {
+    background: rgba(15, 23, 42, 0.42);
+    border-color: rgba(45, 212, 191, 0.22);
+    color: #99f6e4;
+  }
+
+  .content-draft-media {
+    border-color: rgba(147, 197, 253, 0.24);
+    color: #bfdbfe;
   }
 
   .artifact-edit-field.changed .artifact-field-label {
