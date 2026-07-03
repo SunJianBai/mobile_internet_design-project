@@ -183,7 +183,11 @@
                                 </span>
                                 <span v-if="item.subtitle" class="artifact-result-subtitle">{{ item.subtitle }}</span>
                               </span>
-                              <span v-if="item.meta" class="artifact-result-meta">{{ item.meta }}</span>
+                              <span v-if="item.meta || item.actionLabel || item.hint" class="artifact-result-side">
+                                <span v-if="item.meta" class="artifact-result-meta">{{ item.meta }}</span>
+                                <span v-if="item.actionLabel" class="artifact-result-cta">{{ item.actionLabel }}</span>
+                                <span v-if="item.hint" class="artifact-result-hint">{{ item.hint }}</span>
+                              </span>
                             </button>
                           </div>
                           <div v-if="artifact.type === 'plan' && artifact.steps?.length" class="plan-step-list">
@@ -2437,12 +2441,38 @@ onBeforeUnmount(() => {
   word-break: break-word;
 }
 .artifact-result-meta {
-  flex: 0 0 auto;
   max-width: 86px;
   color: #475569;
   font-size: 11px;
   font-weight: 800;
   line-height: 1.25;
+  text-align: right;
+}
+.artifact-result-side {
+  flex: 0 0 auto;
+  max-width: 112px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+}
+.artifact-result-cta {
+  min-width: 58px;
+  padding: 4px 8px;
+  border: 1px solid rgba(37, 99, 235, 0.18);
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+}
+.artifact-result-hint {
+  color: #64748b;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1.2;
   text-align: right;
 }
 .plan-step-list {
@@ -3534,6 +3564,7 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .artifact-edit-field,
 :global(:root[data-theme='dark']) .artifact-result-subtitle,
 :global(:root[data-theme='dark']) .artifact-result-meta,
+:global(:root[data-theme='dark']) .artifact-result-hint,
 :global(:root[data-theme='dark']) .plan-step-detail,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-subtitle),
 :global(:root[data-theme='dark']) .markdown-body :deep(.execution-subtitle),
@@ -3581,6 +3612,12 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .artifact-result-badge {
   background: #223554;
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .artifact-result-cta {
+  background: rgba(96, 165, 250, 0.16);
+  border-color: rgba(147, 197, 253, 0.3);
   color: #bfdbfe;
 }
 

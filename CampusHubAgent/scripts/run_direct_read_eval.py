@@ -153,6 +153,10 @@ async def scenario_map_search_returns_followup_artifact() -> DirectReadResult:
         failures.append(f"expected first map item title to include 沐春足道, got {first_item.get('title')!r}")
     if "116.180100,39.731200" not in first_item.get("meta", ""):
         failures.append(f"expected first map item coordinates, got {first_item.get('meta')!r}")
+    if first_item.get("actionLabel") != "生成草稿":
+        failures.append(f"expected first map item action label, got {first_item.get('actionLabel')!r}")
+    if first_item.get("hint") != "先确认再发布":
+        failures.append(f"expected first map item safety hint, got {first_item.get('hint')!r}")
     if "不要直接发布" not in first_item.get("prompt", ""):
         failures.append("map item prompt should keep the no-direct-publish guard")
     labels = [action.get("label") for action in artifact.get("actions", []) if isinstance(action, dict)]

@@ -3333,6 +3333,8 @@ def _build_order_result_items(orders: list[dict], limit: int = 3) -> list[dict]:
             "subtitle": subtitle or "地点和时间待查看详情",
             "meta": order.get("people") or "人数待查看",
             "badge": order.get("campus_or_status") or "约伴",
+            "actionLabel": "查看订单",
+            "hint": "打开详情",
             "route": f"/orders/{order_id}" if order_id else "",
         })
     return items
@@ -3503,6 +3505,8 @@ def _build_content_result_items(contents: list[dict], limit: int = 3) -> list[di
             "subtitle": text,
             "meta": "查看详情",
             "badge": "动态",
+            "actionLabel": "查看动态",
+            "hint": "打开详情",
             "route": f"/contents/{content_id}" if content_id else "",
         })
     return items
@@ -3650,6 +3654,8 @@ def _build_map_candidate_items(pois: list[dict], limit: int = 3) -> list[dict]:
             "subtitle": address,
             "meta": location or "坐标待补全",
             "badge": "地点",
+            "actionLabel": "生成草稿",
+            "hint": "先确认再发布",
             "prompt": prompt,
         })
     return items

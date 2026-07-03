@@ -122,7 +122,11 @@
                       </view>
                       <text v-if="item.subtitle" class="artifact-result-subtitle">{{ item.subtitle }}</text>
                     </view>
-                    <text v-if="item.meta" class="artifact-result-meta">{{ item.meta }}</text>
+                    <view v-if="item.meta || item.actionLabel || item.hint" class="artifact-result-side">
+                      <text v-if="item.meta" class="artifact-result-meta">{{ item.meta }}</text>
+                      <text v-if="item.actionLabel" class="artifact-result-cta">{{ item.actionLabel }}</text>
+                      <text v-if="item.hint" class="artifact-result-hint">{{ item.hint }}</text>
+                    </view>
                   </button>
                 </view>
                 <view v-if="artifact.type === 'plan' && artifact.steps && artifact.steps.length" class="plan-step-list">
@@ -2498,12 +2502,41 @@ onUnmounted(detachActiveStream)
 }
 
 .artifact-result-meta {
-  flex: 0 0 auto;
   max-width: 120rpx;
   color: #475467;
   font-size: 20rpx;
   font-weight: 800;
   line-height: 1.3;
+  text-align: right;
+}
+
+.artifact-result-side {
+  flex: 0 0 auto;
+  max-width: 150rpx;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6rpx;
+}
+
+.artifact-result-cta {
+  min-width: 92rpx;
+  padding: 7rpx 12rpx;
+  border: 1rpx solid rgba(31, 68, 122, 0.18);
+  border-radius: 999rpx;
+  background: rgba(31, 68, 122, 0.1);
+  color: #1f447a;
+  font-size: 19rpx;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: center;
+}
+
+.artifact-result-hint {
+  color: #667085;
+  font-size: 18rpx;
+  font-weight: 700;
+  line-height: 1.2;
   text-align: right;
 }
 
@@ -3932,12 +3965,19 @@ onUnmounted(detachActiveStream)
   }
 
   .artifact-result-subtitle,
-  .artifact-result-meta {
+  .artifact-result-meta,
+  .artifact-result-hint {
     color: #94a3b8;
   }
 
   .artifact-result-badge {
     background: #223554;
+    color: #bfdbfe;
+  }
+
+  .artifact-result-cta {
+    background: rgba(96, 165, 250, 0.16);
+    border-color: rgba(147, 197, 253, 0.3);
     color: #bfdbfe;
   }
 
