@@ -226,7 +226,23 @@
       <view v-if="messages.length === 0" class="empty-state">
         <view class="empty-logo">AI</view>
         <text class="empty-title">CampusHub AI 助手</text>
-        <text class="empty-subtitle">可以帮你搜索约伴活动、整理校园信息，Markdown 回复会自动排版。</text>
+        <text class="empty-subtitle">选一个真实任务开始，AI 会先查询、整理草稿，并在发布前让你确认。</text>
+        <view class="starter-grid">
+          <button
+            v-for="item in STARTER_PROMPTS"
+            :key="item.title"
+            class="starter-card"
+            hover-class="starter-card-hover"
+            :disabled="loading"
+            @click="sendMessageText(item.prompt)"
+          >
+            <text class="starter-icon">{{ item.icon }}</text>
+            <view class="starter-copy">
+              <text class="starter-title">{{ item.title }}</text>
+              <text class="starter-detail">{{ item.detail }}</text>
+            </view>
+          </button>
+        </view>
       </view>
     </scroll-view>
 
@@ -285,6 +301,33 @@ const memoryLoading = ref(false)
 const showMemoryPanel = ref(false)
 const scrollTop = ref(0)
 const mapStates = ref({})
+
+const STARTER_PROMPTS = [
+  {
+    icon: '图',
+    title: '找附近地点',
+    detail: '三个人足疗按摩，先看店',
+    prompt: '我想要找3个人一起去洗脚按摩，有什么推荐的店吗'
+  },
+  {
+    icon: '约',
+    title: '查可加入约伴',
+    detail: '今晚运动搭子，按校区筛选',
+    prompt: '有没有今天晚上能加入的羽毛球约伴？良乡校区最好，帮我看看'
+  },
+  {
+    icon: '查',
+    title: '先查再建草稿',
+    detail: '看完店铺后再确认发布',
+    prompt: '先帮我找三家附近烤肉店，等我选了再创建约饭订单'
+  },
+  {
+    icon: '稿',
+    title: '发布前确认',
+    detail: '整理动态草稿，不直接发布',
+    prompt: '帮我发个动态：今晚八点三楼自习，缺搭子，看到的同学可以一起来'
+  }
+]
 
 let activeStreamController = null
 let activeMapDrag = null
@@ -2667,6 +2710,79 @@ onUnmounted(detachActiveStream)
   line-height: 1.55;
 }
 
+.starter-grid {
+  width: 100%;
+  max-width: 650rpx;
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16rpx;
+  margin-top: 18rpx;
+}
+
+.starter-card {
+  min-height: 132rpx;
+  padding: 18rpx;
+  border: 1rpx solid #d9e7ff;
+  border-radius: 18rpx;
+  background: rgba(255, 255, 255, 0.92);
+  color: #172033;
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+  text-align: left;
+  line-height: 1.35;
+  box-shadow: 0 14rpx 32rpx rgba(29, 78, 216, 0.08);
+  transition: background 0.16s, border-color 0.16s, transform 0.16s, box-shadow 0.16s;
+}
+
+.starter-card::after {
+  border: none;
+}
+
+.starter-card[disabled] {
+  opacity: 0.58;
+}
+
+.starter-card-hover {
+  background: #edf4ff !important;
+  border-color: #b6ccff !important;
+  transform: translateY(-2rpx);
+  box-shadow: 0 18rpx 38rpx rgba(29, 78, 216, 0.14);
+}
+
+.starter-icon {
+  width: 46rpx;
+  height: 46rpx;
+  flex: 0 0 46rpx;
+  border-radius: 14rpx;
+  background: #edf4ff;
+  color: #1f447a;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 23rpx;
+  font-weight: 800;
+}
+
+.starter-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.starter-title {
+  color: #172033;
+  font-size: 25rpx;
+  font-weight: 800;
+}
+
+.starter-detail {
+  color: #667085;
+  font-size: 22rpx;
+  line-height: 1.38;
+}
+
 .input-bar {
   display: flex;
   align-items: flex-end;
@@ -2817,6 +2933,7 @@ onUnmounted(detachActiveStream)
   .top-action:hover,
   .picker-view:hover,
   .artifact-action:hover,
+  .starter-card:hover,
   .inline-map-control:hover,
   .inline-map-open:hover,
   .memory-close:hover {
@@ -2862,6 +2979,7 @@ onUnmounted(detachActiveStream)
   .assistant-bubble,
   .operation-timeline,
   .artifact-card,
+  .starter-card,
   .inline-map-card,
   .memory-panel {
     background: #172235 !important;
@@ -2898,6 +3016,7 @@ onUnmounted(detachActiveStream)
   .inline-map-title,
   .memory-title,
   .memory-content,
+  .starter-title,
   .empty-title {
     color: #edf4ff;
   }
@@ -2912,9 +3031,22 @@ onUnmounted(detachActiveStream)
   .inline-map-coords,
   .inline-map-hint,
   .memory-empty,
+  .starter-detail,
   .empty-subtitle,
   .status-text {
     color: #94a3b8;
+  }
+
+  .starter-card-hover,
+  .starter-card:hover {
+    background: #1f2d44 !important;
+    border-color: rgba(148, 163, 184, 0.32) !important;
+    box-shadow: 0 18rpx 38rpx rgba(0, 0, 0, 0.24);
+  }
+
+  .starter-icon {
+    background: #223554;
+    color: #bfdbfe;
   }
 
   .operation-step + .operation-step,
