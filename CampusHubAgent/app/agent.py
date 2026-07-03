@@ -425,6 +425,79 @@ def _normalize_delegation_task(task: str) -> str:
     return normalized[:500]
 
 
+DELEGATION_CONCEPT_ALIASES = {
+    "search": ("搜索", "查找", "查询", "推荐", "找", "看看", "看下", "看一下", "search", "find", "recommend"),
+    "create": ("创建", "新建", "生成", "整理", "草稿", "发起", "create", "draft"),
+    "nearby": ("附近", "周边", "附近的", "周围", "周边的", "nearby", "near", "around"),
+    "liangxiang": ("良乡", "良乡校区", "北理良乡", "北京理工大学良乡", "bit liangxiang"),
+    "zhongguancun": ("中关村", "中关村校区"),
+    "map_place": ("地图", "地点", "店", "店铺", "门店", "商家", "位置", "地址", "路线", "经纬度", "map", "place", "shop", "store"),
+    "massage": ("按摩", "足疗", "洗脚", "spa", "massage"),
+    "restaurant": ("餐厅", "吃饭", "约饭", "烤肉", "火锅", "咖啡", "奶茶", "restaurant", "bbq", "cafe"),
+    "basketball": ("篮球", "basketball"),
+    "badminton": ("羽毛球", "badminton"),
+    "running": ("跑步", "操场", "running"),
+    "study": ("自习", "图书馆", "教室", "study"),
+    "weather": ("天气", "下雨", "温度", "weather"),
+    "order": ("订单", "约伴", "活动", "报名", "加入", "order", "activity"),
+    "content": ("动态", "帖子", "评论", "点赞", "发布", "content", "post"),
+}
+
+
+def _delegation_task_concepts(task: str) -> set[str]:
+    normalized = _normalize_delegation_task(task)
+    if not normalized:
+        return set()
+
+    concepts: set[str] = set()
+    for concept, aliases in DELEGATION_CONCEPT_ALIASES.items():
+        if any(alias.lower() in normalized for alias in aliases):
+            concepts.add(concept)
+
+    ids = re.findall(r"(?:订单|动态|内容|用户|order|content|user)[#:\s]*([0-9]+)", normalized, flags=re.IGNORECASE)
+    concepts.update(f"id:{item}" for item in ids[:3])
+
+    dates = re.findall(r"\b(?:20\d{2}[-/年])?\d{1,2}[-/月]\d{1,2}", normalized)
+    concepts.update(f"date:{item}" for item in dates[:2])
+
+    times = re.findall(r"\b\d{1,2}[:：]\d{2}\b", normalized)
+    concepts.update(f"time:{item}" for item in times[:2])
+    return concepts
+
+
+def _build_delegation_signature(agent_key: str, task: str) -> dict | None:
+    concepts = _delegation_task_concepts(task)
+    if len(concepts) < 3:
+        return None
+    return {
+        "agent": agent_key,
+        "concepts": sorted(concepts),
+    }
+
+
+def _delegation_signature_similarity(left: dict | None, right: dict | None) -> float:
+    if not left or not right or left.get("agent") != right.get("agent"):
+        return 0.0
+    left_concepts = set(left.get("concepts") or [])
+    right_concepts = set(right.get("concepts") or [])
+    if len(left_concepts) < 3 or len(right_concepts) < 3:
+        return 0.0
+    union = left_concepts | right_concepts
+    if not union:
+        return 0.0
+    return len(left_concepts & right_concepts) / len(union)
+
+
+def _find_semantic_delegation_reuse(state: dict, signature: dict | None) -> dict | None:
+    if not signature:
+        return None
+    for entry in state.setdefault("semantic_results", {}).values():
+        similarity = _delegation_signature_similarity(signature, entry.get("signature"))
+        if similarity >= 0.72:
+            return {**entry, "similarity": similarity}
+    return None
+
+
 def _get_delegation_state() -> dict:
     state = _delegation_state.get()
     if state is None:
@@ -432,8 +505,10 @@ def _get_delegation_state() -> dict:
             "total": 0,
             "counts": {},
             "results": {},
+            "semantic_results": {},
         }
         _delegation_state.set(state)
+    state.setdefault("semantic_results", {})
     return state
 
 
@@ -446,6 +521,7 @@ async def _run_guarded_sub_agent(
 ) -> str:
     state = _get_delegation_state()
     fingerprint = f"{agent_key}:{_normalize_delegation_task(task)}"
+    semantic_signature = _build_delegation_signature(agent_key, task)
 
     if fingerprint in state["results"]:
         await _emit_event("agent_step", {
@@ -456,6 +532,18 @@ async def _run_guarded_sub_agent(
             "state": "completed",
         })
         return state["results"][fingerprint]
+
+    semantic_reuse = _find_semantic_delegation_reuse(state, semantic_signature)
+    if semantic_reuse:
+        await _emit_event("agent_step", {
+            "phase": "delegation_guard",
+            "agent": agent_key,
+            "title": f"{agent_name}复用相近任务结果",
+            "detail": f"检测到同一轮中语义相近的重复委派，已复用已有结果以避免循环调用（相似度 {semantic_reuse['similarity']:.0%}）",
+            "state": "completed",
+        })
+        state["results"][fingerprint] = semantic_reuse["result"]
+        return semantic_reuse["result"]
 
     agent_count = state["counts"].get(agent_key, 0)
     if state["total"] >= MAX_MAIN_DELEGATIONS:
@@ -482,6 +570,15 @@ async def _run_guarded_sub_agent(
     state["counts"][agent_key] = agent_count + 1
     result = await _run_sub_agent(agent_key, agent_name, system_prompt, tools, task)
     state["results"][fingerprint] = result
+    if semantic_signature:
+        semantic_key = hashlib.sha1(
+            json.dumps(semantic_signature, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        state["semantic_results"][semantic_key] = {
+            "signature": semantic_signature,
+            "result": result,
+            "task": task,
+        }
     return result
 
 

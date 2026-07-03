@@ -87,6 +87,7 @@ async def run_in_guard_context(
             "total": 0,
             "counts": {},
             "results": {},
+            "semantic_results": {},
         })
         event_token = harness.agent._event_sink.set(harness.capture_event)
         try:
@@ -123,6 +124,40 @@ async def scenario_reuses_repeated_task() -> GuardResult:
     if not actual["guard_events"]:
         failures.append("expected a delegation_guard event for result reuse")
     return GuardResult("reuses_repeated_task", not failures, failures, actual)
+
+
+async def scenario_reuses_semantic_paraphrase() -> GuardResult:
+    async def check(harness: GuardHarness) -> dict[str, Any]:
+        first = await harness.run_guarded("map", "搜索北京理工大学良乡校区附近适合三个人的按摩店并展示地图")
+        second = await harness.run_guarded("map", "帮我查北理良乡周边足疗店推荐，最好能看位置")
+        third = await harness.run_guarded("map", "搜索北京理工大学良乡校区附近的篮球场")
+        state = harness.agent._get_delegation_state()
+        return {
+            "first": first,
+            "second": second,
+            "third": third,
+            "call_count": len(harness.calls),
+            "calls": list(harness.calls),
+            "state_total": state["total"],
+            "state_counts": dict(state["counts"]),
+            "guard_events": [item for item in harness.events if item["data"].get("phase") == "delegation_guard"],
+        }
+
+    actual = await run_in_guard_context(check)
+    failures: list[str] = []
+    if actual["first"] != actual["second"]:
+        failures.append("semantic paraphrase should reuse the first map result")
+    if actual["third"] == actual["first"]:
+        failures.append("different place-search subject should not reuse the massage result")
+    if actual["call_count"] != 2:
+        failures.append(f"expected 2 sub-agent calls after semantic reuse and one distinct task, got {actual['call_count']}")
+    if actual["state_total"] != 2:
+        failures.append(f"expected state total 2, got {actual['state_total']}")
+    if actual["state_counts"].get("map") != 2:
+        failures.append(f"expected map count 2, got {actual['state_counts'].get('map')}")
+    if not any("相近任务" in event["data"].get("title", "") for event in actual["guard_events"]):
+        failures.append("expected a delegation_guard event for semantic result reuse")
+    return GuardResult("reuses_semantic_paraphrase", not failures, failures, actual)
 
 
 async def scenario_caps_single_agent() -> GuardResult:
@@ -198,6 +233,7 @@ async def scenario_isolates_user_turns() -> GuardResult:
                     "total": 0,
                     "counts": {},
                     "results": {},
+                    "semantic_results": {},
                 })
                 try:
                     await harness.run_guarded("map", "same task")
@@ -225,6 +261,7 @@ async def scenario_isolates_user_turns() -> GuardResult:
 async def run_all() -> list[GuardResult]:
     scenarios = [
         scenario_reuses_repeated_task,
+        scenario_reuses_semantic_paraphrase,
         scenario_caps_single_agent,
         scenario_caps_total_delegations,
         scenario_isolates_user_turns,
