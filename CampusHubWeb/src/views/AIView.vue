@@ -157,6 +157,25 @@
                               <div class="artifact-title">{{ artifact.title || '结果卡片' }}</div>
                               <div v-if="artifact.description" class="artifact-description">{{ artifact.description }}</div>
                             </div>
+                            <div class="artifact-status-stack">
+                              <span class="artifact-status-pill">{{ getArtifactTypeLabel(artifact) }}</span>
+                              <span v-if="getArtifactCountLabel(artifact)" class="artifact-status-count">{{ getArtifactCountLabel(artifact) }}</span>
+                            </div>
+                          </div>
+                          <div v-if="getArtifactPrimaryActionLabel(artifact)" class="artifact-progress-strip">
+                            <span class="artifact-progress-mark"></span>
+                            <span class="artifact-progress-label">下一步</span>
+                            <span class="artifact-progress-value">{{ getArtifactPrimaryActionLabel(artifact) }}</span>
+                          </div>
+                          <div v-if="getArtifactDigest(artifact).length" class="artifact-digest">
+                            <div
+                              v-for="(digest, digestIndex) in getArtifactDigest(artifact)"
+                              :key="`${artifactIndex}-digest-${digestIndex}`"
+                              class="artifact-digest-chip"
+                            >
+                              <span class="artifact-digest-label">{{ digest.label }}</span>
+                              <span class="artifact-digest-value">{{ digest.value }}</span>
+                            </div>
                           </div>
                           <div v-if="getArtifactHighlights(artifact).length" class="artifact-highlights">
                             <div
@@ -168,7 +187,66 @@
                               <strong>{{ highlight.value }}</strong>
                             </div>
                           </div>
-                          <div v-if="artifact.items?.length" class="artifact-result-list">
+                          <div v-if="artifact.type === 'confirmation'" :class="['artifact-review-panel', { editing: artifact.editing, edited: artifact.edited }]">
+                            <div class="artifact-review-main">
+                              <span class="artifact-review-kicker">{{ getConfirmationReviewKicker(artifact) }}</span>
+                              <span class="artifact-review-title">{{ getConfirmationReviewTitle(artifact) }}</span>
+                            </div>
+                            <div class="artifact-review-chips">
+                              <span class="artifact-review-chip">{{ artifactHasMissingFields(artifact) ? '需补充' : '字段完整' }}</span>
+                              <span v-if="artifact.edited" class="artifact-review-chip changed">已修改</span>
+                            </div>
+                          </div>
+                          <template v-if="isRouteGuideArtifact(artifact)">
+                            <div
+                              v-for="routeSummary in [getRouteGuideSummary(artifact)]"
+                              :key="`${artifactIndex}-route-guide`"
+                              class="route-guide-panel"
+                            >
+                              <div class="route-guide-flow">
+                                <span class="route-node origin">起</span>
+                                <span class="route-line"></span>
+                                <span class="route-node destination">终</span>
+                              </div>
+                              <div class="route-guide-main">
+                                <div class="route-place-row">
+                                  <div class="route-place">
+                                    <span class="route-place-label">起点</span>
+                                    <strong class="route-place-value">{{ routeSummary.origin }}</strong>
+                                  </div>
+                                  <div class="route-place">
+                                    <span class="route-place-label">终点</span>
+                                    <strong class="route-place-value">{{ routeSummary.destination }}</strong>
+                                  </div>
+                                </div>
+                                <div class="route-metrics">
+                                  <div class="route-metric">
+                                    <span>方式</span>
+                                    <strong>{{ routeSummary.mode }}</strong>
+                                  </div>
+                                  <div class="route-metric">
+                                    <span>距离</span>
+                                    <strong>{{ routeSummary.distance }}</strong>
+                                  </div>
+                                  <div class="route-metric">
+                                    <span>耗时</span>
+                                    <strong>{{ routeSummary.duration }}</strong>
+                                  </div>
+                                </div>
+                                <div v-if="getRouteGuideSteps(artifact).length" class="route-step-list">
+                                  <div
+                                    v-for="(step, stepIndex) in getRouteGuideSteps(artifact)"
+                                    :key="`${artifactIndex}-route-step-${stepIndex}`"
+                                    class="route-step"
+                                  >
+                                    <span class="route-step-index">{{ stepIndex + 1 }}</span>
+                                    <span class="route-step-text">{{ step }}</span>
+                                  </div>
+                                </div>
+                              </div>
+                            </div>
+                          </template>
+                          <div v-if="artifact.items?.length && !isRouteGuideArtifact(artifact)" class="artifact-result-list">
                             <button
                               v-for="(item, itemIndex) in artifact.items"
                               :key="`${artifactIndex}-item-${itemIndex}`"
@@ -954,8 +1032,125 @@ function getArtifactIcon(artifact) {
   return 'i'
 }
 
+const ARTIFACT_TYPE_LABELS = {
+  confirmation: '确认草稿',
+  plan: '执行计划',
+  weather: '天气建议',
+  guide: '地点路线',
+  order: '约伴结果',
+  content: '动态结果',
+  memory: '长期记忆',
+  user: '用户资料',
+  generic: '结果卡片'
+}
+
+function getArtifactTypeLabel(artifact) {
+  const type = String(artifact?.type || 'generic')
+  return ARTIFACT_TYPE_LABELS[type] || '结果卡片'
+}
+
+function getArtifactCountLabel(artifact) {
+  const itemCount = Array.isArray(artifact?.items) ? artifact.items.length : 0
+  if (itemCount) return `${itemCount} 项结果`
+
+  const stepCount = Array.isArray(artifact?.steps) ? artifact.steps.length : 0
+  if (stepCount) return `${stepCount} 步`
+
+  const visibleFieldCount = (artifact?.fields || [])
+    .filter(field => field?.label && !isArtifactFieldMissing(field))
+    .length
+  if (visibleFieldCount) return `${visibleFieldCount} 个字段`
+
+  return ''
+}
+
+function getArtifactPrimaryActionLabel(artifact) {
+  if (artifact?.type === 'confirmation') {
+    return artifactHasMissingFields(artifact) ? '补充信息' : '等待确认'
+  }
+
+  const actions = Array.isArray(artifact?.actions) ? artifact.actions : []
+  const primaryAction = actions.find(action => action?.primary) || actions[0]
+  if (primaryAction?.label) return String(primaryAction.label)
+
+  const items = Array.isArray(artifact?.items) ? artifact.items : []
+  const actionableItem = items.find(artifactItemHasAction)
+  if (actionableItem?.actionLabel) return String(actionableItem.actionLabel)
+
+  if (artifact?.type === 'guide') return isRouteGuideArtifact(artifact) ? '查看路线' : '可生成草稿'
+  if (artifact?.type === 'weather') return '查看建议'
+  if (['order', 'content', 'user'].includes(artifact?.type)) return '查看详情'
+  if (artifact?.type === 'memory') return '可管理'
+  if (artifact?.type === 'plan') return '按计划执行'
+  return ''
+}
+
+function getArtifactDigest(artifact) {
+  const chips = []
+  const countLabel = getArtifactCountLabel(artifact)
+  if (countLabel) chips.push({ label: '内容', value: countLabel })
+
+  const guardField = (artifact?.fields || []).find(field =>
+    ['调度守卫', '安全策略', '写操作保护'].includes(String(field?.label || ''))
+  )
+  if (guardField && !isArtifactFieldMissing(guardField)) {
+    chips.push({ label: '守卫', value: truncateArtifactValue(formatArtifactValue(guardField.value), 14) })
+  }
+
+  if (artifact?.type === 'confirmation') {
+    chips.push({ label: '状态', value: artifactHasMissingFields(artifact) ? '待补充' : '待确认' })
+  } else if (artifact?.type === 'plan') {
+    chips.push({ label: '状态', value: '已规划' })
+  }
+
+  return chips.slice(0, 3)
+}
+
+function getConfirmationReviewKicker(artifact) {
+  if (artifact?.editing) return '编辑中'
+  if (artifact?.edited) return '已修改'
+  return artifactHasMissingFields(artifact) ? '待补充' : '待确认'
+}
+
+function getConfirmationReviewTitle(artifact) {
+  if (artifact?.editing) return '修改会保留在这张确认卡片中'
+  if (artifact?.edited) return '将按当前字段确认执行'
+  return artifactHasMissingFields(artifact) ? '补全字段后再确认执行' : '确认前不会执行写操作'
+}
+
 function isActionCardArtifact(artifact) {
   return ['guide', 'weather', 'order', 'content', 'memory', 'user'].includes(artifact?.type)
+}
+
+function isRouteGuideArtifact(artifact) {
+  if (artifact?.type !== 'guide') return false
+  const title = String(artifact?.title || '')
+  const labels = (artifact?.fields || []).map(field => String(field?.label || ''))
+  return title.includes('路线') || (labels.includes('起点') && labels.includes('终点'))
+}
+
+function getArtifactFieldValue(artifact, label, fallback = '待确认') {
+  const field = (artifact?.fields || []).find(item => String(item?.label || '') === label)
+  const value = formatArtifactValue(field?.value)
+  return ['未填写', '待补充'].includes(value) ? fallback : value
+}
+
+function getRouteGuideSummary(artifact) {
+  return {
+    origin: getArtifactFieldValue(artifact, '起点'),
+    destination: getArtifactFieldValue(artifact, '终点'),
+    mode: getArtifactFieldValue(artifact, '方式'),
+    distance: getArtifactFieldValue(artifact, '距离'),
+    duration: getArtifactFieldValue(artifact, '耗时')
+  }
+}
+
+function getRouteGuideSteps(artifact) {
+  if (!isRouteGuideArtifact(artifact)) return []
+  return (artifact?.items || [])
+    .map(item => String(item?.title || item?.detail || item?.subtitle || '').replace(/^\d+\.\s*/, '').trim())
+    .filter(Boolean)
+    .slice(0, 5)
 }
 
 function getArtifactHighlights(artifact) {
@@ -1094,12 +1289,14 @@ function handleArtifactAction(artifact, action) {
   if (action === 'save-edit') {
     if (!applyArtifactEdits(artifact)) return
     artifact.editing = false
+    artifact.edited = true
     ElMessage.success('草稿已更新，请确认后执行')
     return
   }
   if (action === 'confirm-edited') {
     if (!applyArtifactEdits(artifact)) return
     artifact.editing = false
+    artifact.edited = true
     sendMessageText(buildArtifactConfirmMessage(artifact, true))
     return
   }
@@ -2422,7 +2619,10 @@ onBeforeUnmount(() => {
   font-weight: 800;
   flex: 0 0 24px;
 }
-.artifact-heading { min-width: 0; }
+.artifact-heading {
+  flex: 1;
+  min-width: 0;
+}
 .artifact-title {
   color: #0f172a;
   font-size: 14px;
@@ -2434,6 +2634,110 @@ onBeforeUnmount(() => {
   color: #64748b;
   font-size: 12px;
   line-height: 1.5;
+}
+.artifact-status-stack {
+  max-width: 120px;
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 4px;
+  flex: 0 0 auto;
+}
+.artifact-status-pill {
+  max-width: 120px;
+  padding: 3px 8px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.68);
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-status-count {
+  max-width: 120px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+  overflow: hidden;
+  text-align: right;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-progress-strip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 7px 9px;
+  border: 1px solid rgba(37, 99, 235, 0.1);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.58);
+}
+.artifact-progress-mark {
+  width: 22px;
+  height: 4px;
+  border-radius: 999px;
+  background: linear-gradient(90deg, #2563eb 0%, rgba(37, 99, 235, 0.24) 100%);
+  flex: 0 0 22px;
+}
+.artifact-progress-label {
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+  flex: 0 0 auto;
+}
+.artifact-progress-value {
+  min-width: 0;
+  overflow: hidden;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-digest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.artifact-digest-chip {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 5px 8px;
+  border: 1px solid rgba(37, 99, 235, 0.12);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.62);
+}
+.artifact-digest-label {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+.artifact-digest-value {
+  min-width: 0;
+  max-width: 140px;
+  overflow: hidden;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 .artifact-highlights {
   display: flex;
@@ -2466,6 +2770,177 @@ onBeforeUnmount(() => {
   font-weight: 900;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+.artifact-review-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  margin-top: 10px;
+  padding: 10px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  border-radius: 9px;
+  background: rgba(239, 246, 255, 0.74);
+}
+.artifact-review-panel.editing {
+  border-color: rgba(217, 119, 6, 0.24);
+  background: rgba(255, 251, 235, 0.84);
+}
+.artifact-review-panel.edited {
+  border-color: rgba(22, 163, 74, 0.22);
+  background: rgba(240, 253, 244, 0.84);
+}
+.artifact-review-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+.artifact-review-kicker {
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.25;
+}
+.artifact-review-title {
+  color: #172033;
+  font-size: 12px;
+  font-weight: 850;
+  line-height: 1.35;
+}
+.artifact-review-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+.artifact-review-chip {
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.artifact-review-chip.changed {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+.route-guide-panel {
+  display: flex;
+  align-items: stretch;
+  gap: 12px;
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(37, 99, 235, 0.16);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.96) 0%, rgba(248, 251, 255, 0.96) 100%);
+}
+.route-guide-flow {
+  width: 28px;
+  flex: 0 0 28px;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 2px 0;
+}
+.route-node {
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: #ffffff;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 28px;
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.18);
+}
+.route-node.origin { background: #2563eb; }
+.route-node.destination { background: #059669; }
+.route-line {
+  width: 2px;
+  flex: 1;
+  min-height: 48px;
+  margin: 6px 0;
+  border-radius: 999px;
+  background: linear-gradient(180deg, #60a5fa 0%, #34d399 100%);
+}
+.route-guide-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+.route-place-row {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.route-place,
+.route-metric {
+  min-width: 0;
+  padding: 8px;
+  border: 1px solid rgba(148, 163, 184, 0.18);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.72);
+}
+.route-place-label,
+.route-metric span {
+  display: block;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+}
+.route-place-value,
+.route-metric strong {
+  display: block;
+  margin-top: 3px;
+  color: #172033;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.route-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 8px;
+}
+.route-step-list {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+}
+.route-step {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+}
+.route-step-index {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 50%;
+  background: rgba(37, 99, 235, 0.12);
+  color: #1d4ed8;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 22px;
+  text-align: center;
+}
+.route-step-text {
+  flex: 1;
+  min-width: 0;
+  color: #475569;
+  font-size: 12px;
+  line-height: 1.45;
+  word-break: break-word;
 }
 .artifact-result-list {
   display: grid;
@@ -3710,6 +4185,10 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .artifact-title,
 :global(:root[data-theme='dark']) .artifact-field-value,
+:global(:root[data-theme='dark']) .artifact-progress-value,
+:global(:root[data-theme='dark']) .artifact-review-title,
+:global(:root[data-theme='dark']) .route-place-value,
+:global(:root[data-theme='dark']) .route-metric strong,
 :global(:root[data-theme='dark']) .plan-step-title,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-title),
 :global(:root[data-theme='dark']) .markdown-body :deep(.execution-title),
@@ -3720,11 +4199,73 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .artifact-field,
 :global(:root[data-theme='dark']) .artifact-result-item,
+:global(:root[data-theme='dark']) .artifact-status-pill,
+:global(:root[data-theme='dark']) .artifact-progress-strip,
+:global(:root[data-theme='dark']) .artifact-digest-chip,
+:global(:root[data-theme='dark']) .route-place,
+:global(:root[data-theme='dark']) .route-metric,
 :global(:root[data-theme='dark']) .plan-step,
 :global(:root[data-theme='dark']) .artifact-edit-field textarea {
   background: #101a2a;
   border-color: rgba(148, 163, 184, 0.22);
   color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .artifact-status-count,
+:global(:root[data-theme='dark']) .artifact-progress-label,
+:global(:root[data-theme='dark']) .artifact-digest-label,
+:global(:root[data-theme='dark']) .route-place-label,
+:global(:root[data-theme='dark']) .route-metric span,
+:global(:root[data-theme='dark']) .route-step-text {
+  color: #94a3b8;
+}
+
+:global(:root[data-theme='dark']) .artifact-status-pill,
+:global(:root[data-theme='dark']) .artifact-digest-value {
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .artifact-progress-mark {
+  background: linear-gradient(90deg, #93c5fd 0%, rgba(147, 197, 253, 0.24) 100%);
+}
+
+:global(:root[data-theme='dark']) .artifact-review-panel {
+  background: rgba(37, 99, 235, 0.14);
+  border-color: rgba(96, 165, 250, 0.24);
+}
+
+:global(:root[data-theme='dark']) .artifact-review-panel.editing {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.34);
+}
+
+:global(:root[data-theme='dark']) .artifact-review-panel.edited {
+  background: rgba(34, 197, 94, 0.12);
+  border-color: rgba(74, 222, 128, 0.28);
+}
+
+:global(:root[data-theme='dark']) .artifact-review-kicker,
+:global(:root[data-theme='dark']) .artifact-review-chip {
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .artifact-review-chip {
+  background: rgba(96, 165, 250, 0.14);
+}
+
+:global(:root[data-theme='dark']) .artifact-review-chip.changed {
+  background: rgba(34, 197, 94, 0.14);
+  color: #86efac;
+}
+
+:global(:root[data-theme='dark']) .route-guide-panel {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.12) 0%, rgba(16, 26, 42, 0.96) 100%);
+  border-color: rgba(96, 165, 250, 0.22);
+}
+
+:global(:root[data-theme='dark']) .route-step-index {
+  background: rgba(96, 165, 250, 0.18);
+  color: #bfdbfe;
 }
 
 :global(:root[data-theme='dark']) .plan-step-index {
@@ -4233,6 +4774,79 @@ onBeforeUnmount(() => {
 
 :global(html[data-theme='dark'] .ai-view .artifact-highlight strong) {
   color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-status-pill),
+:global(html[data-theme='dark'] .ai-view .artifact-progress-strip),
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip),
+:global(html[data-theme='dark'] .ai-view .route-place),
+:global(html[data-theme='dark'] .ai-view .route-metric) {
+  background: #101a2a !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-status-count),
+:global(html[data-theme='dark'] .ai-view .artifact-progress-label),
+:global(html[data-theme='dark'] .ai-view .artifact-digest-label),
+:global(html[data-theme='dark'] .ai-view .route-place-label),
+:global(html[data-theme='dark'] .ai-view .route-metric span),
+:global(html[data-theme='dark'] .ai-view .route-step-text) {
+  color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-status-pill),
+:global(html[data-theme='dark'] .ai-view .artifact-digest-value) {
+  color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-progress-mark) {
+  background: linear-gradient(90deg, #93c5fd 0%, rgba(147, 197, 253, 0.24) 100%) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-progress-value),
+:global(html[data-theme='dark'] .ai-view .artifact-review-title),
+:global(html[data-theme='dark'] .ai-view .route-place-value),
+:global(html[data-theme='dark'] .ai-view .route-metric strong) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-review-panel) {
+  background: rgba(37, 99, 235, 0.14) !important;
+  border-color: rgba(96, 165, 250, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-review-panel.editing) {
+  background: rgba(245, 158, 11, 0.12) !important;
+  border-color: rgba(245, 158, 11, 0.34) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-review-panel.edited) {
+  background: rgba(34, 197, 94, 0.12) !important;
+  border-color: rgba(74, 222, 128, 0.28) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-review-kicker),
+:global(html[data-theme='dark'] .ai-view .artifact-review-chip) {
+  color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-review-chip) {
+  background: rgba(96, 165, 250, 0.14) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-review-chip.changed) {
+  background: rgba(34, 197, 94, 0.14) !important;
+  color: #86efac !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .route-guide-panel) {
+  background: linear-gradient(135deg, rgba(37, 99, 235, 0.12) 0%, rgba(16, 26, 42, 0.96) 100%) !important;
+  border-color: rgba(96, 165, 250, 0.22) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .route-step-index) {
+  background: rgba(96, 165, 250, 0.18) !important;
+  color: #bfdbfe !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .plan-step-detail) {
