@@ -317,9 +317,9 @@
             </view>
             <text v-else-if="msg.status && !msg.content" class="status-text">{{ msg.status }}</text>
             <rich-text
-              v-if="msg.content"
+              v-if="getRenderedMessageContent(msg)"
               class="markdown-body"
-              :nodes="formatContent(msg.content)"
+              :nodes="formatContent(getRenderedMessageContent(msg))"
               @itemclick="handleRichTextItemClick"
             />
             <view
@@ -1256,6 +1256,48 @@ const formatArtifactValue = (value) => {
   if (Array.isArray(value)) return value.join('、')
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+const CONFIRMATION_READY_TIP = '确认无误后，可以点击确认执行，或直接回复“确认”。'
+const CONFIRMATION_MISSING_TIP = '请先补充待补充字段，再点击确认执行。'
+
+const buildRenderedConfirmationSummary = (artifact) => {
+  if (!artifact?.fields?.length) return ''
+  const lines = []
+  const title = String(artifact.title || '').trim()
+  const actionKind = String(artifact.actionKind || artifact.action_kind || '').trim()
+  if (title) lines.push(`标题: ${title}`)
+  if (actionKind) lines.push(`操作类型: ${actionKind}`)
+  ;(artifact.fields || []).forEach(field => {
+    const label = String(field?.label || '').trim()
+    if (!label) return
+    const value = formatArtifactValue(field?.value)
+    if (value) lines.push(`${label}: ${value}`)
+  })
+  if (!lines.length) return ''
+  const tip = artifactHasMissingFields(artifact) ? CONFIRMATION_MISSING_TIP : CONFIRMATION_READY_TIP
+  return `确认草稿摘要：\n\n${lines.join('\n')}\n\n${tip}`
+}
+
+const patchConfirmationSummaryText = (content, artifact) => {
+  const text = String(content || '')
+  if (!text || !artifact?.edited) return text
+  const summary = buildRenderedConfirmationSummary(artifact)
+  if (!summary) return text
+  const summaryPattern = new RegExp(
+    `确认草稿摘要[：:][\\s\\S]*?(?:${CONFIRMATION_READY_TIP}|${CONFIRMATION_MISSING_TIP})`
+  )
+  if (summaryPattern.test(text)) {
+    return text.replace(summaryPattern, summary)
+  }
+  return `${text.trim()}\n\n${summary}`.trim()
+}
+
+const getRenderedMessageContent = (message) => {
+  const content = String(message?.content || '')
+  const editedConfirmation = (message?.artifacts || [])
+    .find(artifact => artifact?.type === 'confirmation' && artifact?.edited && artifact?.fields?.length)
+  return editedConfirmation ? patchConfirmationSummaryText(content, editedConfirmation) : content
 }
 
 const isArtifactFieldMissing = (field) => {
