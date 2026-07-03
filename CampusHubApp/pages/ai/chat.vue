@@ -5156,6 +5156,14 @@ onUnmounted(detachActiveStream)
     color: #ffffff;
   }
 
+  .chat-container .send-btn[disabled] {
+    background: #1f2d44 !important;
+    border-color: rgba(148, 163, 184, 0.18) !important;
+    color: #64748b !important;
+    box-shadow: none !important;
+    opacity: 1;
+  }
+
   .artifact-action.ghost {
     color: #94a3b8;
   }
@@ -5227,9 +5235,12 @@ onUnmounted(detachActiveStream)
     color: #bfdbfe;
   }
 
-  .input-bar {
-    background: #0f1726;
-    border-top-color: rgba(148, 163, 184, 0.18);
+  .chat-container .input-bar {
+    background: rgba(15, 23, 38, 0.96) !important;
+    border-top-color: rgba(148, 163, 184, 0.18) !important;
+    box-shadow: 0 -10rpx 24rpx rgba(0, 0, 0, 0.28);
+    -webkit-backdrop-filter: blur(24rpx) saturate(1.2);
+    backdrop-filter: blur(24rpx) saturate(1.2);
   }
 
   .memory-mask {
