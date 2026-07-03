@@ -145,6 +145,16 @@ async def scenario_map_search_returns_followup_artifact() -> DirectReadResult:
         failures.append("map direct flow should emit an artifact event for streaming clients")
     if artifact.get("type") != "guide":
         failures.append(f"expected guide artifact, got {artifact.get('type')!r}")
+    items = artifact.get("items") or []
+    if len(items) != 2:
+        failures.append(f"expected 2 structured map candidate items, got {len(items)}")
+    first_item = items[0] if items else {}
+    if "沐春足道" not in first_item.get("title", ""):
+        failures.append(f"expected first map item title to include 沐春足道, got {first_item.get('title')!r}")
+    if "116.180100,39.731200" not in first_item.get("meta", ""):
+        failures.append(f"expected first map item coordinates, got {first_item.get('meta')!r}")
+    if "不要直接发布" not in first_item.get("prompt", ""):
+        failures.append("map item prompt should keep the no-direct-publish guard")
     labels = [action.get("label") for action in artifact.get("actions", []) if isinstance(action, dict)]
     if "用第一家创建约伴草稿" not in labels:
         failures.append("expected an action for creating a draft from the first POI")

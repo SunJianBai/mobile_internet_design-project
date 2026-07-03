@@ -3635,6 +3635,26 @@ def _format_map_direct_reply(keyword: str, center_name: str, pois: list[dict]) -
     return "\n".join(lines).strip()
 
 
+def _build_map_candidate_items(pois: list[dict], limit: int = 3) -> list[dict]:
+    items = []
+    for index, poi in enumerate(pois[:limit], start=1):
+        name = str(poi.get("name") or f"地点{index}")
+        address = str(poi.get("address") or "地址暂缺")
+        location = str(poi.get("location") or "")
+        prompt = f"基于地图里的「{name}」创建一个约伴订单草稿"
+        if location:
+            prompt += f"，地点坐标：{location}"
+        prompt += "。如果还缺少必要信息，请先让我补充；不要直接发布。"
+        items.append({
+            "title": f"{index}. {name}",
+            "subtitle": address,
+            "meta": location or "坐标待补全",
+            "badge": "地点",
+            "prompt": prompt,
+        })
+    return items
+
+
 def _build_map_followup_artifact(keyword: str, center_name: str, pois: list[dict], intent_analysis: dict) -> dict:
     first = pois[0] if pois else {}
     first_name = str(first.get("name") or "第一个地点")
@@ -3654,6 +3674,7 @@ def _build_map_followup_artifact(keyword: str, center_name: str, pois: list[dict
             {"label": "可选地点", "value": f"{len(pois)} 个可渲染地图结果"},
             {"label": "写操作保护", "value": "创建、发布、报名等操作都会先确认"},
         ],
+        "items": _build_map_candidate_items(pois),
         "actions": [
             {
                 "label": "用第一家创建约伴草稿",
