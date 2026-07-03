@@ -308,6 +308,10 @@ async def scenario_order_search_returns_result_artifact() -> DirectReadResult:
     first_action = actions[0] if actions else {}
     if first_action.get("route") != "/orders/42":
         failures.append(f"expected first order route, got {first_action.get('route')!r}")
+    if not any(action.get("label") == "申请加入第一条" and "订单#42" in action.get("prompt", "") for action in actions):
+        failures.append("order result card should offer a first-result apply confirmation action")
+    if not any("不要直接提交" in action.get("prompt", "") for action in actions):
+        failures.append("order apply prompt should keep the no-direct-submit guard")
     if not any("不要直接发布" in action.get("prompt", "") for action in actions):
         failures.append("order follow-up prompt should keep the no-direct-publish guard")
     return DirectReadResult("order_search_returns_result_artifact", not failures, failures, actual)
@@ -400,6 +404,8 @@ async def scenario_content_search_returns_result_artifact() -> DirectReadResult:
     first_action = actions[0] if actions else {}
     if first_action.get("route") != "/contents/77":
         failures.append(f"expected first content route, got {first_action.get('route')!r}")
+    if not any(action.get("label") == "评论第一条" and "动态#77" in action.get("prompt", "") for action in actions):
+        failures.append("content result card should offer a first-result comment confirmation action")
     if not any("不要直接发布" in action.get("prompt", "") for action in actions):
         failures.append("content draft prompt should keep the no-direct-publish guard")
     return DirectReadResult("content_search_returns_result_artifact", not failures, failures, actual)

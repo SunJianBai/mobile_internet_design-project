@@ -3398,6 +3398,10 @@ def _build_order_result_artifact(order_text: str, args: dict, user_message: str,
                 "primary": True,
             },
             {
+                "label": "申请加入第一条",
+                "prompt": f"我想申请加入订单#{first.get('id')}，请先整理报名确认草稿，不要直接提交。",
+            },
+            {
                 "label": "基于结果建草稿",
                 "prompt": draft_prompt,
             },
@@ -3539,6 +3543,10 @@ def _build_content_result_artifact(content_text: str, keyword: str, intent_analy
                 "label": f"打开动态#{first.get('id')}",
                 "route": f"/contents/{first.get('id')}",
                 "primary": True,
+            },
+            {
+                "label": "评论第一条",
+                "prompt": f"我想评论动态#{first.get('id')}，请先整理评论确认草稿，不要直接发布。",
             },
             {
                 "label": "写类似动态草稿",
