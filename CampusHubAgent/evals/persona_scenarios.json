@@ -266,6 +266,119 @@
         "operation_type": "read",
         "requires_confirmation": false
       }
+    },
+    {
+      "id": "persona_map_foot_massage_exact_bug",
+      "category": "persona_guardrail",
+      "persona": "此前容易被误判为发布动态/订单的地点推荐请求",
+      "message": "我想要找3个人一起去洗脚按摩，有什么推荐的店吗",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "persona_order_search_foot_massage_companion",
+      "category": "persona_order_read",
+      "persona": "想找已有搭子而不是新建订单的人",
+      "message": "今晚有没有人一起去足疗？先帮我看看现有约伴，别新建订单",
+      "expect": {
+        "primary_intent": "order.search",
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_content_search_comments_only",
+      "category": "persona_content_read",
+      "persona": "只想看动态和评论的人",
+      "message": "帮我看看动态 23 下面大家怎么回复的，先别替我评论",
+      "expect": {
+        "primary_intent": "content.search",
+        "domain": "content",
+        "operation_type": "read",
+        "requires_confirmation": false
+      }
+    },
+    {
+      "id": "persona_order_apply_requires_confirm",
+      "category": "persona_order_write",
+      "persona": "想报名约伴但要求先确认的人",
+      "message": "订单 12 我想报名参加，帮我申请一下，但执行前先让我确认",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_order_accept_requires_confirm",
+      "category": "persona_order_write",
+      "persona": "订单发起人处理申请",
+      "message": "订单 18 里 7 号同学的申请通过一下，先生成确认卡片",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_memory_forget_preference",
+      "category": "persona_memory_write",
+      "persona": "想删除或修改 AI 记忆的人",
+      "message": "之前记的我不吃辣这条偏好忘掉吧，别直接改，先确认",
+      "expect": {
+        "primary_intent": "memory.manage",
+        "domain": "memory",
+        "operation_type_any": ["write", "mixed"],
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_map_second_choice_to_order",
+      "category": "persona_multi_step",
+      "persona": "先查地图后选择第二个地点发起订单",
+      "message": "第二家看起来不错，帮我整理成后天晚上八点四个人去的约伴草稿，先不要发布",
+      "history": [
+        {
+          "role": "user",
+          "content": "帮我找几家良乡附近适合四个人去的足疗按摩店"
+        },
+        {
+          "role": "assistant",
+          "content": "1. 景阳阁SPA会所，地址：良乡大学城附近，经纬度：116.181457,39.730239\n2. 沐足养生馆，地址：长阳路附近，经纬度：116.173210,39.725880\n3. 康体足道，地址：拱辰大街附近，经纬度：116.147001,39.735003"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action_any": ["ask_clarification", "prepare_draft"]
+      }
+    },
+    {
+      "id": "persona_map_weekend_fun_no_write",
+      "category": "persona_guardrail",
+      "persona": "泛泛说想约朋友但当前只要地点建议",
+      "message": "周末想拉几个朋友出去玩，你先推荐几个附近能去的地方，不要帮我发动态也不要建活动",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
     }
   ]
 }

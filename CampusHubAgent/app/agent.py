@@ -905,7 +905,18 @@ def _contains_blocking_write_negation(text: str) -> bool:
     """Return true when the user is negating the write itself, not asking for confirmation first."""
     if _has_any(text, ("取消", "不想")):
         return True
-    direct_confirmation_cues = ("不要直接", "别直接", "不要马上", "别马上", "先确认", "先让我确认")
+    direct_confirmation_cues = (
+        "不要直接",
+        "别直接",
+        "不要马上",
+        "别马上",
+        "先确认",
+        "先让我确认",
+        "先不要发布",
+        "先别发布",
+        "先不要发",
+        "先别发",
+    )
     if _has_any(text, direct_confirmation_cues):
         return False
     return _has_any(
@@ -919,14 +930,28 @@ def _contains_blocking_write_negation(text: str) -> bool:
             "别发布",
             "不要发动态",
             "别发动态",
+            "不要帮我发动态",
+            "别帮我发动态",
+            "不用帮我发动态",
+            "不要替我发动态",
+            "别替我发动态",
+            "不要建活动",
+            "别建活动",
+            "不用建活动",
             "不要发订单",
             "别发订单",
+            "不要建订单",
+            "别建订单",
             "不要报名",
             "别报名",
             "不要申请",
             "别申请",
             "不要评论",
             "别评论",
+            "不要替我评论",
+            "别替我评论",
+            "不要帮我评论",
+            "别帮我评论",
             "不要点赞",
             "别点赞",
         ),
@@ -1056,6 +1081,19 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "不用发布",
         "不要发",
         "别发",
+        "不要帮我发",
+        "别帮我发",
+        "不用帮我发",
+        "不要替我发",
+        "别替我发",
+        "不要评论",
+        "别评论",
+        "不要替我评论",
+        "别替我评论",
+        "不要帮我评论",
+        "别帮我评论",
+        "不要点赞",
+        "别点赞",
         "先只",
         "只推荐",
         "先推荐",
@@ -1368,6 +1406,17 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
             "summary": "用户想给动态点赞",
             "missing_slots": [],
             "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    if _has_any(text, ("接受申请", "同意申请", "通过申请", "同意加入", "通过一下", "同意一下")):
+        return {
+            **base,
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "summary": "用户想处理约伴订单申请",
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
             "next_action": "prepare_draft",
         }
 
