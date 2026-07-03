@@ -46,6 +46,19 @@
       }
     },
     {
+      "id": "map_noisy_english_restaurant_typo",
+      "category": "map_read",
+      "message": "Tesfind resturants near BIT Liangxiang for three people, show map, no order",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools",
+        "max_duration_ms": 1000
+      }
+    },
+    {
       "id": "map_route_to_cinema",
       "category": "map_read",
       "message": "从北理工良乡校区到最近的电影院怎么走，顺便给我地图",
