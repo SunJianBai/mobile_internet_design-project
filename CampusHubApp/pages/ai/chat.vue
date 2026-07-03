@@ -480,14 +480,10 @@
             <text class="memory-title">AI 记忆</text>
             <text class="memory-subtitle">{{ memoryPanelSubtitle }}</text>
           </view>
-          <view class="memory-close-btn" hover-class="memory-icon-btn-hover" @click="closeMemoryPanel">
-            <text>关闭</text>
-          </view>
         </view>
         <view class="memory-actions">
-          <view class="memory-icon-btn" :class="{ disabled: memoryLoading }" hover-class="memory-icon-btn-hover" @click.stop="loadMemories">
-            <text>刷新</text>
-          </view>
+          <text class="memory-text-action primary" :class="{ disabled: memoryLoading }" @click.stop="loadMemories">刷新记忆</text>
+          <text class="memory-text-action" @click="closeMemoryPanel">关闭面板</text>
         </view>
       </view>
       <scroll-view class="memory-list" scroll-y>
@@ -504,7 +500,7 @@
             <text class="memory-state-title">加载失败</text>
             <text class="memory-state-text">{{ memoryError }}</text>
           </view>
-          <button class="memory-retry" hover-class="memory-icon-btn-hover" @click.stop="loadMemories">重试</button>
+          <button class="memory-retry" hover-class="memory-retry-hover" @click.stop="loadMemories">重试</button>
         </view>
         <view v-else-if="memories.length === 0" class="memory-empty">
           <text class="memory-empty-icon">记</text>
@@ -515,9 +511,9 @@
           <view class="memory-main">
             <view class="memory-item-head">
               <text class="memory-tag">{{ mem.category || '偏好' }}</text>
-              <view class="memory-delete" :class="{ disabled: deletingMemoryId === (mem.memId || mem.id) }" hover-class="memory-delete-hover" @click="deleteMemory(mem)">
-                <text>{{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}</text>
-              </view>
+              <text class="memory-delete" :class="{ disabled: deletingMemoryId === (mem.memId || mem.id) }" @click="deleteMemory(mem)">
+                {{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}
+              </text>
             </view>
             <text class="memory-content">{{ mem.content }}</text>
           </view>
@@ -4278,7 +4274,6 @@ onUnmounted(detachActiveStream)
 
 .tool-btn-hover,
 .inline-map-control-hover,
-.memory-icon-btn-hover,
 .memory-retry-hover {
   background: rgba(31, 68, 122, 0.12) !important;
   border-color: rgba(31, 68, 122, 0.2) !important;
@@ -4531,56 +4526,40 @@ onUnmounted(detachActiveStream)
   display: flex;
   align-items: center;
   gap: 10rpx;
-  justify-content: flex-end;
+  justify-content: flex-start;
+  flex-wrap: wrap;
 }
 
-.memory-icon-btn {
+.memory-text-action {
   flex: 0 0 auto;
-  width: 132rpx;
-  height: 64rpx;
-  padding: 0 18rpx;
+  padding: 13rpx 20rpx;
   border: 1rpx solid #dbeafe;
-  border-radius: 14rpx;
+  border-radius: 999rpx;
   background: #edf4ff;
   color: #1f447a;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 26rpx;
-  font-weight: 900;
-  line-height: 1.2;
-}
-
-.memory-close-btn {
-  flex: 0 0 auto;
-  width: 132rpx;
-  height: 60rpx;
-  padding: 0;
-  border: 1rpx solid #e2e8f0;
-  border-radius: 14rpx;
-  background: #ffffff;
-  color: #475467;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-flex;
   font-size: 24rpx;
   font-weight: 900;
   line-height: 1.2;
 }
 
-.memory-icon-btn.ghost {
+.memory-text-action.primary {
+  background: #1f447a;
+  border-color: #1f447a;
+  color: #ffffff;
+}
+
+.memory-text-action:not(.primary) {
   background: #ffffff;
   color: #475467;
   border-color: #e2e8f0;
 }
 
-.memory-icon-btn.disabled {
+.memory-text-action.disabled {
   opacity: 0.62;
   pointer-events: none;
 }
 
-.memory-icon-btn::after,
-.memory-close-btn::after,
 .memory-retry::after,
 .memory-delete::after {
   border: none;
@@ -4743,19 +4722,18 @@ onUnmounted(detachActiveStream)
 
 .memory-delete {
   flex: 0 0 auto;
-  width: 104rpx;
-  height: 56rpx;
+  min-width: 82rpx;
+  padding: 9rpx 14rpx;
   border: 1rpx solid transparent;
-  border-radius: 14rpx;
+  border-radius: 999rpx;
   background: #fff1f0;
   color: #b42318;
-  display: flex;
-  align-items: center;
-  justify-content: center;
+  display: inline-flex;
   font-size: 24rpx;
   font-weight: 900;
   line-height: 1.2;
-  padding: 0;
+  text-align: center;
+  box-sizing: border-box;
 }
 
 .memory-delete.disabled {
@@ -4832,7 +4810,7 @@ onUnmounted(detachActiveStream)
   .starter-card:hover,
   .inline-map-control:hover,
   .inline-map-open:hover,
-  .memory-icon-btn:hover,
+  .memory-text-action:hover,
   .memory-retry:hover {
     background: rgba(31, 68, 122, 0.12);
   }
@@ -5194,8 +5172,7 @@ onUnmounted(detachActiveStream)
   .reply-action,
   .inline-map-control,
   .inline-map-open,
-  .memory-icon-btn,
-  .memory-close-btn,
+  .memory-text-action,
   .memory-retry,
   .markdown-body :deep(.map-card-action),
   .markdown-body :deep(.entity-link-card) {
@@ -5204,7 +5181,13 @@ onUnmounted(detachActiveStream)
     color: #dbe7f8;
   }
 
-  .memory-icon-btn.ghost {
+  .memory-text-action.primary {
+    background: #3768d8;
+    border-color: #5b8cff;
+    color: #ffffff;
+  }
+
+  .memory-text-action:not(.primary) {
     background: #101a2a;
     border-color: rgba(148, 163, 184, 0.24);
     color: #dbe7f8;
@@ -5250,9 +5233,7 @@ onUnmounted(detachActiveStream)
   .inline-map-control:hover,
   .inline-map-open-hover,
   .inline-map-open:hover,
-  .memory-icon-btn-hover,
-  .memory-icon-btn:hover,
-  .memory-close-btn:hover,
+  .memory-text-action:hover,
   .memory-retry:hover {
     background: #1f2d44 !important;
     border-color: rgba(154, 184, 255, 0.38) !important;
@@ -5264,7 +5245,8 @@ onUnmounted(detachActiveStream)
   .inline-map-order:hover,
   .send-btn-hover,
   .artifact-action.primary.artifact-action-hover,
-  .artifact-action.primary:hover {
+  .artifact-action.primary:hover,
+  .memory-text-action.primary:hover {
     background: #4f7ff0 !important;
     border-color: #7aa2ff !important;
     color: #ffffff !important;
