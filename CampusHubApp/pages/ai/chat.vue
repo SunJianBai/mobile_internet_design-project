@@ -30,6 +30,19 @@
       </view>
     </view>
 
+    <view v-if="activeAgentStatus" class="agent-live-bar" :class="activeAgentStatus.state">
+      <view class="agent-live-pulse" :class="activeAgentStatus.state"></view>
+      <view class="agent-live-copy">
+        <text class="agent-live-kicker">{{ activeAgentStatus.kicker }}</text>
+        <text class="agent-live-title">{{ activeAgentStatus.title }}</text>
+        <text v-if="activeAgentStatus.detail" class="agent-live-detail">{{ activeAgentStatus.detail }}</text>
+      </view>
+      <view class="agent-live-metrics">
+        <text>{{ activeAgentStatus.phase }}</text>
+        <text>{{ activeAgentStatus.progress }}</text>
+      </view>
+    </view>
+
     <scroll-view class="messages-scroll" scroll-y :scroll-top="scrollTop">
       <view
         v-for="msg in messages"
@@ -742,6 +755,41 @@ const getOperationOverview = (message) => {
     metrics: metrics.slice(0, 5)
   }
 }
+
+const activeAgentStatus = computed(() => {
+  const latestAssistant = [...messages.value]
+    .reverse()
+    .find(message =>
+      message?.role !== 'user' &&
+      (
+        message.loading ||
+        (message.operations || []).length ||
+        (message.artifacts || []).some(artifact => artifact?.type === 'confirmation')
+      )
+    )
+
+  if (!latestAssistant) return null
+
+  const operations = Array.isArray(latestAssistant.operations) ? latestAssistant.operations : []
+  const hasActiveOperation = operations.some(item => ['running', 'pending'].includes(item.state))
+  const hasConfirmation = (latestAssistant.artifacts || []).some(item => item?.type === 'confirmation')
+  const shouldShow = loading.value || latestAssistant.loading || hasActiveOperation || hasConfirmation
+  if (!shouldShow) return null
+
+  const overview = getOperationOverview(latestAssistant)
+  const phaseMetric = overview.metrics.find(item => item.label === '阶段')
+  const progressMetric = overview.metrics.find(item => item.label === '进度')
+  const detail = overview.detail || (hasConfirmation ? '请检查确认卡片后再决定是否执行。' : '')
+
+  return {
+    state: overview.state,
+    kicker: hasConfirmation && !latestAssistant.loading ? '等待你的确认' : overview.kicker,
+    title: overview.title,
+    detail,
+    phase: phaseMetric?.value || '处理中',
+    progress: progressMetric?.value || `${operations.length || 1}/${operations.length || 1}`
+  }
+})
 
 const normalizeArtifact = (eventName, data) => {
   const payload = parseAgentEventData(data)
@@ -2468,10 +2516,124 @@ onUnmounted(detachActiveStream)
   opacity: 0.55;
 }
 
+.agent-live-bar {
+  flex-shrink: 0;
+  margin: 0;
+  padding: 16rpx 24rpx;
+  display: flex;
+  align-items: center;
+  gap: 16rpx;
+  border-bottom: 1rpx solid rgba(37, 99, 235, 0.12);
+  background: linear-gradient(135deg, rgba(239, 246, 255, 0.96) 0%, rgba(248, 251, 255, 0.96) 100%);
+  box-shadow: 0 10rpx 24rpx rgba(37, 99, 235, 0.08);
+  box-sizing: border-box;
+}
+
+.agent-live-bar.completed {
+  border-bottom-color: rgba(22, 163, 74, 0.14);
+  background: linear-gradient(135deg, rgba(236, 253, 245, 0.96) 0%, rgba(248, 255, 251, 0.96) 100%);
+}
+
+.agent-live-bar.pending {
+  border-bottom-color: rgba(217, 119, 6, 0.16);
+  background: linear-gradient(135deg, rgba(255, 247, 237, 0.96) 0%, rgba(255, 251, 245, 0.96) 100%);
+}
+
+.agent-live-bar.failed {
+  border-bottom-color: rgba(220, 38, 38, 0.16);
+  background: linear-gradient(135deg, rgba(254, 242, 242, 0.96) 0%, rgba(255, 250, 250, 0.96) 100%);
+}
+
+.agent-live-pulse {
+  width: 18rpx;
+  height: 18rpx;
+  flex: 0 0 18rpx;
+  border-radius: 999rpx;
+  background: #2563eb;
+  box-shadow: 0 0 0 8rpx rgba(37, 99, 235, 0.12);
+  animation: live-pulse 1.4s ease-in-out infinite;
+}
+
+.agent-live-pulse.completed {
+  background: #16a34a;
+  box-shadow: 0 0 0 8rpx rgba(22, 163, 74, 0.12);
+  animation: none;
+}
+
+.agent-live-pulse.pending {
+  background: #d97706;
+  box-shadow: 0 0 0 8rpx rgba(217, 119, 6, 0.12);
+}
+
+.agent-live-pulse.failed {
+  background: #dc2626;
+  box-shadow: 0 0 0 8rpx rgba(220, 38, 38, 0.12);
+  animation: none;
+}
+
+.agent-live-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.agent-live-kicker {
+  color: #2563eb;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.agent-live-title {
+  color: #172033;
+  font-size: 25rpx;
+  font-weight: 900;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-live-detail {
+  color: #64748b;
+  font-size: 21rpx;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.agent-live-metrics {
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  flex: 0 0 auto;
+  max-width: 240rpx;
+}
+
+.agent-live-metrics text {
+  max-width: 220rpx;
+  padding: 6rpx 10rpx;
+  border-radius: 999rpx;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 1.2;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .messages-scroll {
   flex: 1;
   height: 0;
   padding: 26rpx 24rpx;
+  background: #f3f5f9;
   box-sizing: border-box;
 }
 
@@ -4545,6 +4707,11 @@ onUnmounted(detachActiveStream)
   to { transform: rotate(360deg); }
 }
 
+@keyframes live-pulse {
+  0%, 100% { transform: scale(0.86); opacity: 0.72; }
+  50% { transform: scale(1); opacity: 1; }
+}
+
 @media screen and (min-width: 768px) {
   .memory-panel {
     width: 420px;
@@ -4553,6 +4720,18 @@ onUnmounted(detachActiveStream)
 }
 
 @media screen and (max-width: 520px) {
+  .agent-live-bar {
+    align-items: flex-start;
+  }
+
+  .agent-live-metrics {
+    max-width: 180rpx;
+  }
+
+  .agent-live-metrics text {
+    max-width: 170rpx;
+  }
+
   .operation-overview {
     flex-direction: column;
   }
@@ -4608,6 +4787,10 @@ onUnmounted(detachActiveStream)
     background: #101722;
   }
 
+  .messages-scroll {
+    background: #101722;
+  }
+
   .app-top {
     background: #0b1320;
     border-bottom: 1rpx solid rgba(148, 163, 184, 0.18);
@@ -4626,6 +4809,32 @@ onUnmounted(detachActiveStream)
   .memory-delete {
     background: rgba(239, 68, 68, 0.12);
     color: #fca5a5;
+  }
+
+  .agent-live-bar,
+  .agent-live-bar.completed,
+  .agent-live-bar.pending,
+  .agent-live-bar.failed {
+    background: #111c2c;
+    border-bottom-color: rgba(148, 163, 184, 0.18);
+    box-shadow: 0 12rpx 26rpx rgba(0, 0, 0, 0.2);
+  }
+
+  .agent-live-kicker {
+    color: #93c5fd;
+  }
+
+  .agent-live-title {
+    color: #edf4ff;
+  }
+
+  .agent-live-detail {
+    color: #94a3b8;
+  }
+
+  .agent-live-metrics text {
+    background: rgba(96, 165, 250, 0.16);
+    color: #bfdbfe;
   }
 
   .assistant-avatar {
