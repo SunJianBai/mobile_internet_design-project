@@ -375,6 +375,8 @@ Rules:
 - For action_kind=order.create, use a title like "确认创建约伴活动".
 - For action_kind=order.cancel_apply, use a title like "确认撤销报名申请" and include 订单ID.
 - For action_kind=order.reject_apply, use a title like "确认拒绝订单申请" and include 申请ID.
+- For action_kind=memory.manage, use a title like "确认保存长期记忆" or "确认删除长期记忆".
+- For action_kind=memory.manage, include fields: 记忆操作(save/delete), 记忆分类(preference/fact/behavior), 记忆内容.
 - For canceling an entire order/activity, use action_kind=other.write unless an explicit order cancellation tool is available.
 - If required information is missing, list it in missing_fields and make reply ask the user to complete it.
 - If enough information is present, make reply ask the user to confirm before execution.
@@ -383,7 +385,7 @@ Return this JSON shape:
 {{
   "title": "确认发布动态",
   "description": "one sentence describing the pending write operation",
-  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.cancel_apply|order.accept|order.reject_apply|order.complete|other.write",
+  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.cancel_apply|order.accept|order.reject_apply|order.complete|memory.manage|other.write",
   "fields": [
     {{"label": "字段名", "value": "字段值"}}
   ],
@@ -2954,6 +2956,7 @@ CONFIRMED_ACTION_KINDS = {
     "order.accept",
     "order.reject_apply",
     "order.complete",
+    "memory.manage",
     "other.write",
 }
 
@@ -3002,6 +3005,8 @@ def _infer_confirmed_action_kind(text: str, fields: dict) -> str:
         return "order.accept"
     if any(cue in lowered for cue in ("完成订单", "标记完成")):
         return "order.complete"
+    if "memory.manage" in lowered or "记忆" in lowered or "记住" in lowered or "偏好" in field_labels:
+        return "memory.manage"
     if "动态" in lowered or "动态" in field_labels or _field_value(fields, ("动态内容", "正文", "内容")):
         return "content.create"
     if "约伴" in lowered or "订单" in lowered or "活动类型" in field_labels:
@@ -3026,7 +3031,12 @@ def _resolve_confirmation_action_kind(draft: dict, intent_analysis: dict, user_m
 
 
 def _intent_for_confirmed_execution(action_kind: str) -> dict:
-    domain = "content" if action_kind.startswith("content.") else "order" if action_kind.startswith("order.") else "other"
+    domain = (
+        "content" if action_kind.startswith("content.")
+        else "order" if action_kind.startswith("order.")
+        else "memory" if action_kind == "memory.manage"
+        else "other"
+    )
     return {
         "primary_intent": action_kind,
         "domain": domain,
@@ -3065,6 +3075,7 @@ def _confirmed_action_title(action_kind: str, success: bool) -> str:
         "order.accept": "申请已接受",
         "order.reject_apply": "申请已拒绝",
         "order.complete": "订单已标记完成",
+        "memory.manage": "长期记忆已更新",
     }
     return titles.get(action_kind, "操作已完成")
 
@@ -3084,7 +3095,12 @@ def _build_confirmed_execution_artifact(action_kind: str, result_text: str, args
     success = "失败" not in str(result_text or "") and "不能" not in str(result_text or "")
     route = _confirmed_action_route(action_kind, args, result_text)
     result_summary = _plain_result_text(result_text)
-    artifact_type = "content" if action_kind.startswith("content.") else "order" if action_kind.startswith("order.") else "guide"
+    artifact_type = (
+        "content" if action_kind.startswith("content.")
+        else "order" if action_kind.startswith("order.")
+        else "memory" if action_kind == "memory.manage"
+        else "guide"
+    )
     fields = [
         {"label": "执行状态", "value": "已完成" if success else "未完成"},
         {"label": "操作类型", "value": action_kind},
@@ -3099,6 +3115,13 @@ def _build_confirmed_execution_artifact(action_kind: str, result_text: str, args
         fields.insert(2, {"label": "申请ID", "value": str(args.get("apply_id"))})
     if args.get("accepter_id"):
         fields.insert(3, {"label": "申请者ID", "value": str(args.get("accepter_id"))})
+    if action_kind == "memory.manage":
+        operation_label = "删除" if args.get("operation") == "delete" else "保存"
+        fields.insert(2, {"label": "记忆操作", "value": operation_label})
+        if args.get("category"):
+            fields.insert(3, {"label": "记忆分类", "value": str(args.get("category"))})
+        if args.get("content"):
+            fields.insert(4, {"label": "记忆内容", "value": str(args.get("content"))})
 
     actions = []
     if route:
@@ -3127,6 +3150,12 @@ def _build_confirmed_execution_artifact(action_kind: str, result_text: str, args
             "label": "查看相关动态",
             "prompt": "帮我看看这条动态附近还有哪些相关评论或校园动态，先只查询。",
         })
+    elif action_kind == "memory.manage":
+        actions.append({
+            "label": "打开 AI 记忆",
+            "memoryPanel": True,
+            "primary": True,
+        })
 
     return {
         "type": artifact_type,
@@ -3151,6 +3180,112 @@ async def _confirmed_success_response(result_text: str, tool_name: str, args: di
         "tool_calls": [{"name": tool_name, "args": args}],
         "intent": intent,
         "artifacts": [artifact],
+    }
+
+
+def _normalize_memory_operation(value: str, fallback_text: str = "") -> str:
+    text = f"{value or ''} {fallback_text or ''}".lower()
+    if any(cue in text for cue in ("delete", "remove", "forget", "忘记", "删除", "移除", "取消记住", "别记")):
+        return "delete"
+    return "save"
+
+
+def _normalize_memory_category(value: str, content: str = "") -> str:
+    text = f"{value or ''} {content or ''}".lower()
+    if any(cue in text for cue in ("behavior", "habit", "行为", "习惯", "经常", "常去")):
+        return "behavior"
+    if any(cue in text for cue in ("fact", "事实", "资料", "学院", "专业", "年级", "来自", "住在", "就读")):
+        return "fact"
+    return "preference"
+
+
+def _memory_field_value(fields: dict, labels: tuple[str, ...]) -> str:
+    normalized_labels = {str(label).lower() for label in labels}
+    for label, value in fields.items():
+        label_text = str(label or "").strip()
+        label_key = label_text.lower()
+        if label_key in normalized_labels:
+            return str(value).strip()
+    for label, value in fields.items():
+        label_text = str(label or "")
+        if "操作类型" in label_text or "记忆操作" in label_text or "记忆分类" in label_text:
+            continue
+        if any(keyword in label_text for keyword in labels):
+            return str(value).strip()
+    return ""
+
+
+def _memory_content_from_fields(fields: dict, user_message: str) -> str:
+    content = _memory_field_value(fields, ("记忆内容", "偏好内容", "长期信息", "memory_content", "content"))
+    if content and content not in {"待补充", "未填写", "None", "null"}:
+        return content.strip()
+
+    cleaned = re.sub(r"^我确认执行这个草稿[:：]?.*", "", str(user_message or ""), flags=re.MULTILINE).strip()
+    cleaned = re.sub(r"^操作类型[:：]\s*memory\.manage\s*$", "", cleaned, flags=re.MULTILINE).strip()
+    return cleaned[:120].strip()
+
+
+async def _execute_confirmed_memory(user_info: dict, fields: dict, user_message: str) -> dict:
+    operation = _normalize_memory_operation(
+        _memory_field_value(fields, ("记忆操作", "operation", "动作")),
+        user_message,
+    )
+    content = _memory_content_from_fields(fields, user_message)
+    category = _normalize_memory_category(
+        _memory_field_value(fields, ("记忆分类", "category", "分类")),
+        content,
+    )
+    intent = _intent_for_confirmed_execution("memory.manage")
+
+    if not content:
+        return {
+            "reply": "这条记忆草稿里缺少“记忆内容”，请先补充要保存或删除的长期信息。",
+            "tool_calls": [],
+            "intent": intent,
+        }
+
+    commit = {
+        "operation": operation,
+        "category": category,
+        "content": content,
+        "source": "confirmed-chat",
+        "phase": "memory",
+        "title": "提交长期记忆变更",
+        "detail": ("删除匹配记忆：" if operation == "delete" else "保存长期记忆：") + content,
+        "state": "completed",
+    }
+    await _emit_event("agent_step", {
+        "phase": "memory",
+        "title": "确认长期记忆",
+        "detail": "正在把已确认的记忆变更交给后端持久化",
+        "state": "running",
+    })
+    await _emit_event("memory_commit", commit)
+    await _emit_event("agent_step", {
+        "phase": "memory",
+        "title": "长期记忆已提交",
+        "detail": "后端会保存或删除匹配的长期记忆，并在 AI 记忆面板中同步",
+        "state": "completed",
+    })
+
+    result_text = (
+        f"✅ 已确认删除这条长期记忆：{content}"
+        if operation == "delete"
+        else f"✅ 已确认保存这条长期记忆：{content}"
+    )
+    args = {
+        "operation": operation,
+        "category": category,
+        "content": content,
+    }
+    artifact = _build_confirmed_execution_artifact("memory.manage", result_text, args)
+    await _emit_event("artifact", artifact)
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "commit_memory", "args": args}],
+        "intent": intent,
+        "artifacts": [artifact],
+        "memory_commits": [commit],
     }
 
 
@@ -3525,9 +3660,11 @@ async def build_confirmed_execution_response(user_info: dict, history: list, use
         return await _execute_confirmed_order_reject_apply(user_info, fields, user_message)
     if action_kind == "order.complete":
         return await _execute_confirmed_order_complete(user_info, fields, user_message)
+    if action_kind == "memory.manage":
+        return await _execute_confirmed_memory(user_info, fields, user_message)
 
     return {
-        "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单、动态、评论、点赞、报名、撤销申请或拒绝申请草稿，或继续手动处理。",
+        "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单、动态、评论、点赞、报名、撤销申请、拒绝申请或记忆管理草稿，或继续手动处理。",
         "tool_calls": [],
         "intent": _intent_for_confirmed_execution(action_kind),
     }

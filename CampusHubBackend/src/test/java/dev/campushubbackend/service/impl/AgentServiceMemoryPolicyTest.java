@@ -87,4 +87,53 @@ class AgentServiceMemoryPolicyTest {
 
         assertEquals(AgentServiceImpl.MAX_AUTO_MEMORIES_PER_TURN, kept.size());
     }
+
+    @Test
+    void keepsConfirmedMemoryWithoutDurableKeyword() {
+        List<Map<String, String>> kept = AgentServiceImpl.filterCommittedMemoryOperations(
+                List.of(Map.of(
+                        "operation", "save",
+                        "category", "preference",
+                        "content", "用户不吃辣"
+                )),
+                List.of()
+        );
+
+        assertEquals(1, kept.size());
+        assertEquals("save", kept.getFirst().get("operation"));
+        assertEquals("preference", kept.getFirst().get("category"));
+        assertEquals("用户不吃辣", kept.getFirst().get("content"));
+    }
+
+    @Test
+    void supportsConfirmedMemoryDeleteOperation() {
+        List<Map<String, String>> kept = AgentServiceImpl.filterCommittedMemoryOperations(
+                List.of(Map.of(
+                        "operation", "delete",
+                        "category", "preference",
+                        "content", "用户不吃辣"
+                )),
+                List.of()
+        );
+
+        assertEquals(1, kept.size());
+        assertEquals("delete", kept.getFirst().get("operation"));
+    }
+
+    @Test
+    void confirmedMemorySaveStillRejectsDuplicatesAndCoordinates() {
+        AiMemory existing = new AiMemory();
+        existing.setCategory("preference");
+        existing.setContent("用户不吃辣");
+
+        List<Map<String, String>> kept = AgentServiceImpl.filterCommittedMemoryOperations(
+                List.of(
+                        Map.of("operation", "save", "category", "preference", "content", "用户不吃辣"),
+                        Map.of("operation", "save", "category", "fact", "content", "用户常去坐标 116.170492,39.728167")
+                ),
+                List.of(existing)
+        );
+
+        assertTrue(kept.isEmpty());
+    }
 }

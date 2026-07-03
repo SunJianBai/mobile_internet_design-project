@@ -9,6 +9,7 @@ import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -28,6 +29,7 @@ public class AgentStreamService {
     private final UserRepository userRepository;
     private final AgentServiceImpl agentService;
     private final PythonAgentClient pythonAgentClient;
+    private final ObjectMapper objectMapper;
 
     private final ExecutorService executor = Executors.newCachedThreadPool();
 
@@ -74,6 +76,7 @@ public class AgentStreamService {
 
         // 流式调用 Python Agent，逐 chunk 转发 SSE
         StringBuilder fullReply = new StringBuilder();
+        List<Map<?, ?>> committedMemories = new ArrayList<>();
 
         pythonAgentClient.streamChat(user, history, userMessage,
                 // onDelta
@@ -88,6 +91,9 @@ public class AgentStreamService {
                 // onToolCall
                 (eventName, data) -> {
                     try {
+                        if ("memory_commit".equals(eventName)) {
+                            parseMemoryCommit(data).ifPresent(committedMemories::add);
+                        }
                         emitter.send(SseEmitter.event().name(eventName).data(data));
                     } catch (Exception e) {
                         log.warn("发送 SSE status 失败: {}", e.getMessage());
@@ -101,7 +107,8 @@ public class AgentStreamService {
                         if (replyText.isBlank()) replyText = "抱歉，我暂时无法回复。";
                         agentService.saveMessage(conv, "assistant", replyText, null, null);
 
-                        // 异步提取记忆
+                        // 先应用用户明确确认的记忆操作，再异步提取普通对话中的隐式记忆
+                        agentService.applyCommittedMemoryOperations(user, committedMemories);
                         agentService.extractMemoryAsync(user, userMessage, replyText);
 
                         // 更新会话时间
@@ -124,6 +131,17 @@ public class AgentStreamService {
                     }
                 }
         );
+    }
+
+    @SuppressWarnings("unchecked")
+    private Optional<Map<?, ?>> parseMemoryCommit(String data) {
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(data, Map.class);
+            return Optional.of(parsed);
+        } catch (Exception e) {
+            log.warn("解析记忆提交事件失败: {}", e.getMessage());
+            return Optional.empty();
+        }
     }
 
     private void sendAgentStep(SseEmitter emitter, String phase, String title, String detail, String state) {

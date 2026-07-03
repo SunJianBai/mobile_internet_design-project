@@ -31,6 +31,7 @@ public class AgentServiceImpl implements AgentService {
     private static final int MAX_HISTORY_MESSAGES = 40;
     static final int MAX_AUTO_MEMORIES_PER_TURN = 2;
     private static final int MIN_MEMORY_CONTENT_LENGTH = 6;
+    private static final int MIN_COMMITTED_MEMORY_CONTENT_LENGTH = 4;
     private static final int MAX_MEMORY_CONTENT_LENGTH = 120;
     private static final Pattern COORDINATE_PATTERN = Pattern.compile("\\d{2,3}\\.\\d{3,}\\s*[,，]\\s*\\d{1,3}\\.\\d{3,}");
     private static final List<String> STRICT_TRANSIENT_MEMORY_MARKERS = List.of(
@@ -106,12 +107,14 @@ public class AgentServiceImpl implements AgentService {
 
         // 4. 调用 Python LangChain Agent
         String assistantReply;
+        List<Map<?, ?>> committedMemories = List.of();
         try {
             Map<String, Object> result = pythonAgentClient.chat(user, history, userMessage);
             assistantReply = (String) result.get("reply");
             if (assistantReply == null || assistantReply.isBlank()) {
                 assistantReply = "抱歉，我暂时无法回复。";
             }
+            committedMemories = coerceMemoryCommits(result.get("memory_commits"));
         } catch (Exception e) {
             log.error("Python Agent 调用失败", e);
             assistantReply = "AI 服务暂时不可用，请稍后再试。";
@@ -120,7 +123,8 @@ public class AgentServiceImpl implements AgentService {
         // 5. 保存 AI 回复
         AiMessage aiMsg = saveMessage(conv, "assistant", assistantReply, null, null);
 
-        // 6. 异步提取记忆
+        // 6. 先保存用户明确确认的记忆，再异步提取普通对话中的隐式记忆
+        applyCommittedMemoryOperations(user, committedMemories);
         extractMemoryAsync(user, userMessage, assistantReply);
 
         // 7. 更新会话时间
@@ -147,6 +151,136 @@ public class AgentServiceImpl implements AgentService {
             throw new ParamValidationFailedException("无权删除该记忆");
         }
         memoryRepository.delete(memory);
+    }
+
+    @Transactional
+    public void applyCommittedMemoryOperations(User user, List<? extends Map<?, ?>> operations) {
+        if (user == null || operations == null || operations.isEmpty()) {
+            return;
+        }
+
+        List<AiMemory> existing = memoryRepository.findByUserOrderByUpdatedAtDesc(user);
+        for (Map<String, String> item : filterCommittedMemoryOperations(operations, existing)) {
+            String operation = item.get("operation");
+            String content = item.get("content");
+            if ("delete".equals(operation)) {
+                deleteMatchingCommittedMemory(user, content);
+                existing = memoryRepository.findByUserOrderByUpdatedAtDesc(user);
+                continue;
+            }
+
+            AiMemory memory = new AiMemory();
+            memory.setUser(user);
+            memory.setCategory(item.get("category"));
+            memory.setContent(content);
+            memory.setSource("confirmed-chat");
+            memoryRepository.save(memory);
+            existing.add(memory);
+        }
+    }
+
+    static List<Map<String, String>> filterCommittedMemoryOperations(
+            List<? extends Map<?, ?>> operations,
+            List<AiMemory> existing
+    ) {
+        if (operations == null || operations.isEmpty()) {
+            return List.of();
+        }
+
+        Set<String> seen = new HashSet<>();
+        for (AiMemory memory : Optional.ofNullable(existing).orElse(List.of())) {
+            String normalized = normalizeMemoryText(memory.getContent());
+            if (!normalized.isBlank()) {
+                seen.add(normalized);
+            }
+        }
+
+        List<Map<String, String>> filtered = new ArrayList<>();
+        for (Map<?, ?> operation : operations) {
+            if (operation == null) {
+                continue;
+            }
+
+            String action = normalizeCommittedMemoryOperation(stringValue(operation.get("operation")));
+            String category = normalizeMemoryCategory(stringValue(operation.get("category")));
+            String content = sanitizeMemoryContent(stringValue(operation.get("content")));
+            if (category.isBlank()
+                    || content.length() < MIN_COMMITTED_MEMORY_CONTENT_LENGTH
+                    || content.length() > MAX_MEMORY_CONTENT_LENGTH) {
+                continue;
+            }
+            if (COORDINATE_PATTERN.matcher(content).find()) {
+                continue;
+            }
+
+            String normalized = normalizeMemoryText(content);
+            if (normalized.isBlank()) {
+                continue;
+            }
+
+            if ("save".equals(action)) {
+                if (containsAny(compactForPolicy(content), STRICT_TRANSIENT_MEMORY_MARKERS)
+                        || startsWithAny(compactForPolicy(content), ONE_OFF_INTENT_PREFIXES)
+                        || isDuplicateMemory(normalized, seen)) {
+                    continue;
+                }
+                seen.add(normalized);
+            }
+
+            filtered.add(Map.of(
+                    "operation", action,
+                    "category", category,
+                    "content", content
+            ));
+        }
+        return filtered;
+    }
+
+    private void deleteMatchingCommittedMemory(User user, String content) {
+        String target = normalizeMemoryText(content);
+        if (target.isBlank()) {
+            return;
+        }
+        List<AiMemory> existing = memoryRepository.findByUserOrderByUpdatedAtDesc(user);
+        for (AiMemory memory : existing) {
+            String normalized = normalizeMemoryText(memory.getContent());
+            if (!normalized.isBlank()
+                    && (normalized.contains(target)
+                    || target.contains(normalized)
+                    || charBigramSimilarity(normalized, target) >= 0.72)) {
+                memoryRepository.delete(memory);
+            }
+        }
+    }
+
+    private static List<Map<?, ?>> coerceMemoryCommits(Object value) {
+        if (!(value instanceof List<?> list)) {
+            return List.of();
+        }
+        List<Map<?, ?>> result = new ArrayList<>();
+        for (Object item : list) {
+            if (item instanceof Map<?, ?> map) {
+                result.add(map);
+            }
+        }
+        return result;
+    }
+
+    private static String normalizeCommittedMemoryOperation(String value) {
+        String normalized = Optional.ofNullable(value).orElse("").trim().toLowerCase(Locale.ROOT);
+        if (normalized.contains("delete") || normalized.contains("remove") || normalized.contains("forget")
+                || normalized.contains("删除") || normalized.contains("忘记") || normalized.contains("移除")) {
+            return "delete";
+        }
+        return "save";
+    }
+
+    private static String stringValue(Object value) {
+        if (value == null) {
+            return "";
+        }
+        String text = String.valueOf(value).trim();
+        return "null".equalsIgnoreCase(text) ? "" : text;
     }
 
     // ==================== 异步记忆提取（通过 Python Agent） ====================

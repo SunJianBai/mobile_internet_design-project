@@ -504,6 +504,7 @@ const AGENT_EVENT_TITLES = {
   tool_result: '工具调用完成',
   artifact: '生成结果卡片',
   confirm_required: '等待确认',
+  memory_commit: '提交长期记忆',
   status: '处理中'
 }
 
@@ -523,6 +524,7 @@ const OPERATION_PHASE_LABELS = {
   tool_result: '工具',
   artifact: '卡片',
   confirm_required: '确认',
+  memory_commit: '记忆',
   status: '状态'
 }
 
@@ -646,10 +648,11 @@ const getArtifactIcon = (artifact) => {
   if (artifact?.type === 'guide') return '行'
   if (artifact?.type === 'order') return '约'
   if (artifact?.type === 'content') return '动'
+  if (artifact?.type === 'memory') return '记'
   return 'i'
 }
 
-const isActionCardArtifact = (artifact) => ['guide', 'weather', 'order', 'content'].includes(artifact?.type)
+const isActionCardArtifact = (artifact) => ['guide', 'weather', 'order', 'content', 'memory'].includes(artifact?.type)
 
 const truncateArtifactValue = (value, maxLength = 18) => {
   const text = String(value || '')
@@ -657,7 +660,7 @@ const truncateArtifactValue = (value, maxLength = 18) => {
 }
 
 const getArtifactHighlights = (artifact) => {
-  if (!['guide', 'weather', 'order', 'content', 'plan'].includes(artifact?.type)) return []
+  if (!['guide', 'weather', 'order', 'content', 'memory', 'plan'].includes(artifact?.type)) return []
   const lowPriorityLabels = ['安全策略', '写操作保护', '摘要', '建议', '下一步', '结果预览']
   const fields = (artifact?.fields || [])
     .filter(field => field && field.label && !field.missing && !['未填写', '待补充'].includes(formatArtifactValue(field.value)))
@@ -1159,6 +1162,10 @@ const buildArtifactConfirmMessage = (artifact, edited = false) => {
 }
 
 const handleArtifactPromptAction = (action) => {
+  if (action?.memoryPanel) {
+    openMemoryPanel()
+    return
+  }
   const route = String(action?.route || '').trim()
   if (route) {
     const appRoute = mapWebRouteToApp(route)
@@ -1178,7 +1185,7 @@ const handleArtifactPromptAction = (action) => {
 }
 
 const artifactItemHasAction = (item) => {
-  return Boolean(String(item?.route || '').trim() || String(item?.prompt || '').trim())
+  return Boolean(item?.memoryPanel || String(item?.route || '').trim() || String(item?.prompt || '').trim())
 }
 
 const handleArtifactItemAction = (item) => {
@@ -2342,6 +2349,15 @@ onUnmounted(detachActiveStream)
 
 .artifact-content .artifact-icon {
   background: #7c3aed;
+}
+
+.artifact-memory {
+  border-color: #99f6e4;
+  background: #f0fdfa;
+}
+
+.artifact-memory .artifact-icon {
+  background: #0f766e;
 }
 
 .artifact-header {
@@ -3861,6 +3877,16 @@ onUnmounted(detachActiveStream)
   .artifact-plan .artifact-icon {
     background: #4f46e5;
     color: #e0e7ff;
+  }
+
+  .artifact-memory {
+    background: #102f2b;
+    border-color: rgba(45, 212, 191, 0.3);
+  }
+
+  .artifact-memory .artifact-icon {
+    background: #0f766e;
+    color: #ccfbf1;
   }
 
   .operation-overview {

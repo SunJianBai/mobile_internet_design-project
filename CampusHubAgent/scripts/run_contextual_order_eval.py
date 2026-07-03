@@ -346,6 +346,59 @@ async def scenario_confirmed_execution_returns_result_artifact() -> EvalResult:
     return EvalResult("confirmed_execution_returns_result_artifact", not failures, failures, actual)
 
 
+async def scenario_confirmed_memory_commit_returns_artifact() -> EvalResult:
+    from app import agent as agent_module
+
+    captured_events: list[dict[str, Any]] = []
+
+    async def capture(event: dict):
+        captured_events.append(event)
+
+    token = agent_module._event_sink.set(capture)
+    try:
+        result = await agent_module.build_confirmed_execution_response(
+            DEFAULT_USER,
+            [],
+            (
+                "我确认执行这个草稿：确认保存长期记忆\n"
+                "操作类型: memory.manage\n"
+                "记忆操作: save\n"
+                "记忆分类: preference\n"
+                "记忆内容: 用户以后推荐吃饭地点时优先良乡校区、预算不要太贵"
+            ),
+        )
+    finally:
+        agent_module._event_sink.reset(token)
+
+    artifact = (result.get("artifacts") or [{}])[0] if result else {}
+    actions = artifact.get("actions") or []
+    commits = result.get("memory_commits") if result else []
+    tool_calls = result.get("tool_calls") if result else []
+    actual = {
+        "reply": result.get("reply") if result else None,
+        "tool_calls": tool_calls,
+        "artifact": artifact,
+        "memory_commits": commits,
+        "event_names": [item.get("event") for item in captured_events],
+    }
+    failures: list[str] = []
+    if not result:
+        failures.append("expected confirmed memory response")
+    if artifact.get("type") != "memory":
+        failures.append(f"expected memory artifact, got {artifact.get('type')!r}")
+    if not commits or commits[0].get("operation") != "save":
+        failures.append(f"expected save memory commit, got {commits!r}")
+    if not commits or "良乡校区" not in commits[0].get("content", ""):
+        failures.append("expected committed memory content to preserve the preference")
+    if not any((call or {}).get("name") == "commit_memory" for call in (tool_calls or [])):
+        failures.append("expected commit_memory pseudo tool call")
+    if "memory_commit" not in actual["event_names"]:
+        failures.append("expected memory_commit stream event")
+    if not any(action.get("memoryPanel") for action in actions if isinstance(action, dict)):
+        failures.append("expected memory panel action")
+    return EvalResult("confirmed_memory_commit_returns_artifact", not failures, failures, actual)
+
+
 async def run_all() -> list[EvalResult]:
     scenarios = [
         scenario_selects_first_map_candidate,
@@ -356,6 +409,7 @@ async def run_all() -> list[EvalResult]:
         scenario_confirmed_action_kind_marker_wins,
         scenario_confirmation_infers_manage_action_kind,
         scenario_confirmed_execution_returns_result_artifact,
+        scenario_confirmed_memory_commit_returns_artifact,
     ]
     return [await scenario() for scenario in scenarios]
 

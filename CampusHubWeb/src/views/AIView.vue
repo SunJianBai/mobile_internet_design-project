@@ -536,6 +536,7 @@ const AGENT_EVENT_TITLES = {
   tool_result: '工具调用完成',
   artifact: '生成结果卡片',
   confirm_required: '等待确认',
+  memory_commit: '提交长期记忆',
   status: '处理中'
 }
 
@@ -555,6 +556,7 @@ const OPERATION_PHASE_LABELS = {
   tool_result: '工具',
   artifact: '卡片',
   confirm_required: '确认',
+  memory_commit: '记忆',
   status: '状态'
 }
 
@@ -663,7 +665,7 @@ function normalizeArtifact(eventName, data) {
     }),
     actions: actions
       .map(action => action && typeof action === 'object' ? action : { label: String(action || ''), prompt: String(action || '') })
-      .filter(action => action.label || action.prompt),
+      .filter(action => action.label || action.prompt || action.memoryPanel),
     steps: steps
       .map(step => step && typeof step === 'object' ? step : { title: String(step || '') })
       .filter(step => step.title || step.detail),
@@ -932,15 +934,16 @@ function getArtifactIcon(artifact) {
   if (artifact?.type === 'guide') return '行'
   if (artifact?.type === 'order') return '约'
   if (artifact?.type === 'content') return '动'
+  if (artifact?.type === 'memory') return '记'
   return 'i'
 }
 
 function isActionCardArtifact(artifact) {
-  return ['guide', 'weather', 'order', 'content'].includes(artifact?.type)
+  return ['guide', 'weather', 'order', 'content', 'memory'].includes(artifact?.type)
 }
 
 function getArtifactHighlights(artifact) {
-  if (!['guide', 'weather', 'order', 'content', 'plan'].includes(artifact?.type)) return []
+  if (!['guide', 'weather', 'order', 'content', 'memory', 'plan'].includes(artifact?.type)) return []
   const lowPriorityLabels = new Set(['安全策略', '写操作保护', '摘要', '建议', '下一步', '结果预览'])
   const fields = (artifact?.fields || [])
     .filter(field => field && field.label && !isArtifactFieldMissing(field))
@@ -1053,6 +1056,11 @@ function handleArtifactAction(artifact, action) {
 }
 
 function handleArtifactPromptAction(action) {
+  if (action?.memoryPanel) {
+    showMemoryPanel.value = true
+    loadMemories()
+    return
+  }
   const route = String(action?.route || '').trim()
   if (route) {
     router.push(route)
@@ -2310,6 +2318,16 @@ onBeforeUnmount(() => {
 .artifact-content .artifact-field:last-child {
   grid-column: 1 / -1;
 }
+.artifact-memory {
+  border-color: #99f6e4;
+  background: linear-gradient(180deg, #ffffff 0%, #f0fdfa 100%);
+}
+.artifact-memory .artifact-icon {
+  background: #0f766e;
+}
+.artifact-memory .artifact-field:last-child {
+  grid-column: 1 / -1;
+}
 .artifact-header {
   display: flex;
   gap: 10px;
@@ -3487,6 +3505,11 @@ onBeforeUnmount(() => {
   border-color: rgba(167, 139, 250, 0.3);
 }
 
+:global(:root[data-theme='dark']) .artifact-memory {
+  background: linear-gradient(180deg, #172235 0%, #102f2b 100%);
+  border-color: rgba(45, 212, 191, 0.3);
+}
+
 :global(:root[data-theme='dark']) .artifact-guide .artifact-icon {
   background: #0f766e;
   color: #ccfbf1;
@@ -3510,6 +3533,11 @@ onBeforeUnmount(() => {
 :global(:root[data-theme='dark']) .artifact-content .artifact-icon {
   background: #7c3aed;
   color: #ede9fe;
+}
+
+:global(:root[data-theme='dark']) .artifact-memory .artifact-icon {
+  background: #0f766e;
+  color: #ccfbf1;
 }
 
 :global(:root[data-theme='dark']) .artifact-title,
@@ -3905,6 +3933,11 @@ onBeforeUnmount(() => {
   border-color: rgba(167, 139, 250, 0.3) !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .artifact-memory) {
+  background: linear-gradient(180deg, #172235 0%, #102f2b 100%) !important;
+  border-color: rgba(45, 212, 191, 0.3) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .artifact-weather .artifact-icon) {
   background: #2563eb !important;
   color: #dbeafe !important;
@@ -3923,6 +3956,11 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-content .artifact-icon) {
   background: #7c3aed !important;
   color: #ede9fe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-memory .artifact-icon) {
+  background: #0f766e !important;
+  color: #ccfbf1 !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-field) {
