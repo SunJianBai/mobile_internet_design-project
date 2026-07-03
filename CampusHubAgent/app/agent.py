@@ -664,6 +664,126 @@ def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bo
     )
 
 
+def _map_selection_index(text: str) -> int | None:
+    text = " ".join(str(text or "").split()).lower()
+    if not text:
+        return None
+    selection_rules = [
+        (("第三家", "第三个", "第3家", "第3个", "3号", "第三"), 2),
+        (("第二家", "第二个", "第2家", "第2个", "2号", "第二"), 1),
+        (("第一家", "第一个", "第1家", "第1个", "1号", "第一", "首个"), 0),
+        (("这家", "这个地点", "这个地方", "就这", "就它", "就这个", "刚才那个", "刚才这家"), 0),
+    ]
+    for cues, index in selection_rules:
+        if _has_any(text, cues):
+            return index
+    return None
+
+
+def _extract_recent_map_candidates(history: list) -> list[dict]:
+    """Recover recent map candidates from assistant text so follow-up drafts keep place context."""
+    candidates: list[dict] = []
+    seen: set[tuple[str, str]] = set()
+
+    def add_candidate(title: str, lng: str, lat: str) -> None:
+        title = str(title or "").strip(" -:：，,。")
+        coords = f"{lng}, {lat}" if lng and lat else ""
+        if not title or not coords:
+            return
+        key = (title, coords)
+        if key in seen:
+            return
+        seen.add(key)
+        candidates.append({"title": title, "coords": coords})
+
+    for item in reversed(history or []):
+        if not isinstance(item, dict) or item.get("role") == "user":
+            continue
+        content = str(item.get("content") or "")
+        if not content:
+            continue
+
+        for match in re.finditer(
+            r":::map\{(?=[^}]*\blng=([0-9]{2,3}\.\d+))(?=[^}]*\blat=([0-9]{1,2}\.\d+))[^}]*\btitle=([^}\n\r]+)\}",
+            content,
+            flags=re.IGNORECASE,
+        ):
+            add_candidate(match.group(3), match.group(1), match.group(2))
+
+        for match in re.finditer(
+            r"(?:^|\n)\s*(?:\d{1,2}[.、]\s*)?([^\n\r:：。]{2,80}?)(?:地址[:：][^\n\r]*?)?经纬度[:：]\s*([0-9]{2,3}\.\d+)\s*[,，]\s*([0-9]{1,2}\.\d+)",
+            content,
+        ):
+            add_candidate(match.group(1), match.group(2), match.group(3))
+
+        if candidates:
+            break
+    return candidates[:5]
+
+
+def _extract_contextual_map_selection(history: list, user_message: str) -> tuple[str, str]:
+    title, coords = _extract_map_selection(user_message)
+    if title or coords:
+        return title, coords
+
+    selected_index = _map_selection_index(user_message)
+    if selected_index is None:
+        return "", ""
+    candidates = _extract_recent_map_candidates(history)
+    if selected_index >= len(candidates):
+        return "", ""
+    candidate = candidates[selected_index]
+    return candidate.get("title", ""), candidate.get("coords", "")
+
+
+def _detect_contextual_order_create_shortcut(history: list, user_message: str) -> dict | None:
+    """Route follow-ups like '就第一家，帮我约三个人' to a safe order draft."""
+    text = " ".join(str(user_message or "").split())
+    if not text or _contains_blocking_write_negation(text):
+        return None
+    if _map_selection_index(text) is None or not _extract_recent_map_candidates(history):
+        return None
+
+    write_cues = (
+        "帮我约",
+        "约人",
+        "约几个",
+        "约几个人",
+        "找几个人",
+        "叫几个人",
+        "拉几个人",
+        "创建",
+        "发起",
+        "组织",
+        "约伴",
+        "订单",
+        "草稿",
+    )
+    if not _has_any(text, write_cues):
+        return None
+
+    missing_slots = []
+    if not _looks_like_time_text(text):
+        missing_slots.append("时间")
+    if not _extract_group_size(text):
+        missing_slots.append("参与人数")
+
+    return {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "confidence": 0.9,
+        "summary": "用户想基于上一轮地图候选创建约伴订单草稿",
+        "missing_slots": missing_slots,
+        "suggested_agents": ["order_draft"],
+        "next_action": "ask_clarification" if missing_slots else "prepare_draft",
+        "reviewed": False,
+        "contextual_map_shortcut": True,
+        "router_timeout": False,
+    }
+
+
 def _looks_like_companion_place_conflict(user_message: str, analysis: dict) -> bool:
     """Trigger model review when place routing conflicts with explicit companion intent."""
     if (analysis.get("primary_intent") or "").lower() != "map.search":
@@ -1441,16 +1561,20 @@ def _should_review_intent(analysis: dict, user_message: str = "") -> bool:
     primary_intent = (analysis.get("primary_intent") or "").lower()
     operation_type = (analysis.get("operation_type") or "").lower()
     next_action = (analysis.get("next_action") or "").lower()
-    return (
-        confidence < 0.65
-        or primary_intent == "unknown"
-        or operation_type == "unknown"
-        or operation_type in {"write", "mixed"}
-        or next_action == "direct_answer"
-        or _looks_like_read_then_write_request(user_message, analysis)
+    if confidence < 0.65 or primary_intent == "unknown" or operation_type == "unknown":
+        return True
+    if (
+        _looks_like_read_then_write_request(user_message, analysis)
         or _looks_like_companion_place_conflict(user_message, analysis)
         or _looks_like_profile_review_needed(user_message, analysis)
-    )
+    ):
+        return True
+    if operation_type in {"write", "mixed"}:
+        gated_actions = {"ask_clarification", "prepare_draft", "wait_confirmation", "execute_read_tools"}
+        if bool(analysis.get("requires_confirmation")) and confidence >= 0.82 and next_action in gated_actions:
+            return False
+        return True
+    return next_action == "direct_answer" and primary_intent != "chat.general"
 
 
 async def review_intent(
@@ -1501,6 +1625,25 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
             "state": "completed",
         })
         return cached
+
+    contextual_map_analysis = _detect_contextual_order_create_shortcut(history, user_message)
+    if contextual_map_analysis:
+        analysis = _normalize_intent_analysis(contextual_map_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_contextual_map",
+            "title": "沿用地图结果创建草稿",
+            "detail": "识别到用户选中了上一轮地图候选，先生成约伴订单草稿并等待确认",
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
 
     safety_analysis = _detect_safety_intent_shortcut(user_message)
     if safety_analysis:
@@ -1839,7 +1982,7 @@ def _enrich_order_confirmation_fields(
     enriched_fields = [dict(item) if isinstance(item, dict) else item for item in (fields or [])]
     enriched_missing = list(missing_fields or [])
     context_text = _conversation_text(history, user_message)
-    location_title, coords = _extract_map_selection(user_message)
+    location_title, coords = _extract_contextual_map_selection(history, user_message)
 
     if location_title:
         _set_artifact_field(enriched_fields, ("地点名称", "地点", "位置"), "地点名称", location_title)

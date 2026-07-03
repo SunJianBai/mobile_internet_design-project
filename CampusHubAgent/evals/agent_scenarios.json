@@ -243,6 +243,29 @@
       }
     },
     {
+      "id": "order_create_from_previous_map_first_choice",
+      "category": "multi_turn_context",
+      "message": "就第一家吧，帮我约三个人，明晚八点，先生成草稿",
+      "history": [
+        {
+          "role": "user",
+          "content": "先找三家适合三个人去的足疗店，把地图给我"
+        },
+        {
+          "role": "assistant",
+          "content": "我先按北京理工大学良乡校区周边帮你找了几个地点。\n1. 景阳阁SPA会所(绿地诺亚方舟悦公馆南区店) 地址：绿地诺亚方舟悦公馆南区 经纬度：116.181457,39.730239\n:::map{lng=116.181457 lat=39.730239 zoom=15 title=景阳阁SPA会所(绿地诺亚方舟悦公馆南区店)}\n2. 悦康足道 地址：良乡大学城 经纬度：116.170492,39.728167\n:::map{lng=116.170492 lat=39.728167 zoom=15 title=悦康足道}"
+        }
+      ],
+      "expect": {
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
       "id": "ambiguous_join_people_not_publish",
       "category": "guardrail",
       "message": "想找几个人一起出去玩，先看看附近有什么地方推荐",
