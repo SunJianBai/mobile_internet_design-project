@@ -103,6 +103,33 @@ DOMAIN_TO_DELEGATION = {
 }
 
 DELEGATION_AGENT_ORDER = ("order", "content", "map")
+MAX_EXTRACTED_MEMORIES_PER_TURN = 2
+
+MEMORY_STRICT_TRANSIENT_MARKERS = (
+    "坐标", "经纬度", "地图", "导航", "路线", "草稿", "尚未提供", "工具返回", "查询结果", "搜索结果"
+)
+MEMORY_SOFT_TRANSIENT_MARKERS = (
+    "当前", "目前", "这次", "本次", "此次", "刚才", "刚刚", "今天", "今晚", "明天", "后天",
+    "正在", "查询", "搜索", "寻找", "想找", "想要找", "附近", "周边", "这家", "店铺", "会所"
+)
+MEMORY_DURABLE_MARKERS = (
+    "喜欢", "偏好", "倾向", "习惯", "经常", "常去", "不喜欢", "讨厌", "过敏", "默认",
+    "以后", "长期", "就读", "住在", "不吃", "爱吃", "常吃"
+)
+MEMORY_STABLE_FACT_MARKERS = (
+    "专业", "年级", "学院", "学校", "校区", "来自", "手机号", "邮箱"
+)
+MEMORY_ONE_OFF_PREFIXES = (
+    "用户想", "用户正在", "用户需要", "用户询问", "用户查找", "用户搜索", "用户提供", "用户计划", "用户准备"
+)
+MEMORY_NO_SIGNAL_MARKERS = (
+    "none", "没有提取到", "没有值得提取", "没有可提取", "无事实", "无明确事实", "无可记忆",
+    "不明确", "无法判断", "无法确定", "测试系统反应", "习惯性输入错误"
+)
+MEMORY_LOW_CONFIDENCE_MARKERS = (
+    "可能", "疑似", "似乎", "大概", "也许", "猜测", "推测", "不确定"
+)
+MEMORY_COORDINATE_RE = re.compile(r"\d{2,3}\.\d{3,}\s*[,，]\s*\d{1,3}\.\d{3,}")
 
 INTENT_ANALYSIS_PROMPT = """你是 CampusHub 的意图分析智能体。请基于用户消息、最近对话和用户信息判断请求类型。
 
@@ -3387,6 +3414,85 @@ def _memory_content_from_fields(fields: dict, user_message: str) -> str:
     return cleaned[:120].strip()
 
 
+def _sanitize_memory_content(content: str) -> str:
+    return re.sub(r"\s+", " ", str(content or "")).strip()
+
+
+def _compact_memory_policy_text(value: str) -> str:
+    return re.sub(r"[\s\W_，。！？；：、“”‘’（）()【】《》「」『』·]+", "", str(value or "").lower())
+
+
+def _memory_contains_any(compact: str, markers: tuple[str, ...]) -> bool:
+    return any(marker in compact for marker in markers)
+
+
+def _normalize_extracted_memory_category(category: str, content: str = "") -> str:
+    text = f"{category or ''} {content or ''}".lower()
+    if any(cue in text for cue in ("preference", "偏好", "喜欢", "不吃", "爱吃")):
+        return "preference"
+    if any(cue in text for cue in ("behavior", "habit", "行为", "习惯", "经常", "常去")):
+        return "behavior"
+    if any(cue in text for cue in ("fact", "事实", "资料", "学院", "专业", "年级", "来自", "住在", "就读")):
+        return "fact"
+    return ""
+
+
+def _is_no_signal_memory(compact: str) -> bool:
+    return compact == "none" or _memory_contains_any(compact, MEMORY_NO_SIGNAL_MARKERS)
+
+
+def _should_keep_extracted_memory(category: str, content: str, user_message: str = "", assistant_reply: str = "") -> bool:
+    if not category or not content:
+        return False
+    if len(content) < 6 or len(content) > 120:
+        return False
+    if MEMORY_COORDINATE_RE.search(content):
+        return False
+
+    compact = _compact_memory_policy_text(content)
+    if not compact:
+        return False
+    if _is_no_signal_memory(compact) or _memory_contains_any(compact, MEMORY_LOW_CONFIDENCE_MARKERS):
+        return False
+    if _memory_contains_any(compact, MEMORY_STRICT_TRANSIENT_MARKERS):
+        return False
+    if any(compact.startswith(prefix) for prefix in MEMORY_ONE_OFF_PREFIXES):
+        return False
+    if _memory_contains_any(compact, MEMORY_SOFT_TRANSIENT_MARKERS) and not _memory_contains_any(compact, MEMORY_DURABLE_MARKERS):
+        return False
+
+    user_compact = _compact_memory_policy_text(user_message)
+    assistant_compact = _compact_memory_policy_text(assistant_reply)
+    looks_like_tool_result = assistant_compact and compact in assistant_compact and compact not in user_compact
+    if looks_like_tool_result and not _memory_contains_any(compact, MEMORY_DURABLE_MARKERS):
+        return False
+
+    return _memory_contains_any(compact, MEMORY_DURABLE_MARKERS) or (
+        category == "fact" and _memory_contains_any(compact, MEMORY_STABLE_FACT_MARKERS)
+    )
+
+
+def filter_extracted_memories(memories: list, user_message: str = "", assistant_reply: str = "") -> list[dict]:
+    """Keep only durable user memories from raw LLM extraction output."""
+    filtered: list[dict] = []
+    seen: set[str] = set()
+    for item in memories or []:
+        if len(filtered) >= MAX_EXTRACTED_MEMORIES_PER_TURN:
+            break
+        if not isinstance(item, dict):
+            continue
+        content = _sanitize_memory_content(item.get("content", ""))
+        category = _normalize_extracted_memory_category(item.get("category", ""), content)
+        if not _should_keep_extracted_memory(category, content, user_message, assistant_reply):
+            continue
+        normalized = _compact_memory_policy_text(content)
+        if normalized in seen:
+            continue
+        seen.add(normalized)
+        filtered.append({"category": category, "content": content})
+    return filtered
+
+
 async def _execute_confirmed_memory(user_info: dict, fields: dict, user_message: str) -> dict:
     operation = _normalize_memory_operation(
         _memory_field_value(fields, ("记忆操作", "operation", "动作")),
@@ -5759,10 +5865,7 @@ async def extract_memory(user_message: str, assistant_reply: str) -> list:
 
         parsed = json.loads(text)
         if isinstance(parsed, list):
-            return [
-                m for m in parsed
-                if isinstance(m, dict) and "category" in m and "content" in m
-            ]
+            return filter_extracted_memories(parsed, user_message, assistant_reply)
     except Exception as e:
         logger.warning("Memory extraction failed: %s", e)
 

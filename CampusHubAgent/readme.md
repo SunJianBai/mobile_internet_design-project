@@ -12,12 +12,13 @@ python scripts/run_intent_eval.py --suite evals/persona_scenarios.json --timeout
 python scripts/run_intent_eval.py --suite evals/semantic_scenarios.json --semantic-only --timeout 30
 python scripts/run_direct_read_eval.py
 python scripts/run_contextual_order_eval.py
+python scripts/run_memory_filter_eval.py
 python scripts/run_delegation_guard_eval.py
 python scripts/run_journey_eval.py
 python scripts/run_router_fallback_eval.py
 ```
 
-`run_agent_quality_suite.py` 是推荐的阶段性质量门。默认会一次运行基础意图、真人 persona、多轮 journey、直接读取结果卡片、地图结果转订单草稿、委派防循环、路由降级等回归检查；`--include-semantic` 会额外运行较慢的 LLM semantic-only 路由，用来验证复杂自然语言不是靠关键词硬分流。
+`run_agent_quality_suite.py` 是推荐的阶段性质量门。默认会一次运行基础意图、真人 persona、多轮 journey、直接读取结果卡片、地图结果转订单草稿、记忆过滤、委派防循环、路由降级等回归检查；`--include-semantic` 会额外运行较慢的 LLM semantic-only 路由，用来验证复杂自然语言不是靠关键词硬分流。
 该质量门默认使用 `--jobs 3` 并发运行互不依赖的检查；如果需要排查单个脚本日志顺序，可以加 `--jobs 1` 串行执行。
 `persona_scenarios.json` 覆盖更接近真人表达的请求，例如先查地图再创建草稿、否定发布动态、草稿追改、记忆偏好、评论/点赞确认等，用来防止意图分析在自然语言场景里退化。
 
@@ -26,6 +27,8 @@ python scripts/run_router_fallback_eval.py
 `run_direct_read_eval.py` 使用假地图/天气工具结果验证直读响应，确保地图推荐会返回可渲染地图和下一步引导卡片，同时不访问外部接口。
 
 `run_contextual_order_eval.py` 验证多轮地图到订单草稿的衔接：用户先查地图候选，下一轮说“就第一家”时，Agent 应进入订单草稿确认门控，并自动带上地点名称、坐标、人数、活动类型和校区。
+
+`run_memory_filter_eval.py` 不调用大模型、后端或高德，只验证 Python Agent 在返回记忆抽取结果前会过滤 `none`、无事实、低置信猜测、临时地图/草稿/搜索结果等噪声，同时保留长期偏好和稳定个人事实。
 
 `run_delegation_guard_eval.py` 不会调用真实大模型、后端或高德接口，只验证同一轮对话内的调度防线：重复任务复用、语义相近任务复用、单个专家调用上限、总委派上限，以及不同用户轮次之间的状态隔离。
 
