@@ -203,6 +203,21 @@
                               </div>
                             </div>
                           </div>
+                          <div v-if="isContentDraftConfirmation(artifact)" class="content-draft-preview">
+                            <div class="content-draft-head">
+                              <div class="content-draft-avatar">{{ getContentDraftAvatar(artifact) }}</div>
+                              <div class="content-draft-meta-main">
+                                <div class="content-draft-author">校园动态草稿</div>
+                                <div class="content-draft-subtitle">{{ getContentDraftSubtitle(artifact) }}</div>
+                              </div>
+                              <span class="content-draft-state">{{ artifact.editing ? '编辑中' : '预览' }}</span>
+                            </div>
+                            <div class="content-draft-body">{{ getContentDraftBody(artifact) }}</div>
+                            <div class="content-draft-foot">
+                              <span v-if="getContentDraftOrderId(artifact)" class="content-draft-link">关联订单 #{{ getContentDraftOrderId(artifact) }}</span>
+                              <span class="content-draft-media">{{ getContentDraftMediaType(artifact) }}</span>
+                            </div>
+                          </div>
                           <div v-if="artifact.fields?.length && !artifact.editing" class="artifact-fields">
                             <div
                               v-for="(field, fieldIndex) in artifact.fields"
@@ -959,6 +974,59 @@ function getArtifactHighlights(artifact) {
 function truncateArtifactValue(value, maxLength = 30) {
   const text = String(value || '')
   return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text
+}
+
+function getArtifactActionKind(artifact) {
+  return String(artifact?.actionKind || artifact?.action_kind || '').trim()
+}
+
+function getArtifactFieldByLabels(artifact, labels) {
+  const wanted = Array.isArray(labels) ? labels : [labels]
+  return (artifact?.fields || []).find(field => wanted.includes(String(field?.label || '').trim()))
+}
+
+function getArtifactResolvedFieldValue(artifact, labels, fallback = '') {
+  const field = getArtifactFieldByLabels(artifact, labels)
+  if (!field) return fallback
+  const rawValue = artifact?.editing ? field.editValue : field.value
+  const value = formatArtifactValue(rawValue)
+  return ['未填写', '待补充'].includes(value) ? fallback : value
+}
+
+function isContentDraftConfirmation(artifact) {
+  return artifact?.type === 'confirmation' && getArtifactActionKind(artifact) === 'content.create'
+}
+
+function getContentDraftBody(artifact) {
+  return getArtifactResolvedFieldValue(
+    artifact,
+    ['动态内容', '正文', '内容', '文本'],
+    '这条动态还没有正文，请先补充后再确认。'
+  )
+}
+
+function getContentDraftOrderId(artifact) {
+  return getArtifactResolvedFieldValue(artifact, ['订单ID', '关联订单'], '')
+}
+
+function getContentDraftMediaType(artifact) {
+  const mediaType = getArtifactResolvedFieldValue(artifact, ['媒体类型', 'mediaType'], 'TEXT_ONLY')
+  const labels = {
+    TEXT_ONLY: '纯文本',
+    IMAGE: '图片动态',
+    VIDEO: '视频动态'
+  }
+  return labels[String(mediaType).toUpperCase()] || mediaType
+}
+
+function getContentDraftSubtitle(artifact) {
+  const orderId = getContentDraftOrderId(artifact)
+  return orderId ? `发布后将关联订单 #${orderId}` : '发布前仍会等待确认'
+}
+
+function getContentDraftAvatar(artifact) {
+  const body = getContentDraftBody(artifact).trim()
+  return body ? body.slice(0, 1) : '动'
 }
 
 function isArtifactFieldMissing(field) {
@@ -2590,6 +2658,88 @@ onBeforeUnmount(() => {
   line-height: 1.4;
   word-break: break-word;
 }
+.content-draft-preview {
+  margin-top: 12px;
+  padding: 12px;
+  border: 1px solid rgba(20, 184, 166, 0.18);
+  border-radius: 10px;
+  background: linear-gradient(135deg, rgba(240, 253, 250, 0.9) 0%, rgba(248, 251, 255, 0.96) 100%);
+}
+.content-draft-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.content-draft-avatar {
+  width: 34px;
+  height: 34px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex: 0 0 34px;
+  background: #0f766e;
+  color: #ffffff;
+  font-size: 14px;
+  font-weight: 900;
+}
+.content-draft-meta-main {
+  min-width: 0;
+  flex: 1;
+}
+.content-draft-author {
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.3;
+}
+.content-draft-subtitle {
+  margin-top: 2px;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 700;
+  line-height: 1.35;
+}
+.content-draft-state {
+  flex: 0 0 auto;
+  padding: 4px 7px;
+  border-radius: 999px;
+  background: rgba(20, 184, 166, 0.12);
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 900;
+  line-height: 1.2;
+}
+.content-draft-body {
+  margin-top: 10px;
+  color: #1e293b;
+  font-size: 14px;
+  font-weight: 700;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.content-draft-foot {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+.content-draft-link,
+.content-draft-media {
+  padding: 4px 7px;
+  border: 1px solid rgba(20, 184, 166, 0.18);
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #0f766e;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+.content-draft-media {
+  color: #1d4ed8;
+  border-color: rgba(37, 99, 235, 0.16);
+}
 .artifact-actions {
   display: flex;
   flex-wrap: wrap;
@@ -3602,6 +3752,42 @@ onBeforeUnmount(() => {
   border-color: rgba(245, 158, 11, 0.35);
 }
 
+:global(:root[data-theme='dark']) .content-draft-preview {
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.13) 0%, rgba(16, 26, 42, 0.96) 100%);
+  border-color: rgba(45, 212, 191, 0.24);
+}
+
+:global(:root[data-theme='dark']) .content-draft-avatar {
+  background: #0f766e;
+  color: #ccfbf1;
+}
+
+:global(:root[data-theme='dark']) .content-draft-author,
+:global(:root[data-theme='dark']) .content-draft-body {
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .content-draft-subtitle {
+  color: #94a3b8;
+}
+
+:global(:root[data-theme='dark']) .content-draft-state {
+  background: rgba(45, 212, 191, 0.14);
+  color: #99f6e4;
+}
+
+:global(:root[data-theme='dark']) .content-draft-link,
+:global(:root[data-theme='dark']) .content-draft-media {
+  background: rgba(15, 23, 42, 0.42);
+  border-color: rgba(45, 212, 191, 0.22);
+  color: #99f6e4;
+}
+
+:global(:root[data-theme='dark']) .content-draft-media {
+  border-color: rgba(147, 197, 253, 0.24);
+  color: #bfdbfe;
+}
+
 :global(:root[data-theme='dark']) .artifact-edit-hint {
   background: rgba(245, 158, 11, 0.12);
   border-color: rgba(245, 158, 11, 0.35);
@@ -4136,6 +4322,42 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-confirmation) {
   background: linear-gradient(180deg, #172235 0%, #132033 100%) !important;
   border-color: rgba(91, 140, 255, 0.34) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .content-draft-preview) {
+  background: linear-gradient(135deg, rgba(20, 184, 166, 0.13) 0%, rgba(16, 26, 42, 0.96) 100%) !important;
+  border-color: rgba(45, 212, 191, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .content-draft-avatar) {
+  background: #0f766e !important;
+  color: #ccfbf1 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .content-draft-author),
+:global(html[data-theme='dark'] .ai-view .content-draft-body) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .content-draft-subtitle) {
+  color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .content-draft-state) {
+  background: rgba(45, 212, 191, 0.14) !important;
+  color: #99f6e4 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .content-draft-link),
+:global(html[data-theme='dark'] .ai-view .content-draft-media) {
+  background: rgba(15, 23, 42, 0.42) !important;
+  border-color: rgba(45, 212, 191, 0.22) !important;
+  color: #99f6e4 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .content-draft-media) {
+  border-color: rgba(147, 197, 253, 0.24) !important;
+  color: #bfdbfe !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .operation-timeline) {
