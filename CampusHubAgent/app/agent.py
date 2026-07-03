@@ -27,7 +27,14 @@ from app.config import (
     SILICONFLOW_ROUTER_MODEL,
 )
 from app.tools import search_orders, create_order, get_my_orders, get_order_detail
-from app.tools_order import ORDER_EXTRA_TOOLS, apply_to_order, accept_applicant, complete_order
+from app.tools_order import (
+    ORDER_EXTRA_TOOLS,
+    accept_applicant,
+    apply_to_order,
+    cancel_order_application,
+    complete_order,
+    reject_order_application,
+)
 from app.tools_content import CONTENT_TOOLS, search_contents, create_content, create_comment, like_content
 from app.tools_user import USER_TOOLS
 from app.mcp_tools import MCP_TOOLS, maps_around_search, maps_geo, maps_weather
@@ -95,7 +102,7 @@ INTENT_ANALYSIS_PROMPT = """你是 CampusHub 的意图分析智能体。请基�
 要求：
 - 不要依赖单纯关键词匹配，要理解语义。
 - 只输出 JSON，不要输出 Markdown 或解释。
-- 写操作包括：创建订单、发布动态、评论、点赞/取消点赞、报名、接受申请、完成订单、删除内容。
+- 写操作包括：创建订单、发布动态、评论、点赞/取消点赞、报名、撤销报名/申请、接受/拒绝申请、完成订单、删除内容。
 - 只读操作包括：搜索、查看、查询、推荐、解释、路线/天气/地点查询。
 - 如果是写操作但用户还没有确认或缺少关键字段，requires_confirmation 必须为 true。
 
@@ -176,7 +183,7 @@ Return JSON only. Do not use Markdown. The JSON schema is:
 
 Decision principles:
 - Read tasks: search, browse, view, explain, recommend, compare, route planning, weather, place/store lookup. Execute read tools without confirmation.
-- Write tasks: create/publish/edit/delete/comment/like/apply/accept/complete/order/sign up. They require a confirmation draft before any database write.
+- Write tasks: create/publish/edit/delete/comment/like/apply/cancel application/accept/reject/complete/order/sign up. They require a confirmation draft before any database write.
 - A recommendation for stores, venues, routes, or nearby places is map.search/read, even if the user mentions people count, time, budget, or "一起".
 - If the user says they are not looking for a store/place and wants people/classmates/partners instead, choose order.search/read.
 - Only classify as content.create/order.create when the user explicitly asks CampusHub to publish/create/organize/post an activity/order/dynamic.
@@ -243,7 +250,7 @@ INTENT_REVIEW_PROMPT = """You are the senior intent-review agent for CampusHub. 
 
 Rules:
 - Do not rely on simple keyword matching. Infer the user's real goal from the message and recent context.
-- If the user wants the system to create, publish, edit, delete, comment, like, apply, accept, or complete something, classify it as write or mixed.
+- If the user wants the system to create, publish, edit, delete, comment, like, apply, cancel/withdraw an application, accept, reject, or complete something, classify it as write or mixed.
 - A write classification does not mean immediate execution. If enough information is present, use next_action=prepare_draft and requires_confirmation=true. If required fields are missing, use next_action=ask_clarification and requires_confirmation=true.
 - If one request combines read-first work with a possible later create/publish/apply action, classify it as mixed and keep requires_confirmation=true.
 - Read-only search, browse, explain, recommend, route, weather, and place lookup tasks are read operations.
@@ -335,7 +342,7 @@ JSON 字段：
 {{
   "title": "确认发布篮球约伴活动",
   "description": "一句话描述将要执行的操作",
-  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.accept|order.complete|other.write",
+  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.cancel_apply|order.accept|order.reject_apply|order.complete|other.write",
   "fields": [
     {{"label": "字段名", "value": "字段值"}}
   ],
@@ -362,10 +369,13 @@ DRAFT_CONFIRMATION_PROMPT = """You are CampusHub's write-operation confirmation 
 
 Rules:
 - Return JSON only. No Markdown. No explanation.
-- Do not call tools and do not claim that data has already been created, published, liked, applied, accepted, completed, or deleted.
+- Do not call tools and do not claim that data has already been created, published, liked, applied, canceled, accepted, rejected, completed, or deleted.
 - The title must match the actual action_kind and current user request. Do not copy example titles.
 - For action_kind=content.create, use a title like "确认发布动态".
 - For action_kind=order.create, use a title like "确认创建约伴活动".
+- For action_kind=order.cancel_apply, use a title like "确认撤销报名申请" and include 订单ID.
+- For action_kind=order.reject_apply, use a title like "确认拒绝订单申请" and include 申请ID.
+- For canceling an entire order/activity, use action_kind=other.write unless an explicit order cancellation tool is available.
 - If required information is missing, list it in missing_fields and make reply ask the user to complete it.
 - If enough information is present, make reply ask the user to confirm before execution.
 
@@ -373,7 +383,7 @@ Return this JSON shape:
 {{
   "title": "确认发布动态",
   "description": "one sentence describing the pending write operation",
-  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.accept|order.complete|other.write",
+  "action_kind": "order.create|content.create|content.comment|content.like|order.apply|order.cancel_apply|order.accept|order.reject_apply|order.complete|other.write",
   "fields": [
     {{"label": "字段名", "value": "字段值"}}
   ],
@@ -1122,6 +1132,24 @@ def _looks_like_companion_search(text: str) -> bool:
 
 def _contains_blocking_write_negation(text: str) -> bool:
     """Return true when the user is negating the write itself, not asking for confirmation first."""
+    business_cancel_cues = (
+        "取消报名",
+        "撤销报名",
+        "取消申请",
+        "撤销申请",
+        "取消加入",
+        "退出订单",
+        "退出活动",
+        "取消订单",
+        "取消活动",
+        "cancel my application",
+        "withdraw application",
+        "cancel application",
+        "leave order",
+        "cancel order",
+    )
+    if _has_any(str(text or "").lower(), business_cancel_cues):
+        return False
     if _has_any(text, ("取消", "不想")):
         return True
     direct_confirmation_cues = (
@@ -1901,6 +1929,72 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
             "next_action": "prepare_draft",
         }
 
+    cancel_apply_cues = (
+        "取消报名",
+        "撤销报名",
+        "取消申请",
+        "撤销申请",
+        "取消加入",
+        "退出订单",
+        "退出活动",
+        "cancel my application",
+        "withdraw application",
+        "cancel application",
+        "leave order",
+    )
+    if _has_any(text.lower(), cancel_apply_cues):
+        return {
+            **base,
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "summary": "用户想撤销约伴订单申请或退出已申请的活动",
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    reject_apply_cues = (
+        "拒绝申请",
+        "驳回申请",
+        "不同意申请",
+        "拒绝加入",
+        "reject application",
+        "reject applicant",
+        "deny application",
+    )
+    if _has_any(text.lower(), reject_apply_cues) or (_has_any(text, ("拒绝", "驳回", "不同意")) and "申请" in text):
+        return {
+            **base,
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "summary": "用户想拒绝约伴订单申请",
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    if _has_any(text, ("完成订单", "标记完成", "订单完成", "结束订单", "完成这个订单", "mark complete")):
+        return {
+            **base,
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "summary": "用户想将约伴订单标记为完成",
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+
+    if _has_any(text, ("取消订单", "取消活动")) or _has_any(text.lower(), ("cancel order", "cancel activity")):
+        return {
+            **base,
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "summary": "用户想取消约伴订单或活动，需先确认并检查是否已有可执行工具",
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+
     if _has_any(text, ("接受申请", "同意申请", "通过申请", "同意加入", "通过一下", "同意一下")):
         return {
             **base,
@@ -2500,6 +2594,47 @@ def _extract_map_selection(text: str) -> tuple[str, str]:
     return title, coords
 
 
+def _extract_order_id_reference(text: str) -> int | None:
+    text = str(text or "")
+    patterns = (
+        r"(?:订单|约伴|活动)\s*(?:ID|id|编号|#|号)?\s*[:：#]?\s*(\d+)",
+        r"\border\s*#?\s*(\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _extract_application_id_reference(text: str) -> int | None:
+    text = str(text or "")
+    patterns = (
+        r"(?:申请记录|申请ID|申请id|申请编号|申请)\s*[:：#]?\s*(\d+)",
+        r"\bapply(?:id|_id)?\s*#?\s*(\d+)\b",
+        r"\bapplication\s*#?\s*(\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
+def _extract_applicant_id_reference(text: str) -> int | None:
+    text = str(text or "")
+    patterns = (
+        r"(?:申请者|申请用户|用户|同学)\s*(?:ID|id|编号|#|号)?\s*[:：#]?\s*(\d+)",
+        r"(\d+)\s*号?(?:同学|用户|申请者)",
+        r"\bapplicant\s*#?\s*(\d+)\b",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if match:
+            return int(match.group(1))
+    return None
+
+
 def _infer_activity_label(text: str) -> str:
     lowered = str(text or "").lower()
     activity_rules = [
@@ -2557,6 +2692,13 @@ def _drop_missing_fields(missing_fields: list, keywords: tuple[str, ...]) -> lis
     ]
 
 
+def _add_missing_field(missing_fields: list, label: str) -> list:
+    current = [str(item) for item in (missing_fields or [])]
+    if not any(label in item for item in current):
+        current.append(label)
+    return current
+
+
 def _enrich_order_confirmation_fields(
     fields: list,
     missing_fields: list,
@@ -2565,12 +2707,49 @@ def _enrich_order_confirmation_fields(
     user_message: str,
     intent_analysis: dict,
 ) -> tuple[list, list]:
-    if (intent_analysis.get("primary_intent") or "").lower() != "order.create":
+    primary_intent = (intent_analysis.get("primary_intent") or "").lower()
+    if primary_intent not in {"order.create", "order.manage"}:
         return fields, missing_fields
 
     enriched_fields = [dict(item) if isinstance(item, dict) else item for item in (fields or [])]
     enriched_missing = list(missing_fields or [])
     context_text = _conversation_text(history, user_message)
+    lowered_context = context_text.lower()
+
+    if primary_intent == "order.manage":
+        order_id = _extract_order_id_reference(context_text)
+        apply_id = _extract_application_id_reference(context_text)
+        applicant_id = _extract_applicant_id_reference(context_text)
+
+        if order_id:
+            _set_artifact_field(enriched_fields, ("订单ID", "约伴ID", "活动ID"), "订单ID", str(order_id))
+            enriched_missing = _drop_missing_fields(enriched_missing, ("订单ID", "约伴ID", "活动ID"))
+        if apply_id:
+            _set_artifact_field(enriched_fields, ("申请ID", "申请记录ID", "申请编号"), "申请ID", str(apply_id))
+            enriched_missing = _drop_missing_fields(enriched_missing, ("申请ID", "申请记录ID", "申请编号"))
+        if applicant_id:
+            _set_artifact_field(enriched_fields, ("申请者ID", "申请用户ID", "用户ID"), "申请者ID", str(applicant_id))
+            enriched_missing = _drop_missing_fields(enriched_missing, ("申请者ID", "申请用户ID", "用户ID"))
+
+        if _has_any(lowered_context, ("取消报名", "撤销报名", "取消申请", "撤销申请", "cancel my application", "withdraw application")):
+            if not order_id:
+                enriched_missing = _add_missing_field(enriched_missing, "订单ID")
+        elif (
+            _has_any(lowered_context, ("拒绝申请", "驳回申请", "不同意申请", "拒绝加入", "reject application", "deny application"))
+            or (_has_any(lowered_context, ("拒绝", "驳回", "不同意")) and "申请" in lowered_context)
+        ):
+            if not apply_id:
+                enriched_missing = _add_missing_field(enriched_missing, "申请ID")
+        elif _has_any(context_text, ("接受申请", "同意申请", "通过申请", "同意加入", "通过一下", "同意一下")):
+            if not order_id:
+                enriched_missing = _add_missing_field(enriched_missing, "订单ID")
+            if not applicant_id:
+                enriched_missing = _add_missing_field(enriched_missing, "申请者ID")
+        elif _has_any(context_text, ("完成订单", "标记完成", "订单完成", "结束订单")):
+            if not order_id:
+                enriched_missing = _add_missing_field(enriched_missing, "订单ID")
+        return enriched_fields, enriched_missing
+
     location_title, coords = _extract_contextual_map_selection(history, user_message)
 
     if location_title:
@@ -2768,6 +2947,27 @@ def _current_user_id(user_info: dict) -> int | None:
 def _infer_confirmed_action_kind(text: str, fields: dict) -> str:
     lowered = str(text or "").lower()
     field_labels = " ".join(fields.keys())
+    if any(cue in lowered for cue in (
+        "取消报名",
+        "撤销报名",
+        "取消申请",
+        "撤销申请",
+        "取消加入",
+        "退出订单",
+        "退出活动",
+        "cancel my application",
+        "withdraw application",
+        "cancel application",
+        "leave order",
+    )):
+        return "order.cancel_apply"
+    if (
+        any(cue in lowered for cue in ("拒绝申请", "驳回申请", "不同意申请", "拒绝加入", "reject application", "deny application"))
+        or (any(cue in lowered for cue in ("拒绝", "驳回", "不同意")) and "申请" in lowered)
+    ):
+        return "order.reject_apply"
+    if any(cue in lowered for cue in ("取消订单", "取消活动", "cancel order", "cancel activity")):
+        return "other.write"
     if any(cue in lowered for cue in ("申请加入", "报名", "加入订单", "加入活动")):
         return "order.apply"
     if any(cue in lowered for cue in ("评论", "回复动态", "给动态回复")) or _comment_text_from_fields(fields):
@@ -3028,6 +3228,44 @@ async def _execute_confirmed_order_apply(user_info: dict, fields: dict, user_mes
     }
 
 
+async def _execute_confirmed_order_cancel_apply(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    order_id = _field_int(fields, ("订单ID", "约伴ID", "活动ID", "order_id"))
+    missing = []
+    if not user_id:
+        missing.append("用户ID")
+    if not order_id:
+        missing.append("订单ID")
+
+    intent = _intent_for_confirmed_execution("order.cancel_apply")
+    if missing:
+        return {
+            "reply": "我还不能撤销订单申请，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {"user_id": user_id, "order_id": order_id}
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认撤销申请",
+        "detail": "已收到完整确认草稿，正在调用撤销申请工具",
+        "state": "running",
+    })
+    result_text = await cancel_order_application.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "撤销申请执行完成",
+        "detail": "撤销申请工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "cancel_order_application", "args": args}],
+        "intent": intent,
+    }
+
+
 async def _execute_confirmed_order_accept(user_info: dict, fields: dict, user_message: str) -> dict:
     user_id = _current_user_id(user_info)
     order_id = _field_int(fields, ("订单ID", "约伴ID", "活动ID", "order_id"))
@@ -3065,6 +3303,44 @@ async def _execute_confirmed_order_accept(user_info: dict, fields: dict, user_me
     return {
         "reply": result_text,
         "tool_calls": [{"name": "accept_applicant", "args": args}],
+        "intent": intent,
+    }
+
+
+async def _execute_confirmed_order_reject_apply(user_info: dict, fields: dict, user_message: str) -> dict:
+    user_id = _current_user_id(user_info)
+    apply_id = _field_int(fields, ("申请ID", "申请记录ID", "申请编号", "apply_id", "apid"))
+    missing = []
+    if not user_id:
+        missing.append("当前用户ID")
+    if not apply_id:
+        missing.append("申请ID")
+
+    intent = _intent_for_confirmed_execution("order.reject_apply")
+    if missing:
+        return {
+            "reply": "我还不能拒绝申请，缺少：" + "、".join(missing) + "。请点击修改草稿补充后再确认。",
+            "tool_calls": [],
+            "intent": {**intent, "missing_slots": missing, "requires_confirmation": True, "next_action": "prepare_draft"},
+        }
+
+    args = {"user_id": user_id, "apply_id": apply_id}
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "执行已确认拒绝申请",
+        "detail": "已收到完整确认草稿，正在调用拒绝申请工具",
+        "state": "running",
+    })
+    result_text = await reject_order_application.ainvoke(args)
+    await _emit_event("agent_step", {
+        "phase": "confirmed_execution",
+        "title": "拒绝申请执行完成",
+        "detail": "拒绝申请工具已返回结果",
+        "state": "completed",
+    })
+    return {
+        "reply": result_text,
+        "tool_calls": [{"name": "reject_order_application", "args": args}],
         "intent": intent,
     }
 
@@ -3124,13 +3400,17 @@ async def build_confirmed_execution_response(user_info: dict, history: list, use
         return await _execute_confirmed_like(user_info, fields, user_message)
     if action_kind == "order.apply":
         return await _execute_confirmed_order_apply(user_info, fields, user_message)
+    if action_kind == "order.cancel_apply":
+        return await _execute_confirmed_order_cancel_apply(user_info, fields, user_message)
     if action_kind == "order.accept":
         return await _execute_confirmed_order_accept(user_info, fields, user_message)
+    if action_kind == "order.reject_apply":
+        return await _execute_confirmed_order_reject_apply(user_info, fields, user_message)
     if action_kind == "order.complete":
         return await _execute_confirmed_order_complete(user_info, fields, user_message)
 
     return {
-        "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单、动态、评论、点赞或报名草稿，或继续手动处理。",
+        "reply": "我已收到确认，但这个草稿类型暂时还不能自动执行。请改用订单、动态、评论、点赞、报名、撤销申请或拒绝申请草稿，或继续手动处理。",
         "tool_calls": [],
         "intent": _intent_for_confirmed_execution(action_kind),
     }

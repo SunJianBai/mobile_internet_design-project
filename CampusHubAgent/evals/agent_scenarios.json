@@ -170,6 +170,45 @@
       }
     },
     {
+      "id": "order_cancel_application_requires_confirm",
+      "category": "order_write",
+      "message": "我刚刚申请加入订单 12，现在想撤销申请，执行前先确认",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "order_reject_application_requires_confirm",
+      "category": "order_write",
+      "message": "申请 7 不太合适，帮我拒绝这个订单申请，先生成确认卡片",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "order_complete_requires_confirm",
+      "category": "order_write",
+      "message": "订单 18 已经结束了，帮我标记完成，先生成确认卡片",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
       "id": "content_search_study",
       "category": "content_read",
       "message": "搜一下最近有没有人在动态里约图书馆自习",

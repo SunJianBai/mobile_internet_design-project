@@ -331,6 +331,32 @@
       }
     },
     {
+      "id": "persona_order_cancel_application_requires_confirm",
+      "category": "persona_order_write",
+      "persona": "临时改变计划想撤销报名的人",
+      "message": "我刚才报了订单 12，但现在去不了了，帮我取消报名，确认后再执行",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
+      "id": "persona_order_reject_application_requires_confirm",
+      "category": "persona_order_write",
+      "persona": "订单发起人拒绝不合适的申请",
+      "message": "申请 7 先拒绝吧，别直接操作，给我确认卡",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true
+      }
+    },
+    {
       "id": "persona_memory_forget_preference",
       "category": "persona_memory_write",
       "persona": "想删除或修改 AI 记忆的人",

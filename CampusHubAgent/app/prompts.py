@@ -114,7 +114,9 @@ ORDER_AGENT_PROMPT = """你是一个订单处理专家。根据任务描述，�
 - get_order_detail: 查看订单详情（需要 order_id）
 - apply_to_order: 申请加入订单（需要 user_id, order_id）
 - get_order_applications: 查看订单申请列表（需要 user_id, order_id）
+- cancel_order_application: 撤销当前用户对订单的申请（需要 user_id, order_id）
 - accept_applicant: 接受申请者（需要 user_id, order_id, accepter_id）
+- reject_order_application: 拒绝订单申请（需要 user_id, apply_id）
 - complete_order: 完成订单（需要 user_id, order_id）
 
 ## 枚举值

@@ -1,8 +1,8 @@
-"""Extended order tools — apply, accept, complete."""
+"""Extended order tools — apply, cancel, audit, complete."""
 
 from langchain_core.tools import tool
 
-from app.backend_client import api_get, api_post, api_put
+from app.backend_client import api_delete, api_get, api_post, api_put
 
 
 @tool
@@ -47,6 +47,20 @@ async def get_order_applications(user_id: int, order_id: int) -> str:
 
 
 @tool
+async def cancel_order_application(user_id: int, order_id: int) -> str:
+    """撤销当前用户对某个约伴订单的申请。
+
+    Args:
+        user_id: 当前用户ID（系统自动提供）
+        order_id: 要撤销申请的订单ID
+    """
+    result = await api_delete(f"/api/v1/orders/{order_id}/apply", user_id=user_id)
+    if result.get("code") == 200:
+        return f"✅ 已撤销订单 #{order_id} 的加入申请。"
+    return f"撤销申请失败: {result.get('message', '未知错误')}"
+
+
+@tool
 async def accept_applicant(user_id: int, order_id: int, accepter_id: int) -> str:
     """接受某个用户的申请，让其加入订单（仅订单发布者可用）。
 
@@ -63,6 +77,24 @@ async def accept_applicant(user_id: int, order_id: int, accepter_id: int) -> str
 
 
 @tool
+async def reject_order_application(user_id: int, apply_id: int) -> str:
+    """拒绝某条订单申请（仅订单发布者可用）。
+
+    Args:
+        user_id: 当前用户ID（系统自动提供）
+        apply_id: 要拒绝的申请记录ID
+    """
+    result = await api_put(
+        f"/api/v1/orders/applications/{apply_id}",
+        user_id=user_id,
+        json_body={"status": "REJECTED"},
+    )
+    if result.get("code") == 200:
+        return f"✅ 已拒绝申请 #{apply_id}。"
+    return f"拒绝申请失败: {result.get('message', '未知错误')}"
+
+
+@tool
 async def complete_order(user_id: int, order_id: int) -> str:
     """将订单标记为已完成。
 
@@ -76,4 +108,11 @@ async def complete_order(user_id: int, order_id: int) -> str:
     return f"操作失败: {result.get('message', '未知错误')}"
 
 
-ORDER_EXTRA_TOOLS = [apply_to_order, get_order_applications, accept_applicant, complete_order]
+ORDER_EXTRA_TOOLS = [
+    apply_to_order,
+    get_order_applications,
+    cancel_order_application,
+    accept_applicant,
+    reject_order_application,
+    complete_order,
+]
