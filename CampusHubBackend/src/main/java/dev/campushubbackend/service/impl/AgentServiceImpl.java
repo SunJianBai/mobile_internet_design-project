@@ -52,6 +52,13 @@ public class AgentServiceImpl implements AgentService {
     private static final List<String> ONE_OFF_INTENT_PREFIXES = List.of(
             "用户想", "用户正在", "用户需要", "用户询问", "用户查找", "用户搜索", "用户提供", "用户计划", "用户准备"
     );
+    private static final List<String> NO_SIGNAL_MEMORY_MARKERS = List.of(
+            "none", "没有提取到", "没有值得提取", "没有可提取", "无事实", "无明确事实", "无可记忆",
+            "不明确", "无法判断", "无法确定", "测试系统反应", "习惯性输入错误"
+    );
+    private static final List<String> LOW_CONFIDENCE_MEMORY_MARKERS = List.of(
+            "可能", "疑似", "似乎", "大概", "也许", "猜测", "推测", "不确定"
+    );
 
     // ==================== 会话管理 ====================
 
@@ -223,8 +230,10 @@ public class AgentServiceImpl implements AgentService {
             }
 
             if ("save".equals(action)) {
-                if (containsAny(compactForPolicy(content), STRICT_TRANSIENT_MEMORY_MARKERS)
-                        || startsWithAny(compactForPolicy(content), ONE_OFF_INTENT_PREFIXES)
+                String compact = compactForPolicy(content);
+                if (isNoSignalMemoryContent(compact)
+                        || containsAny(compact, STRICT_TRANSIENT_MEMORY_MARKERS)
+                        || startsWithAny(compact, ONE_OFF_INTENT_PREFIXES)
                         || isDuplicateMemory(normalized, seen)) {
                     continue;
                 }
@@ -381,6 +390,9 @@ public class AgentServiceImpl implements AgentService {
         if (compact.isBlank()) {
             return false;
         }
+        if (isNoSignalMemoryContent(compact) || containsAny(compact, LOW_CONFIDENCE_MEMORY_MARKERS)) {
+            return false;
+        }
         if (containsAny(compact, STRICT_TRANSIENT_MEMORY_MARKERS)) {
             return false;
         }
@@ -492,6 +504,10 @@ public class AgentServiceImpl implements AgentService {
 
     private static boolean startsWithAny(String value, List<String> prefixes) {
         return prefixes.stream().anyMatch(value::startsWith);
+    }
+
+    private static boolean isNoSignalMemoryContent(String compact) {
+        return "none".equals(compact) || containsAny(compact, NO_SIGNAL_MEMORY_MARKERS);
     }
 
     // ==================== 辅助方法 ====================

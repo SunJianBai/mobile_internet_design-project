@@ -32,6 +32,23 @@ class AgentServiceMemoryPolicyTest {
     }
 
     @Test
+    void rejectsNoSignalAndLowConfidenceAutoMemories() {
+        List<Map<String, String>> kept = AgentServiceImpl.filterAutoExtractedMemories(
+                List.of(
+                        Map.of("category", "fact", "content", "没有提取到关于用户的事实性信息"),
+                        Map.of("category", "behavior", "content", "用户发送的消息内容不明确，可能习惯性输入错误或测试系统反应"),
+                        Map.of("category", "fact", "content", "用户可能在良乡校区附近活动"),
+                        Map.of("category", "preference", "content", "用户似乎喜欢打篮球")
+                ),
+                List.of(),
+                "随便发点测试一下",
+                "我不确定是否有值得保存的信息。"
+        );
+
+        assertTrue(kept.isEmpty());
+    }
+
+    @Test
     void keepsDurablePreferenceAndNormalizesCategory() {
         List<Map<String, String>> kept = AgentServiceImpl.filterAutoExtractedMemories(
                 List.of(Map.of("category", "偏好", "content", "用户喜欢在良乡校区打篮球")),
@@ -137,6 +154,22 @@ class AgentServiceMemoryPolicyTest {
         );
 
         assertTrue(kept.isEmpty());
+    }
+
+    @Test
+    void confirmedMemorySaveRejectsNoSignalNoiseButAllowsDelete() {
+        List<Map<String, String>> kept = AgentServiceImpl.filterCommittedMemoryOperations(
+                List.of(
+                        Map.of("operation", "save", "category", "fact", "content", "没有提取到关于用户的事实性信息"),
+                        Map.of("operation", "save", "category", "behavior", "content", "用户发送的消息内容不明确，可能习惯性输入错误或测试系统反应"),
+                        Map.of("operation", "delete", "category", "fact", "content", "没有提取到关于用户的事实性信息")
+                ),
+                List.of()
+        );
+
+        assertEquals(1, kept.size());
+        assertEquals("delete", kept.getFirst().get("operation"));
+        assertEquals("没有提取到关于用户的事实性信息", kept.getFirst().get("content"));
     }
 
     @Test
