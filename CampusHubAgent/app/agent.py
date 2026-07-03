@@ -3109,6 +3109,18 @@ def _extract_result_count(result_text: str) -> int:
     return 0
 
 
+def _format_order_result_preview(orders: list[dict], limit: int = 3) -> str:
+    previews = []
+    for item in orders[:limit]:
+        summary = " · ".join(
+            part for part in [item.get("activity"), item.get("location"), item.get("time"), item.get("people")]
+            if part
+        )
+        label = f"订单#{item.get('id')}"
+        previews.append(f"{label} {summary}".strip())
+    return "；".join(previews)
+
+
 def _build_order_result_artifact(order_text: str, args: dict, user_message: str, intent_analysis: dict) -> dict | None:
     orders = _parse_order_result_lines(order_text)
     if not orders:
@@ -3165,6 +3177,7 @@ def _build_order_result_artifact(order_text: str, args: dict, user_message: str,
         part for part in [first.get("activity"), first.get("location"), first.get("time"), first.get("people")]
         if part
     )
+    result_preview = _format_order_result_preview(orders)
     draft_prompt = (
         f"参考刚才查询到的{scope}约伴活动，帮我整理一个新的约伴订单草稿。"
         "如果还缺少地点、时间、人数等必要信息，请先追问；不要直接发布。"
@@ -3182,6 +3195,7 @@ def _build_order_result_artifact(order_text: str, args: dict, user_message: str,
         "fields": [
             {"label": "查询范围", "value": scope},
             {"label": "匹配数量", "value": f"{count} 个结果"},
+            {"label": "结果预览", "value": result_preview},
             {"label": "第一条", "value": f"订单#{first.get('id')} · {first_summary}"},
             {"label": "安全策略", "value": "查看可直接跳转，报名/创建需确认"},
         ],
@@ -3244,6 +3258,16 @@ def _parse_content_result_lines(content_text: str) -> list[dict]:
     return items
 
 
+def _format_content_result_preview(contents: list[dict], limit: int = 3) -> str:
+    previews = []
+    for item in contents[:limit]:
+        text = item.get("text") or "无正文预览"
+        if len(text) > 28:
+            text = f"{text[:28]}..."
+        previews.append(f"动态#{item.get('id')} · {item.get('author')}: {text}")
+    return "；".join(previews)
+
+
 def _build_content_result_artifact(content_text: str, keyword: str, intent_analysis: dict) -> dict | None:
     contents = _parse_content_result_lines(content_text)
     if not contents:
@@ -3286,6 +3310,7 @@ def _build_content_result_artifact(content_text: str, keyword: str, intent_analy
     first_text = first.get("text") or "无正文预览"
     if len(first_text) > 48:
         first_text = f"{first_text[:48]}..."
+    result_preview = _format_content_result_preview(contents)
 
     return {
         "type": "content",
@@ -3294,6 +3319,7 @@ def _build_content_result_artifact(content_text: str, keyword: str, intent_analy
         "fields": [
             {"label": "搜索主题", "value": scope},
             {"label": "匹配数量", "value": f"{count} 条动态"},
+            {"label": "结果预览", "value": result_preview},
             {"label": "第一条", "value": f"动态#{first.get('id')} · {first.get('author')}"},
             {"label": "摘要", "value": first_text},
         ],

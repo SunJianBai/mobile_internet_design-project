@@ -262,6 +262,9 @@ async def scenario_order_search_returns_result_artifact() -> DirectReadResult:
     fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
     if "2 个结果" != fields.get("匹配数量"):
         failures.append(f"expected order count field, got {fields.get('匹配数量')!r}")
+    preview = str(fields.get("结果预览") or "")
+    if "订单#42" not in preview or "订单#43" not in preview:
+        failures.append(f"expected order preview to include top results, got {preview!r}")
     actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
     first_action = actions[0] if actions else {}
     if first_action.get("route") != "/orders/42":
@@ -345,6 +348,9 @@ async def scenario_content_search_returns_result_artifact() -> DirectReadResult:
     fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
     if fields.get("搜索主题") != "自习":
         failures.append(f"expected content keyword field, got {fields.get('搜索主题')!r}")
+    preview = str(fields.get("结果预览") or "")
+    if "动态#77" not in preview or "动态#78" not in preview:
+        failures.append(f"expected content preview to include top results, got {preview!r}")
     actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
     first_action = actions[0] if actions else {}
     if first_action.get("route") != "/contents/77":
