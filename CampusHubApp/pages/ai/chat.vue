@@ -116,6 +116,16 @@
                     <text class="artifact-highlight-value">{{ highlight.value }}</text>
                   </view>
                 </view>
+                <view v-if="artifact.type === 'confirmation'" class="artifact-review-panel" :class="{ editing: artifact.editing, edited: artifact.edited }">
+                  <view class="artifact-review-main">
+                    <text class="artifact-review-kicker">{{ getConfirmationReviewKicker(artifact) }}</text>
+                    <text class="artifact-review-title">{{ getConfirmationReviewTitle(artifact) }}</text>
+                  </view>
+                  <view class="artifact-review-chips">
+                    <text class="artifact-review-chip">{{ artifactHasMissingFields(artifact) ? '需补充' : '字段完整' }}</text>
+                    <text v-if="artifact.edited" class="artifact-review-chip changed">已修改</text>
+                  </view>
+                </view>
                 <template v-if="isRouteGuideArtifact(artifact)">
                   <view
                     v-for="routeSummary in [getRouteGuideSummary(artifact)]"
@@ -214,10 +224,15 @@
                   </view>
                 </view>
                 <view v-if="artifact.editing" class="artifact-editor">
+                  <view class="artifact-editor-head">
+                    <text>正在修改草稿</text>
+                    <text>{{ getEditableFieldCount(artifact) }} 个字段</text>
+                  </view>
                   <view
                     v-for="(field, fieldIndex) in artifact.fields"
                     :key="`edit-${fieldIndex}`"
                     class="artifact-edit-field"
+                    :class="{ changed: isArtifactFieldEdited(field) }"
                   >
                     <text class="artifact-field-label">{{ field.label }}</text>
                     <textarea
@@ -499,6 +514,7 @@ import { showError, showSuccess } from '@/utils/util.js'
 
 const DRAFT_KEY = 'ai_draft'
 const STREAM_STATE_KEY = 'campushub_ai_stream_states'
+const ARTIFACT_DRAFTS_KEY = 'campushub_ai_artifact_drafts'
 
 const conversations = ref([])
 const currentCid = ref(null)
@@ -923,6 +939,128 @@ const getArtifactHighlights = (artifact) => {
   }))
 }
 
+const normalizeEditableValue = (value) => {
+  const text = formatArtifactValue(value)
+  return ['未填写', '待补充'].includes(text) ? '' : text
+}
+
+const isArtifactFieldEdited = (field) => {
+  if (!field || !Object.prototype.hasOwnProperty.call(field, 'editValue')) return false
+  return String(field.editValue ?? '').trim() !== normalizeEditableValue(field.value)
+}
+
+const artifactHasPendingFieldEdits = (artifact) => {
+  return (artifact?.fields || []).some(isArtifactFieldEdited)
+}
+
+const getEditableFieldCount = (artifact) => {
+  return (artifact?.fields || []).length
+}
+
+const getConfirmationReviewKicker = (artifact) => {
+  if (artifact?.editing) return '编辑中'
+  if (artifact?.edited) return '已修改'
+  return artifactHasMissingFields(artifact) ? '待补充' : '待确认'
+}
+
+const getConfirmationReviewTitle = (artifact) => {
+  if (artifact?.editing) return '修改会保留在这张确认卡片中'
+  if (artifact?.edited) return '将按当前字段确认执行'
+  return artifactHasMissingFields(artifact) ? '补全字段后再确认执行' : '确认前不会执行写操作'
+}
+
+const readArtifactDrafts = () => {
+  try {
+    return JSON.parse(uni.getStorageSync(ARTIFACT_DRAFTS_KEY) || '{}')
+  } catch (error) {
+    return {}
+  }
+}
+
+const writeArtifactDrafts = (drafts) => {
+  try {
+    uni.setStorageSync(ARTIFACT_DRAFTS_KEY, JSON.stringify(drafts || {}))
+  } catch (error) {
+    // ignore storage failures
+  }
+}
+
+const getArtifactDraftKey = (message, artifact, artifactIndex) => {
+  const messageKey = message?.mid
+    ? `mid:${message.mid}`
+    : `local:${message?.localId || String(message?.content || '').slice(0, 48)}`
+  const artifactKey = [
+    artifact?.id || '',
+    artifact?.type || '',
+    artifact?.title || '',
+    artifact?.actionKind || artifact?.action_kind || '',
+    artifactIndex
+  ].join('|')
+  return `${messageKey}:${artifactKey}`
+}
+
+const mergeArtifactDraft = (artifact, draft) => {
+  if (!draft) return artifact
+  const draftFields = Array.isArray(draft.fields) ? draft.fields : []
+  return {
+    ...artifact,
+    editing: Boolean(draft.editing),
+    edited: Boolean(draft.edited),
+    fields: (artifact.fields || []).map(field => {
+      const saved = draftFields.find(item => String(item.label || '') === String(field.label || ''))
+      if (!saved) return field
+      return {
+        ...field,
+        value: saved.value ?? field.value,
+        editValue: saved.editValue ?? normalizeEditableValue(saved.value ?? field.value),
+        missing: Boolean(saved.missing)
+      }
+    })
+  }
+}
+
+const hydrateMessageArtifacts = (cid, message) => {
+  const artifacts = Array.isArray(message?.artifacts) ? message.artifacts : []
+  if (!artifacts.length) return artifacts
+  const drafts = readArtifactDrafts()[String(cid)] || {}
+  const normalized = artifacts.map(artifact => normalizeArtifact('artifact', artifact))
+  return normalized.map((artifact, artifactIndex) =>
+    mergeArtifactDraft(artifact, drafts[getArtifactDraftKey(message, artifact, artifactIndex)])
+  )
+}
+
+const persistArtifactDrafts = () => {
+  const cid = currentCid.value
+  if (!cid) return
+
+  const drafts = readArtifactDrafts()
+  const nextCidDrafts = {}
+  messages.value.forEach(message => {
+    ;(message.artifacts || []).forEach((artifact, artifactIndex) => {
+      if (artifact?.type !== 'confirmation') return
+      if (!artifact.editing && !artifact.edited && !artifactHasPendingFieldEdits(artifact)) return
+      nextCidDrafts[getArtifactDraftKey(message, artifact, artifactIndex)] = {
+        updatedAt: Date.now(),
+        editing: Boolean(artifact.editing),
+        edited: Boolean(artifact.edited),
+        fields: (artifact.fields || []).map(field => ({
+          label: field.label,
+          value: field.value,
+          editValue: field.editValue,
+          missing: Boolean(isArtifactFieldMissing(field))
+        }))
+      }
+    })
+  })
+
+  if (Object.keys(nextCidDrafts).length) {
+    drafts[String(cid)] = nextCidDrafts
+  } else {
+    delete drafts[String(cid)]
+  }
+  writeArtifactDrafts(drafts)
+}
+
 const readStreamStates = () => {
   try {
     return JSON.parse(uni.getStorageSync(STREAM_STATE_KEY) || '{}')
@@ -1162,7 +1300,8 @@ const loadMessages = async (cid) => {
   messages.value = normalizedMessages.map(item => ({
     ...item,
     role: item.role || 'assistant',
-    content: item.content || item.message || ''
+    content: item.content || item.message || '',
+    artifacts: hydrateMessageArtifacts(cid, item)
   }))
   const stored = getStoredStreamState(cid)
   const latestSaved = normalizedMessages[normalizedMessages.length - 1]
@@ -1358,6 +1497,7 @@ const refreshArtifactMessages = () => {
         }))
       : message.artifacts
   }))
+  persistArtifactDrafts()
   persistCurrentArtifactMessage()
 }
 
@@ -1382,23 +1522,24 @@ const handleArtifactAction = (artifact, action) => {
     artifact.editing = true
     artifact.fields = (artifact.fields || []).map(field => ({
       ...field,
-      editValue: field.editValue ?? (
-        ['未填写', '待补充'].includes(formatArtifactValue(field.value))
-          ? ''
-          : formatArtifactValue(field.value)
-      )
+      editValue: field.editValue ?? normalizeEditableValue(field.value)
     }))
     refreshArtifactMessages()
     return
   }
   if (action === 'cancel-edit') {
     artifact.editing = false
+    artifact.fields = (artifact.fields || []).map(field => ({
+      ...field,
+      editValue: normalizeEditableValue(field.value)
+    }))
     refreshArtifactMessages()
     return
   }
   if (action === 'save-edit') {
     if (!applyArtifactEdits(artifact)) return
     artifact.editing = false
+    artifact.edited = true
     refreshArtifactMessages()
     showSuccess('草稿已更新，请确认后执行')
     return
@@ -1406,6 +1547,7 @@ const handleArtifactAction = (artifact, action) => {
   if (action === 'confirm-edited') {
     if (!applyArtifactEdits(artifact)) return
     artifact.editing = false
+    artifact.edited = true
     refreshArtifactMessages()
     sendMessageText(buildArtifactConfirmMessage(artifact, true))
     return
@@ -2816,6 +2958,72 @@ onUnmounted(detachActiveStream)
   white-space: nowrap;
 }
 
+.artifact-review-panel {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14rpx;
+  margin-top: 14rpx;
+  padding: 14rpx;
+  border: 1rpx solid rgba(37, 99, 235, 0.16);
+  border-radius: 14rpx;
+  background: rgba(239, 246, 255, 0.72);
+}
+
+.artifact-review-panel.editing {
+  border-color: rgba(217, 119, 6, 0.24);
+  background: rgba(255, 251, 235, 0.82);
+}
+
+.artifact-review-panel.edited {
+  border-color: rgba(22, 163, 74, 0.22);
+  background: rgba(240, 253, 244, 0.82);
+}
+
+.artifact-review-main {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.artifact-review-kicker {
+  color: #2563eb;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.artifact-review-title {
+  color: #172033;
+  font-size: 23rpx;
+  font-weight: 850;
+  line-height: 1.35;
+}
+
+.artifact-review-chips {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8rpx;
+  flex-shrink: 0;
+}
+
+.artifact-review-chip {
+  padding: 6rpx 10rpx;
+  border-radius: 999rpx;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.artifact-review-chip.changed {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+}
+
 .route-guide-panel {
   display: flex;
   align-items: stretch;
@@ -3366,10 +3574,29 @@ onUnmounted(detachActiveStream)
   margin-top: 16rpx;
 }
 
+.artifact-editor-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  padding: 12rpx 14rpx;
+  border: 1rpx solid rgba(217, 119, 6, 0.18);
+  border-radius: 12rpx;
+  background: rgba(255, 251, 235, 0.8);
+  color: #92400e;
+  font-size: 22rpx;
+  font-weight: 900;
+  line-height: 1.3;
+}
+
 .artifact-edit-field {
   display: flex;
   flex-direction: column;
   gap: 8rpx;
+}
+
+.artifact-edit-field.changed .artifact-field-label {
+  color: #2563eb;
 }
 
 .artifact-edit-input {
@@ -3383,6 +3610,11 @@ onUnmounted(detachActiveStream)
   color: #172033;
   font-size: 25rpx;
   line-height: 1.45;
+}
+
+.artifact-edit-field.changed .artifact-edit-input {
+  border-color: #93c5fd;
+  background: #eff6ff;
 }
 
 .artifact-edit-hint {
@@ -4591,6 +4823,42 @@ onUnmounted(detachActiveStream)
     background: rgba(245, 158, 11, 0.12);
     border-color: rgba(245, 158, 11, 0.35);
     color: #fbbf24;
+  }
+
+  .artifact-review-panel,
+  .artifact-review-panel.editing,
+  .artifact-review-panel.edited,
+  .artifact-editor-head {
+    background: rgba(16, 26, 42, 0.78);
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #edf4ff;
+  }
+
+  .artifact-review-kicker {
+    color: #93c5fd;
+  }
+
+  .artifact-review-title {
+    color: #edf4ff;
+  }
+
+  .artifact-review-chip {
+    background: rgba(96, 165, 250, 0.16);
+    color: #bfdbfe;
+  }
+
+  .artifact-review-chip.changed {
+    background: rgba(34, 197, 94, 0.16);
+    color: #bbf7d0;
+  }
+
+  .artifact-edit-field.changed .artifact-field-label {
+    color: #93c5fd;
+  }
+
+  .artifact-edit-field.changed .artifact-edit-input {
+    background: rgba(37, 99, 235, 0.12);
+    border-color: rgba(147, 197, 253, 0.38);
   }
 
   .artifact-highlight-value {
