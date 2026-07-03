@@ -223,6 +223,44 @@ async def scenario_caps_total_delegations() -> GuardResult:
     return GuardResult("caps_total_delegations", not failures, failures, actual)
 
 
+async def scenario_blocks_unplanned_agent() -> GuardResult:
+    async def check(harness: GuardHarness) -> dict[str, Any]:
+        allowed_token = harness.agent._allowed_delegation_agents.set({"map"})
+        try:
+            blocked = await harness.run_guarded("order", "create an order draft")
+            allowed = await harness.run_guarded("map", "search nearby cafes")
+            state = harness.agent._get_delegation_state()
+            return {
+                "blocked": blocked,
+                "allowed": allowed,
+                "call_count": len(harness.calls),
+                "calls": list(harness.calls),
+                "state_total": state["total"],
+                "state_counts": dict(state["counts"]),
+                "guard_events": [item for item in harness.events if item["data"].get("phase") == "delegation_guard"],
+            }
+        finally:
+            harness.agent._allowed_delegation_agents.reset(allowed_token)
+
+    actual = await run_in_guard_context(check)
+    failures: list[str] = []
+    if actual["blocked"].startswith("fake-result"):
+        failures.append("unplanned order expert should be blocked before sub-agent execution")
+    if actual["allowed"] != "fake-result-1:map:search nearby cafes":
+        failures.append(f"allowed map expert should execute once, got {actual['allowed']!r}")
+    if actual["call_count"] != 1:
+        failures.append(f"expected only the allowed map sub-agent call, got {actual['call_count']}")
+    if actual["state_total"] != 1:
+        failures.append(f"blocked delegation should not increase state total, got {actual['state_total']}")
+    if actual["state_counts"].get("map") != 1:
+        failures.append(f"expected map count 1, got {actual['state_counts'].get('map')}")
+    if actual["state_counts"].get("order"):
+        failures.append("blocked order delegation should not increase order count")
+    if not any(event["data"].get("state") == "failed" for event in actual["guard_events"]):
+        failures.append("expected failed delegation_guard event for unplanned agent")
+    return GuardResult("blocks_unplanned_agent", not failures, failures, actual)
+
+
 async def scenario_isolates_user_turns() -> GuardResult:
     async with GuardHarness() as harness:
         event_token = harness.agent._event_sink.set(harness.capture_event)
@@ -264,6 +302,7 @@ async def run_all() -> list[GuardResult]:
         scenario_reuses_semantic_paraphrase,
         scenario_caps_single_agent,
         scenario_caps_total_delegations,
+        scenario_blocks_unplanned_agent,
         scenario_isolates_user_turns,
     ]
     return [await scenario() for scenario in scenarios]

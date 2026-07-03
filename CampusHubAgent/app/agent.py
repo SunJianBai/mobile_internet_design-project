@@ -44,6 +44,7 @@ logger = logging.getLogger(__name__)
 
 _event_sink: contextvars.ContextVar = contextvars.ContextVar("agent_event_sink", default=None)
 _delegation_state: contextvars.ContextVar = contextvars.ContextVar("agent_delegation_state", default=None)
+_allowed_delegation_agents: contextvars.ContextVar = contextvars.ContextVar("agent_allowed_delegation_agents", default=None)
 
 MAIN_AGENT_RECURSION_LIMIT = 12
 SUB_AGENT_RECURSION_LIMIT = 8
@@ -57,6 +58,35 @@ INTENT_CACHE_TTL_SECONDS = 10 * 60
 INTENT_CACHE_MAX_SIZE = 128
 
 _intent_cache: OrderedDict[str, tuple[float, dict]] = OrderedDict()
+
+AGENT_SUGGESTION_TO_DELEGATION = {
+    "order_query": "order",
+    "order_draft": "order",
+    "content_query": "content",
+    "content_draft": "content",
+    "map_weather": "map",
+    "user_profile": "content",
+}
+
+INTENT_TO_DELEGATION = {
+    "order.search": "order",
+    "order.create": "order",
+    "order.manage": "order",
+    "content.search": "content",
+    "content.create": "content",
+    "content.interact": "content",
+    "map.search": "map",
+    "weather.query": "map",
+    "user.profile": "content",
+}
+
+DOMAIN_TO_DELEGATION = {
+    "order": "order",
+    "content": "content",
+    "map": "map",
+    "weather": "map",
+    "user": "content",
+}
 
 INTENT_ANALYSIS_PROMPT = """你是 CampusHub 的意图分析智能体。请基于用户消息、最近对话和用户信息判断请求类型。
 
@@ -498,6 +528,33 @@ def _find_semantic_delegation_reuse(state: dict, signature: dict | None) -> dict
     return None
 
 
+def _build_allowed_delegation_agents(intent_analysis: dict) -> set[str] | None:
+    if not isinstance(intent_analysis, dict):
+        return None
+
+    allowed: set[str] = set()
+    suggested_agents = intent_analysis.get("suggested_agents")
+    if isinstance(suggested_agents, list):
+        for item in suggested_agents:
+            mapped = AGENT_SUGGESTION_TO_DELEGATION.get(str(item or "").strip().lower())
+            if mapped:
+                allowed.add(mapped)
+
+    if not allowed:
+        primary_intent = str(intent_analysis.get("primary_intent") or "").strip().lower()
+        mapped = INTENT_TO_DELEGATION.get(primary_intent)
+        if mapped:
+            allowed.add(mapped)
+
+    if not allowed:
+        domain = str(intent_analysis.get("domain") or "").strip().lower()
+        mapped = DOMAIN_TO_DELEGATION.get(domain)
+        if mapped:
+            allowed.add(mapped)
+
+    return allowed or None
+
+
 def _get_delegation_state() -> dict:
     state = _delegation_state.get()
     if state is None:
@@ -522,6 +579,18 @@ async def _run_guarded_sub_agent(
     state = _get_delegation_state()
     fingerprint = f"{agent_key}:{_normalize_delegation_task(task)}"
     semantic_signature = _build_delegation_signature(agent_key, task)
+    allowed_agents = _allowed_delegation_agents.get()
+
+    if allowed_agents and agent_key not in allowed_agents:
+        allowed_label = "、".join(sorted(allowed_agents))
+        await _emit_event("agent_step", {
+            "phase": "delegation_guard",
+            "agent": agent_key,
+            "title": f"{agent_name}不在本轮执行计划",
+            "detail": f"意图分析仅允许调用：{allowed_label}。已拦截本次越界委派，避免主智能体偏离原任务。",
+            "state": "failed",
+        })
+        return f"{agent_name}不在本轮意图分析允许的专家范围内。请改用已允许的专家，或向用户追问补充信息。"
 
     if fingerprint in state["results"]:
         await _emit_event("agent_step", {
@@ -3934,12 +4003,14 @@ async def chat(
 
     llm = _get_llm(streaming=False)
     main_agent = create_react_agent(llm, MAIN_AGENT_TOOLS)
+    allowed_delegation_agents = _build_allowed_delegation_agents(intent_analysis)
 
     delegation_token = _delegation_state.set({
         "total": 0,
         "counts": {},
         "results": {},
     })
+    allowed_token = _allowed_delegation_agents.set(allowed_delegation_agents)
     try:
         result = await main_agent.ainvoke(
             {
@@ -3948,6 +4019,7 @@ async def chat(
             config={"recursion_limit": MAIN_AGENT_RECURSION_LIMIT},
         )
     finally:
+        _allowed_delegation_agents.reset(allowed_token)
         _delegation_state.reset(delegation_token)
 
     tool_calls_log = []
