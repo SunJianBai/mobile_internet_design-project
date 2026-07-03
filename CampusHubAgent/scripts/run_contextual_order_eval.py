@@ -81,6 +81,18 @@ class FakeRouter:
         return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
 
 
+class FakeGenericManageRouter:
+    async def ainvoke(self, _messages):
+        content = {
+            "title": "请确认这次操作",
+            "description": "用户想管理一个约伴订单申请。",
+            "fields": [],
+            "missing_fields": [],
+            "reply": "",
+        }
+        return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
+
+
 def _field_map(fields: list[dict[str, Any]]) -> dict[str, str]:
     result: dict[str, str] = {}
     for field in fields:
@@ -214,6 +226,74 @@ async def scenario_high_confidence_gated_write_skips_review() -> EvalResult:
     return EvalResult("high_confidence_gated_write_skips_review", not failures, failures, actual)
 
 
+async def scenario_confirmed_action_kind_marker_wins() -> EvalResult:
+    from app import agent as agent_module
+
+    samples = [
+        (
+            "我确认执行这个草稿：请确认这次操作\n操作类型: order.cancel_apply\n订单ID: 12",
+            "order.cancel_apply",
+        ),
+        (
+            "我确认按修改后的内容执行这个草稿：请确认这次操作\n操作类型: order.reject_apply\n申请ID: 7",
+            "order.reject_apply",
+        ),
+        (
+            "我确认执行这个草稿：请确认这次操作\n操作类型: content.comment\n动态ID: 23\n评论内容: 我也想去",
+            "content.comment",
+        ),
+    ]
+    actual: dict[str, str] = {}
+    failures: list[str] = []
+    for index, (message, expected) in enumerate(samples, start=1):
+        fields = agent_module._parse_confirmed_artifact_fields(message)
+        inferred = agent_module._infer_confirmed_action_kind(message, fields)
+        actual[f"sample_{index}"] = inferred
+        if inferred != expected:
+            failures.append(f"sample {index}: expected {expected!r}, got {inferred!r}")
+    return EvalResult("confirmed_action_kind_marker_wins", not failures, failures, actual)
+
+
+async def scenario_confirmation_infers_manage_action_kind() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeGenericManageRouter()
+    try:
+        analysis = {
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            [],
+            "我刚才报了订单 12，但现在去不了了，帮我取消报名，确认后再执行",
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "actionKind": artifact.get("actionKind"),
+        "confirmMessage": artifact.get("confirmMessage"),
+        "fields": fields,
+    }
+    failures: list[str] = []
+    if artifact.get("actionKind") != "order.cancel_apply":
+        failures.append(f"expected order.cancel_apply actionKind, got {artifact.get('actionKind')!r}")
+    if "操作类型: order.cancel_apply" not in str(artifact.get("confirmMessage") or ""):
+        failures.append("confirmMessage should include the resolved action kind marker")
+    if fields.get("订单ID") != "12":
+        failures.append(f"expected enriched order id 12, got {fields.get('订单ID')!r}")
+    return EvalResult("confirmation_infers_manage_action_kind", not failures, failures, actual)
+
+
 async def run_all() -> list[EvalResult]:
     scenarios = [
         scenario_selects_first_map_candidate,
@@ -221,6 +301,8 @@ async def run_all() -> list[EvalResult]:
         scenario_map_action_payload_routes_to_order_create,
         scenario_confirmation_enriches_map_fields,
         scenario_high_confidence_gated_write_skips_review,
+        scenario_confirmed_action_kind_marker_wins,
+        scenario_confirmation_infers_manage_action_kind,
     ]
     return [await scenario() for scenario in scenarios]
 

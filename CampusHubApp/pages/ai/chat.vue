@@ -1143,6 +1143,7 @@ const requestArtifactAction = (artifact, action) => {
 
 const buildArtifactConfirmMessage = (artifact, edited = false) => {
   const title = artifact?.title || '这个草稿'
+  const actionKind = String(artifact?.actionKind || artifact?.action_kind || '').trim()
   const fields = (artifact?.fields || [])
     .map(field => {
       const value = edited
@@ -1151,9 +1152,10 @@ const buildArtifactConfirmMessage = (artifact, edited = false) => {
       return value ? `${field.label}: ${value}` : ''
     })
     .filter(Boolean)
+  const actionKindText = actionKind ? `\n操作类型: ${actionKind}` : ''
   const fieldText = fields.length ? `\n${fields.join('\n')}` : ''
   const prefix = edited ? '我确认按修改后的内容执行这个草稿' : '我确认执行这个草稿'
-  return `${prefix}：${title}${fieldText}`
+  return `${prefix}：${title}${actionKindText}${fieldText}`
 }
 
 const handleArtifactPromptAction = (action) => {

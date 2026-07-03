@@ -2944,9 +2944,33 @@ def _current_user_id(user_info: dict) -> int | None:
     return None
 
 
+CONFIRMED_ACTION_KINDS = {
+    "order.create",
+    "content.create",
+    "content.comment",
+    "content.like",
+    "order.apply",
+    "order.cancel_apply",
+    "order.accept",
+    "order.reject_apply",
+    "order.complete",
+    "other.write",
+}
+
+
+def _normalize_confirmed_action_kind(value: str) -> str:
+    normalized = str(value or "").strip().strip("`").lower()
+    return normalized if normalized in CONFIRMED_ACTION_KINDS else ""
+
+
 def _infer_confirmed_action_kind(text: str, fields: dict) -> str:
     lowered = str(text or "").lower()
     field_labels = " ".join(fields.keys())
+    explicit_action_kind = _normalize_confirmed_action_kind(
+        _field_value(fields, ("操作类型", "action_kind", "actionKind", "action kind"))
+    )
+    if explicit_action_kind:
+        return explicit_action_kind
     if any(cue in lowered for cue in (
         "取消报名",
         "撤销报名",
@@ -2983,6 +3007,22 @@ def _infer_confirmed_action_kind(text: str, fields: dict) -> str:
     if "约伴" in lowered or "订单" in lowered or "活动类型" in field_labels:
         return "order.create"
     return "other.write"
+
+
+def _resolve_confirmation_action_kind(draft: dict, intent_analysis: dict, user_message: str) -> str:
+    explicit = _normalize_confirmed_action_kind(draft.get("action_kind") if isinstance(draft, dict) else "")
+    if explicit:
+        return explicit
+
+    primary_intent = _normalize_confirmed_action_kind((intent_analysis or {}).get("primary_intent"))
+    if primary_intent:
+        return primary_intent
+
+    inferred = _infer_confirmed_action_kind(user_message, {})
+    if inferred != "other.write":
+        return inferred
+
+    return str((intent_analysis or {}).get("primary_intent") or "other.write")
 
 
 def _intent_for_confirmed_execution(action_kind: str) -> dict:
@@ -3468,15 +3508,16 @@ async def build_confirmation_artifact(
         else:
             reply = "我已经整理好操作草稿。确认无误后，请点击确认执行或直接回复“确认”。"
 
+    action_kind = _resolve_confirmation_action_kind(draft, intent_analysis, user_message)
     artifact = {
         "type": "confirmation",
         "title": title,
         "description": description,
-        "actionKind": draft.get("action_kind") or intent_analysis.get("primary_intent") or "other.write",
+        "actionKind": action_kind,
         "fields": fields,
         "missingFields": missing_fields,
         "requiresConfirmation": True,
-        "confirmMessage": f"我确认执行这个草稿：{title}",
+        "confirmMessage": f"我确认执行这个草稿：{title}\n操作类型: {action_kind}",
         "editMessage": f"我想修改这个草稿：{title}",
         "cancelMessage": f"取消这个草稿：{title}",
         "reply": reply,
