@@ -96,6 +96,16 @@
                     <text v-if="artifact.description" class="artifact-description">{{ artifact.description }}</text>
                   </view>
                 </view>
+                <view v-if="getArtifactDigest(artifact).length" class="artifact-digest">
+                  <view
+                    v-for="(digest, digestIndex) in getArtifactDigest(artifact)"
+                    :key="`${artifactIndex}-digest-${digestIndex}`"
+                    class="artifact-digest-chip"
+                  >
+                    <text class="artifact-digest-label">{{ digest.label }}</text>
+                    <text class="artifact-digest-value">{{ digest.value }}</text>
+                  </view>
+                </view>
                 <view v-if="getArtifactHighlights(artifact).length" class="artifact-highlights">
                   <view
                     v-for="(highlight, highlightIndex) in getArtifactHighlights(artifact)"
@@ -749,6 +759,67 @@ const getArtifactIcon = (artifact) => {
   if (artifact?.type === 'memory') return '记'
   if (artifact?.type === 'user') return '人'
   return 'i'
+}
+
+const ARTIFACT_TYPE_LABELS = {
+  confirmation: '确认草稿',
+  plan: '执行计划',
+  weather: '天气建议',
+  guide: '地点路线',
+  order: '约伴结果',
+  content: '动态结果',
+  memory: '长期记忆',
+  user: '用户资料',
+  generic: '结果卡片'
+}
+
+const getArtifactTypeLabel = (artifact) => {
+  const type = String(artifact?.type || 'generic')
+  return ARTIFACT_TYPE_LABELS[type] || '结果卡片'
+}
+
+const getArtifactPrimaryActionLabel = (artifact) => {
+  if (artifact?.type === 'confirmation') {
+    return artifactHasMissingFields(artifact) ? '补充信息' : '等待确认'
+  }
+
+  const actions = Array.isArray(artifact?.actions) ? artifact.actions : []
+  const primaryAction = actions.find(action => action?.primary) || actions[0]
+  if (primaryAction?.label) return String(primaryAction.label)
+
+  const items = Array.isArray(artifact?.items) ? artifact.items : []
+  const actionableItem = items.find(artifactItemHasAction)
+  if (actionableItem?.actionLabel) return String(actionableItem.actionLabel)
+  if (artifact?.type === 'guide') return isRouteGuideArtifact(artifact) ? '查看路线' : '可生成草稿'
+  if (artifact?.type === 'weather') return '查看建议'
+  if (['order', 'content', 'user'].includes(artifact?.type)) return '查看详情'
+  if (artifact?.type === 'memory') return '可管理'
+  if (artifact?.type === 'plan') return '按计划执行'
+  return ''
+}
+
+const getArtifactCountLabel = (artifact) => {
+  const items = Array.isArray(artifact?.items) ? artifact.items.length : 0
+  if (items) return `${items} 项结果`
+
+  const steps = Array.isArray(artifact?.steps) ? artifact.steps.length : 0
+  if (steps) return `${steps} 步`
+
+  const visibleFields = (artifact?.fields || [])
+    .filter(field => field?.label && !isArtifactFieldMissing(field))
+    .length
+  if (visibleFields) return `${visibleFields} 个字段`
+
+  return ''
+}
+
+const getArtifactDigest = (artifact) => {
+  const chips = [{ label: '类型', value: getArtifactTypeLabel(artifact) }]
+  const countLabel = getArtifactCountLabel(artifact)
+  const actionLabel = getArtifactPrimaryActionLabel(artifact)
+  if (countLabel) chips.push({ label: '内容', value: countLabel })
+  if (actionLabel) chips.push({ label: '下一步', value: actionLabel })
+  return chips.slice(0, 3)
 }
 
 const isActionCardArtifact = (artifact) => ['guide', 'weather', 'order', 'content', 'memory', 'user'].includes(artifact?.type)
@@ -2588,6 +2659,46 @@ onUnmounted(detachActiveStream)
   line-height: 1.45;
 }
 
+.artifact-digest {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8rpx;
+  margin-top: 14rpx;
+}
+
+.artifact-digest-chip {
+  min-width: 0;
+  max-width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+  padding: 8rpx 12rpx;
+  border: 1rpx solid rgba(31, 68, 122, 0.12);
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.58);
+  box-sizing: border-box;
+}
+
+.artifact-digest-label {
+  flex: 0 0 auto;
+  color: #667085;
+  font-size: 18rpx;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.artifact-digest-value {
+  min-width: 0;
+  max-width: 190rpx;
+  overflow: hidden;
+  color: #1f447a;
+  font-size: 21rpx;
+  font-weight: 900;
+  line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .artifact-highlights {
   display: flex;
   flex-direction: row;
@@ -4360,6 +4471,7 @@ onUnmounted(detachActiveStream)
 
   .artifact-field,
   .artifact-highlight,
+  .artifact-digest-chip,
   .artifact-result-item,
   .route-place,
   .route-metric,
@@ -4405,6 +4517,14 @@ onUnmounted(detachActiveStream)
 
   .artifact-highlight-value {
     color: #edf4ff;
+  }
+
+  .artifact-digest-label {
+    color: #94a3b8;
+  }
+
+  .artifact-digest-value {
+    color: #bfdbfe;
   }
 
   .artifact-result-item-hover,
