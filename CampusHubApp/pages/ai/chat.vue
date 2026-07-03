@@ -276,6 +276,19 @@
                 <text class="inline-map-hint">可拖拽地图，也可以使用缩放和平移按钮。</text>
               </view>
             </view>
+            <view v-if="getFollowupSuggestions(msg).length" class="reply-actions">
+              <button
+                v-for="suggestion in getFollowupSuggestions(msg)"
+                :key="suggestion.label"
+                class="reply-action"
+                hover-class="reply-action-hover"
+                :disabled="loading"
+                @click="startSuggestedPrompt(suggestion.prompt)"
+              >
+                <text class="reply-action-icon">{{ suggestion.icon }}</text>
+                <text class="reply-action-label">{{ suggestion.label }}</text>
+              </button>
+            </view>
           </view>
         </view>
       </view>
@@ -413,6 +426,66 @@ const STARTER_PROMPTS = [
     prompt: '帮我发个动态：今晚八点三楼自习，缺搭子，看到的同学可以一起来'
   }
 ]
+
+const uniqSuggestions = (items) => {
+  const seen = new Set()
+  return items
+    .filter(item => {
+      if (!item?.label || !item?.prompt || seen.has(item.label)) return false
+      seen.add(item.label)
+      return true
+    })
+    .slice(0, 4)
+}
+
+const getFollowupSuggestions = (message) => {
+  if (!message || message.role !== 'assistant' || message.loading) return []
+
+  const content = String(message.content || '')
+  const artifacts = Array.isArray(message.artifacts) ? message.artifacts : []
+  const hasConfirmation = artifacts.some(item => item.type === 'confirmation')
+  if (hasConfirmation) {
+    return uniqSuggestions([
+      { icon: '改', label: '继续修改草稿', prompt: '我想继续修改这个草稿' },
+      { icon: '补', label: '补充缺失信息', prompt: '我来补充这个草稿缺少的信息' },
+      { icon: '查', label: '先再查一下', prompt: '先帮我再查一下相关信息，暂时不要执行' }
+    ])
+  }
+
+  const suggestions = []
+  const hasMap = /地图|附近|路线|店|餐厅|影院|按摩|地点|地址|map-card|高德|restaurant|cafe|cinema|massage/i.test(content)
+  const hasWeather = /天气|温度|下雨|风|户外|跑步|出行|weather|rain|wind/i.test(content)
+  const hasOrder = /约伴|订单|活动|报名|加入|篮球|羽毛球|自习|order|activity|join/i.test(content)
+  const hasContent = /动态|评论|点赞|帖子|发布|post|comment/i.test(content)
+
+  if (hasMap) {
+    suggestions.push(
+      { icon: '换', label: '换一批附近推荐', prompt: '换一批附近推荐，并继续展示地图' },
+      { icon: '约', label: '基于地点约伴', prompt: '基于刚才推荐的地点，帮我整理一个约伴活动草稿' }
+    )
+  }
+  if (hasWeather) {
+    suggestions.push({ icon: '备', label: '给我备选安排', prompt: '如果天气不适合，帮我推荐一个室内备选安排' })
+  }
+  if (hasOrder) {
+    suggestions.push(
+      { icon: '筛', label: '只看可加入活动', prompt: '只筛选我现在还能加入的约伴活动' },
+      { icon: '发', label: '帮我发起约伴', prompt: '帮我根据刚才的信息生成一个新的约伴活动草稿' }
+    )
+  }
+  if (hasContent) {
+    suggestions.push({ icon: '写', label: '整理成动态草稿', prompt: '把刚才的信息整理成一条校园动态草稿，先不要发布' })
+  }
+
+  if (!suggestions.length && content.trim()) {
+    suggestions.push(
+      { icon: '短', label: '再简短一点', prompt: '把刚才的回答再简短一点' },
+      { icon: '细', label: '展开更多细节', prompt: '把刚才的回答展开得更具体一点' }
+    )
+  }
+
+  return uniqSuggestions(suggestions)
+}
 
 let activeStreamController = null
 let activeMapDrag = null
@@ -941,6 +1014,11 @@ const sendMessageText = async (text) => {
   inputText.value = text
   await nextTick()
   await sendMessage()
+}
+
+const startSuggestedPrompt = async (prompt) => {
+  if (!prompt || loading.value) return
+  await sendMessageText(prompt)
 }
 
 const persistCurrentArtifactMessage = () => {
@@ -2623,6 +2701,63 @@ onUnmounted(detachActiveStream)
   pointer-events: none;
 }
 
+.reply-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10rpx;
+  margin-top: 16rpx;
+}
+
+.reply-action {
+  margin: 0;
+  min-height: 58rpx;
+  line-height: 1.25;
+  padding: 10rpx 16rpx;
+  border: 1rpx solid #d9e7ff;
+  border-radius: 999rpx;
+  background: #f4f8ff;
+  color: #1f447a;
+  box-shadow: 0 8rpx 18rpx rgba(29, 78, 216, 0.08);
+  display: inline-flex;
+  align-items: center;
+  gap: 8rpx;
+  box-sizing: border-box;
+}
+
+.reply-action::after {
+  border: none;
+}
+
+.reply-action[disabled] {
+  opacity: 0.56;
+}
+
+.reply-action-hover {
+  background: #eaf2ff !important;
+  border-color: #b6ccff !important;
+  box-shadow: 0 12rpx 24rpx rgba(29, 78, 216, 0.14);
+}
+
+.reply-action-icon {
+  flex: 0 0 auto;
+  width: 32rpx;
+  height: 32rpx;
+  line-height: 32rpx;
+  border-radius: 999rpx;
+  background: #dbeafe;
+  color: #1d4ed8;
+  font-size: 19rpx;
+  font-weight: 900;
+  text-align: center;
+}
+
+.reply-action-label {
+  color: inherit;
+  font-size: 22rpx;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
 .artifact-editor {
   display: flex;
   flex-direction: column;
@@ -3589,6 +3724,7 @@ onUnmounted(detachActiveStream)
   .picker-view:hover,
   .artifact-action:hover,
   .artifact-result-item:hover,
+  .reply-action:hover,
   .starter-card:hover,
   .inline-map-control:hover,
   .inline-map-open:hover,
@@ -3826,6 +3962,7 @@ onUnmounted(detachActiveStream)
   }
 
   .artifact-action,
+  .reply-action,
   .inline-map-control,
   .inline-map-open,
   .memory-icon-btn,
@@ -3847,6 +3984,18 @@ onUnmounted(detachActiveStream)
 
   .artifact-action.ghost {
     color: #94a3b8;
+  }
+
+  .reply-action-icon {
+    background: rgba(96, 165, 250, 0.18);
+    color: #bfdbfe;
+  }
+
+  .reply-action-hover,
+  .reply-action:hover {
+    background: #1f2d44 !important;
+    border-color: rgba(154, 184, 255, 0.38) !important;
+    box-shadow: 0 12rpx 26rpx rgba(0, 0, 0, 0.24);
   }
 
   .markdown-body :deep(code) {
