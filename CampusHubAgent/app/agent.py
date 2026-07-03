@@ -2464,6 +2464,25 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
         })
         return analysis
 
+    contextual_order_content_analysis = _detect_contextual_order_content_create_shortcut(history, user_message)
+    if contextual_order_content_analysis:
+        analysis = _normalize_intent_analysis(contextual_order_content_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_contextual_order_content",
+            "title": "沿用订单生成动态草稿",
+            "detail": "识别到用户想基于上一轮约伴订单发布校园动态，先生成确认草稿",
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
     safety_analysis = _detect_safety_intent_shortcut(user_message)
     if safety_analysis:
         analysis = _normalize_intent_analysis(safety_analysis)
@@ -2798,18 +2817,66 @@ def _extract_recent_order_candidates(history: list) -> list[dict]:
     """Recover recent order-result candidates so follow-up apply actions keep order context."""
     candidates: list[dict] = []
     seen: set[str] = set()
+    by_id: dict[str, dict] = {}
 
-    def add_candidate(order_id: str, summary: str = "", activity: str = "", location: str = "") -> None:
+    def add_candidate(
+        order_id: str,
+        summary: str = "",
+        activity: str = "",
+        location: str = "",
+        time_text: str = "",
+        people: str = "",
+    ) -> None:
         order_id = str(order_id or "").strip()
-        if not order_id or order_id in seen:
+        if not order_id:
+            return
+        summary = str(summary or "").strip()
+        activity = str(activity or "").strip()
+        location = str(location or "").strip()
+        time_text = str(time_text or "").strip()
+        people = str(people or "").strip()
+        if order_id in seen:
+            candidate = by_id.get(order_id)
+            if not candidate:
+                return
+            for key, value in {
+                "summary": summary,
+                "activity": activity,
+                "location": location,
+                "time": time_text,
+                "people": people,
+            }.items():
+                if value and (not candidate.get(key) or len(value) > len(str(candidate.get(key) or ""))):
+                    candidate[key] = value
             return
         seen.add(order_id)
-        candidates.append({
+        candidate = {
             "id": order_id,
-            "summary": str(summary or "").strip(),
-            "activity": str(activity or "").strip(),
-            "location": str(location or "").strip(),
-        })
+            "summary": summary,
+            "activity": activity,
+            "location": location,
+            "time": time_text,
+            "people": people,
+        }
+        by_id[order_id] = candidate
+        candidates.append(candidate)
+
+    def add_confirmation_order_details(content: str) -> None:
+        fields = _extract_confirmation_summary_fields(content)
+        action_kind = str(fields.get("操作类型") or "").strip().lower()
+        if action_kind != "order.create":
+            return
+        order_id = _extract_order_id_reference(content)
+        if not order_id and candidates:
+            order_id = candidates[0].get("id")
+        if not order_id:
+            return
+        activity = str(fields.get("活动类型") or fields.get("类型") or "").strip()
+        location = _field_value(fields, ("地点名称", "活动地点", "地点", "位置"))
+        time_text = _field_value(fields, ("开始时间", "时间"))
+        people = _field_value(fields, ("参与人数", "人数", "上限"))
+        summary = " · ".join(part for part in [activity, location, time_text, people] if part)
+        add_candidate(str(order_id), summary, activity, location, time_text, people)
 
     for item in reversed(history or []):
         if not isinstance(item, dict) or item.get("role") == "user":
@@ -2829,16 +2896,31 @@ def _extract_recent_order_candidates(history: list) -> list[dict]:
                 ]
                 if part
             )
-            add_candidate(order.get("id"), summary, order.get("activity"), order.get("location"))
+            add_candidate(
+                order.get("id"),
+                summary,
+                order.get("activity"),
+                order.get("location"),
+                order.get("time"),
+                order.get("people"),
+            )
 
         if not parsed_orders:
             for line in content.splitlines():
                 match = re.search(r"(?:订单|约伴|活动)\s*#?\s*(\d+)", line, flags=re.IGNORECASE)
-                if not match:
+                if match:
+                    add_candidate(match.group(1), line.strip())
                     continue
-                add_candidate(match.group(1), line.strip())
+                route_match = re.search(r"/orders/(\d+)", line, flags=re.IGNORECASE)
+                if route_match:
+                    add_candidate(route_match.group(1), line.strip())
 
-        if candidates:
+        add_confirmation_order_details(content)
+
+        if candidates and any(
+            candidate.get("activity") or candidate.get("location") or candidate.get("time") or candidate.get("people")
+            for candidate in candidates
+        ):
             break
     return candidates[:5]
 
@@ -2907,7 +2989,24 @@ def _match_recent_order_candidate(candidates: list[dict], user_message: str) -> 
 
 def _extract_contextual_order_selection(history: list, user_message: str) -> dict | None:
     candidates = _extract_recent_order_candidates(history)
-    return _match_recent_order_candidate(candidates, user_message)
+    matched = _match_recent_order_candidate(candidates, user_message)
+    if matched:
+        return matched
+    text = str(user_message or "")
+    contextual_cues = (
+        "这个订单",
+        "这个约伴",
+        "刚才的订单",
+        "刚刚的订单",
+        "刚创建的订单",
+        "刚才创建",
+        "配套动态",
+        "基于这个",
+        "宣传一下",
+    )
+    if len(candidates) == 1 and _has_any(text, contextual_cues):
+        return candidates[0]
+    return None
 
 
 def _extract_content_id_reference(text: str) -> int | None:
@@ -3084,6 +3183,48 @@ def _detect_contextual_content_interact_shortcut(history: list, user_message: st
     }
 
 
+def _detect_contextual_order_content_create_shortcut(history: list, user_message: str) -> dict | None:
+    """Route follow-ups like '就这个订单发条动态' to a safe content draft."""
+    text = " ".join(str(user_message or "").split())
+    if not text or _contains_blocking_write_negation(text):
+        return None
+    selected_order = _extract_contextual_order_selection(history, text)
+    if not selected_order:
+        return None
+
+    content_cues = (
+        "发动态",
+        "发条动态",
+        "发布动态",
+        "写动态",
+        "动态草稿",
+        "配套动态",
+        "宣传",
+        "招募",
+        "推广",
+        "发帖",
+        "写帖子",
+        "post",
+    )
+    if not _has_any(text.lower(), content_cues):
+        return None
+
+    return {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "confidence": 0.9,
+        "summary": "用户想基于上一轮约伴订单发布配套校园动态",
+        "missing_slots": [],
+        "suggested_agents": ["content_draft"],
+        "next_action": "prepare_draft",
+        "reviewed": False,
+        "contextual_order_content_shortcut": True,
+        "router_timeout": False,
+    }
+
+
 def _infer_activity_label(text: str) -> str:
     lowered = str(text or "").lower()
     activity_rules = [
@@ -3234,6 +3375,71 @@ def _enrich_order_confirmation_fields(
     return enriched_fields, enriched_missing
 
 
+def _order_activity_display(activity: str) -> str:
+    value = str(activity or "").strip()
+    if not value:
+        return "校园活动"
+    match = re.search(r"[（(]([^）)]+)[）)]", value)
+    if match:
+        return match.group(1).strip() or value
+    activity_map = {
+        "BASKETBALL": "篮球",
+        "BADMINTON": "羽毛球",
+        "MEAL": "约饭",
+        "STUDY": "自习",
+        "MOVIE": "看电影",
+        "RUNNING": "跑步",
+        "GAME": "开黑",
+        "OTHER": "校园活动",
+    }
+    return activity_map.get(value.upper(), value)
+
+
+def _order_candidate_summary_text(order: dict) -> str:
+    summary = str(order.get("summary") or "").strip()
+    if summary:
+        return summary
+    return " · ".join(
+        part
+        for part in [
+            order.get("activity"),
+            order.get("location"),
+            order.get("time"),
+            order.get("people"),
+        ]
+        if part
+    )
+
+
+def _build_order_content_draft_text(order: dict) -> str:
+    order_id = str(order.get("id") or "").strip()
+    activity = _order_activity_display(order.get("activity") or "")
+    location = str(order.get("location") or "").strip()
+    time_text = str(order.get("time") or "").strip()
+    people = str(order.get("people") or "").strip()
+
+    opening_parts = []
+    if time_text:
+        opening_parts.append(time_text)
+    if location:
+        opening_parts.append(f"在{location}")
+    opening = "".join(opening_parts)
+    if opening:
+        opening = f"{opening}有一场{activity}约伴"
+    else:
+        opening = f"这里有一场{activity}约伴"
+
+    details = []
+    if people:
+        details.append(f"名额：{people}")
+    if order_id:
+        details.append(f"订单#{order_id}")
+    detail_text = "，".join(details)
+    if detail_text:
+        return f"{opening}，{detail_text}。感兴趣的同学可以一起加入，确认行程前记得看看订单详情。"
+    return f"{opening}。感兴趣的同学可以一起加入，确认行程前记得看看订单详情。"
+
+
 def _enrich_content_confirmation_fields(
     fields: list,
     missing_fields: list,
@@ -3242,11 +3448,34 @@ def _enrich_content_confirmation_fields(
     intent_analysis: dict,
 ) -> tuple[list, list]:
     primary_intent = (intent_analysis.get("primary_intent") or "").lower()
-    if primary_intent != "content.interact":
+    if primary_intent not in {"content.interact", "content.create"}:
         return fields, missing_fields
 
     enriched_fields = [dict(item) if isinstance(item, dict) else item for item in (fields or [])]
     enriched_missing = list(missing_fields or [])
+
+    if primary_intent == "content.create":
+        selected_order = _extract_contextual_order_selection(history, user_message) or {}
+        selected_order_id = str(selected_order.get("id") or "").strip()
+        if not selected_order:
+            return enriched_fields, enriched_missing
+
+        if selected_order_id:
+            _set_artifact_field(enriched_fields, ("订单ID", "关联订单"), "订单ID", selected_order_id)
+            enriched_missing = _drop_missing_fields(enriched_missing, ("订单ID", "关联订单"))
+
+        order_summary = _order_candidate_summary_text(selected_order)
+        if order_summary:
+            _set_artifact_field(enriched_fields, ("订单信息", "订单摘要", "活动信息"), "订单信息", order_summary)
+
+        draft_text = _build_order_content_draft_text(selected_order)
+        if draft_text:
+            _set_artifact_field(enriched_fields, ("动态内容", "正文", "内容", "文本"), "动态内容", draft_text)
+            enriched_missing = _drop_missing_fields(enriched_missing, ("动态内容", "正文", "内容", "文本"))
+
+        _set_artifact_field(enriched_fields, ("媒体类型", "mediaType"), "媒体类型", "TEXT_ONLY")
+        return enriched_fields, enriched_missing
+
     selected_content = _extract_contextual_content_selection(history, user_message) or {}
     selected_content_id = str(selected_content.get("id") or "").strip()
     content_id = _extract_content_id_reference(user_message)
@@ -3383,6 +3612,23 @@ def _append_confirmation_summary_to_reply(reply: str, artifact: dict) -> str:
     )
     summary = "\n".join(f"- {line}" for line in summary_lines)
     return f"{base}\n\n确认草稿摘要：\n{summary}\n\n{next_tip}".strip()
+
+
+def _extract_confirmation_summary_fields(content: str) -> dict:
+    text = str(content or "")
+    if "确认草稿摘要" not in text:
+        return {}
+    summary_text = text.split("确认草稿摘要", 1)[1]
+    lines = []
+    for raw_line in summary_text.splitlines():
+        line = raw_line.strip().lstrip("-*•").strip()
+        if not line:
+            continue
+        if line.startswith(("确认无误后", "请先补充")):
+            break
+        if "：" in line or ":" in line:
+            lines.append(line)
+    return _parse_confirmed_artifact_fields("\n".join(lines)) if lines else {}
 
 
 def _extract_recent_confirmation_summary(history: list) -> list[str]:

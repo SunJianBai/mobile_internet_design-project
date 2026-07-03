@@ -64,6 +64,36 @@ ORDER_HISTORY = [
     },
 ]
 
+ORDER_CREATED_HISTORY = [
+    {
+        "role": "user",
+        "content": "帮我创建一个今晚7点良乡体育馆4人的篮球约伴订单，先让我确认",
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "我已根据上文整理好操作草稿。确认无误后，请点击确认执行或直接回复“确认”。\n\n"
+            "确认草稿摘要：\n"
+            "- 标题: 确认创建约伴活动\n"
+            "- 操作类型: order.create\n"
+            "- 活动类型: BASKETBALL（篮球）\n"
+            "- 校区: LIANGXIANG（良乡校区）\n"
+            "- 地点名称: 良乡体育馆\n"
+            "- 时间: 2026-07-03 19:00:00\n"
+            "- 参与人数: 4人\n\n"
+            "确认无误后，可以点击确认执行，或直接回复“确认”。"
+        ),
+    },
+    {
+        "role": "user",
+        "content": "确认",
+    },
+    {
+        "role": "assistant",
+        "content": "✅ 约伴订单创建成功！[查看订单详情](/orders/88)",
+    },
+]
+
 CONTENT_HISTORY = [
     {
         "role": "user",
@@ -84,6 +114,8 @@ SECOND_FOLLOWUP_MESSAGE = "就第二家吧，帮我约三个人，周六晚上8�
 NAMED_FOLLOWUP_MESSAGE = "还是选悦康足道，帮我创建一个4人的按摩约伴，明晚八点，先生成草稿"
 ORDER_APPLY_FOLLOWUP_MESSAGE = "就第二个吧，帮我报名，先生成确认草稿，不要直接提交"
 ORDER_APPLY_NAMED_MESSAGE = "羽毛球馆那个约伴我想加入，先让我确认"
+ORDER_CONTENT_FOLLOWUP_MESSAGE = "就第二个帮我发条动态宣传一下，先生成草稿发布前让我确认"
+ORDER_CREATED_CONTENT_FOLLOWUP_MESSAGE = "顺便基于这个订单发条动态宣传一下，先让我确认"
 CONTENT_COMMENT_FOLLOWUP_MESSAGE = "就第一条帮我评论一下：我也想去，先让我确认"
 CONTENT_LIKE_NAMED_MESSAGE = "小白那条动态帮我点个赞，先确认"
 
@@ -163,6 +195,19 @@ class FakeLikeRouter:
             "action_kind": "content.like",
             "fields": [],
             "missing_fields": ["动态ID"],
+            "reply": "",
+        }
+        return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
+
+
+class FakeContentCreateRouter:
+    async def ainvoke(self, _messages):
+        content = {
+            "title": "确认发布动态",
+            "description": "用户想基于上一轮约伴订单发布配套动态。",
+            "action_kind": "content.create",
+            "fields": [],
+            "missing_fields": ["订单ID", "动态内容"],
             "reply": "",
         }
         return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
@@ -364,6 +409,28 @@ async def scenario_contextual_order_apply_routes_to_confirmed_write() -> EvalRes
     return EvalResult("contextual_order_apply_routes_to_confirmed_write", not failures, failures, actual)
 
 
+async def scenario_contextual_order_content_routes_to_confirmed_write() -> EvalResult:
+    from app import agent as agent_module
+
+    agent_module._intent_cache.clear()
+    analysis = await agent_module.analyze_intent(DEFAULT_USER, [], ORDER_HISTORY, ORDER_CONTENT_FOLLOWUP_MESSAGE)
+    actual = dict(analysis)
+    failures: list[str] = []
+    expected = {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "next_action": "prepare_draft",
+    }
+    for key, value in expected.items():
+        if actual.get(key) != value:
+            failures.append(f"{key}: expected {value!r}, got {actual.get(key)!r}")
+    if not actual.get("contextual_order_content_shortcut"):
+        failures.append("expected contextual_order_content_shortcut marker")
+    return EvalResult("contextual_order_content_routes_to_confirmed_write", not failures, failures, actual)
+
+
 async def scenario_confirmation_enriches_map_fields() -> EvalResult:
     from app import agent as agent_module
 
@@ -497,6 +564,99 @@ async def scenario_confirmation_enriches_order_apply_fields() -> EvalResult:
     if artifact.get("missingFields"):
         failures.append(f"expected no missing fields after order selection enrichment, got {artifact.get('missingFields')!r}")
     return EvalResult("confirmation_enriches_order_apply_fields", not failures, failures, actual)
+
+
+async def scenario_confirmation_enriches_order_content_fields() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeContentCreateRouter()
+    try:
+        analysis = {
+            "primary_intent": "content.create",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            ORDER_HISTORY,
+            ORDER_CONTENT_FOLLOWUP_MESSAGE,
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "actionKind": artifact.get("actionKind"),
+        "fields": fields,
+        "missingFields": artifact.get("missingFields") or [],
+        "reply": artifact.get("reply"),
+    }
+    failures: list[str] = []
+    if artifact.get("actionKind") != "content.create":
+        failures.append(f"expected content.create actionKind, got {artifact.get('actionKind')!r}")
+    if fields.get("订单ID") != "43":
+        failures.append(f"expected selected order id 43, got {fields.get('订单ID')!r}")
+    if "羽毛球馆" not in fields.get("订单信息", ""):
+        failures.append(f"expected selected order summary with 羽毛球馆, got {fields.get('订单信息')!r}")
+    draft_text = fields.get("动态内容", "")
+    if "羽毛球" not in draft_text or "羽毛球馆" not in draft_text or "订单#43" not in draft_text:
+        failures.append(f"expected draft text to preserve selected order context, got {draft_text!r}")
+    if artifact.get("missingFields"):
+        failures.append(f"expected no missing fields after order content enrichment, got {artifact.get('missingFields')!r}")
+    return EvalResult("confirmation_enriches_order_content_fields", not failures, failures, actual)
+
+
+async def scenario_confirmation_enriches_created_order_content_fields() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeContentCreateRouter()
+    try:
+        analysis = {
+            "primary_intent": "content.create",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+            "contextual_order_content_shortcut": True,
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            ORDER_CREATED_HISTORY,
+            ORDER_CREATED_CONTENT_FOLLOWUP_MESSAGE,
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "actionKind": artifact.get("actionKind"),
+        "fields": fields,
+        "missingFields": artifact.get("missingFields") or [],
+        "reply": artifact.get("reply"),
+    }
+    failures: list[str] = []
+    if artifact.get("actionKind") != "content.create":
+        failures.append(f"expected content.create actionKind, got {artifact.get('actionKind')!r}")
+    if fields.get("订单ID") != "88":
+        failures.append(f"expected created order id 88, got {fields.get('订单ID')!r}")
+    if "良乡体育馆" not in fields.get("订单信息", ""):
+        failures.append(f"expected created order summary with 良乡体育馆, got {fields.get('订单信息')!r}")
+    draft_text = fields.get("动态内容", "")
+    if "篮球" not in draft_text or "良乡体育馆" not in draft_text or "订单#88" not in draft_text:
+        failures.append(f"expected draft text to preserve created order context, got {draft_text!r}")
+    if artifact.get("missingFields"):
+        failures.append(f"expected no missing fields after created order enrichment, got {artifact.get('missingFields')!r}")
+    return EvalResult("confirmation_enriches_created_order_content_fields", not failures, failures, actual)
 
 
 async def scenario_confirmation_enriches_content_comment_fields() -> EvalResult:
@@ -843,9 +1003,12 @@ async def run_all() -> list[EvalResult]:
         scenario_map_action_payload_routes_to_order_create,
         scenario_contextual_content_comment_routes_to_confirmed_write,
         scenario_contextual_order_apply_routes_to_confirmed_write,
+        scenario_contextual_order_content_routes_to_confirmed_write,
         scenario_confirmation_enriches_map_fields,
         scenario_named_confirmation_enriches_map_fields,
         scenario_confirmation_enriches_order_apply_fields,
+        scenario_confirmation_enriches_order_content_fields,
+        scenario_confirmation_enriches_created_order_content_fields,
         scenario_confirmation_enriches_content_comment_fields,
         scenario_confirmation_enriches_content_like_fields,
         scenario_high_confidence_gated_write_skips_review,
