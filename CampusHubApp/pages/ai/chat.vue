@@ -25,8 +25,8 @@
             <view class="chevron"></view>
           </view>
         </picker>
-        <button class="tool-btn subtle" @click="openMemoryPanel">记忆</button>
-        <button class="tool-btn danger" :disabled="!currentCid" @click="deleteCurrentConversation">删除</button>
+        <button class="tool-btn subtle" hover-class="tool-btn-hover" @click="openMemoryPanel">记忆</button>
+        <button class="tool-btn danger" hover-class="tool-btn-danger-hover" :disabled="!currentCid" @click="deleteCurrentConversation">删除</button>
       </view>
     </view>
 
@@ -253,12 +253,12 @@
                   <view class="inline-map-pin"><view class="inline-map-pin-dot"></view></view>
                   <text class="inline-map-badge">高德地图预览</text>
                   <view class="inline-map-controls">
-                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'zoom-in')">+</button>
-                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'zoom-out')">-</button>
-                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'north')">↑</button>
-                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'south')">↓</button>
-                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'west')">←</button>
-                    <button class="inline-map-control" @click.stop="adjustMapCard(mapCard, 'east')">→</button>
+                    <button class="inline-map-control" hover-class="inline-map-control-hover" @click.stop="adjustMapCard(mapCard, 'zoom-in')">+</button>
+                    <button class="inline-map-control" hover-class="inline-map-control-hover" @click.stop="adjustMapCard(mapCard, 'zoom-out')">-</button>
+                    <button class="inline-map-control" hover-class="inline-map-control-hover" @click.stop="adjustMapCard(mapCard, 'north')">↑</button>
+                    <button class="inline-map-control" hover-class="inline-map-control-hover" @click.stop="adjustMapCard(mapCard, 'south')">↓</button>
+                    <button class="inline-map-control" hover-class="inline-map-control-hover" @click.stop="adjustMapCard(mapCard, 'west')">←</button>
+                    <button class="inline-map-control" hover-class="inline-map-control-hover" @click.stop="adjustMapCard(mapCard, 'east')">→</button>
                   </view>
                 </view>
                 <view class="inline-map-meta">
@@ -269,12 +269,13 @@
                   <view class="inline-map-actions">
                     <button
                       class="inline-map-open inline-map-order"
+                      hover-class="inline-map-order-hover"
                       :disabled="loading"
                       @click="createOrderDraftFromMap(mapCard)"
                     >
                       用此地点约伴
                     </button>
-                    <button class="inline-map-open" @click="openExternalUrl(mapCard.link)">打开高德地图</button>
+                    <button class="inline-map-open" hover-class="inline-map-open-hover" @click="openExternalUrl(mapCard.link)">打开高德地图</button>
                   </view>
                 </view>
                 <text class="inline-map-hint">可拖拽地图，也可以使用缩放和平移按钮。</text>
@@ -343,8 +344,8 @@
           <text class="memory-subtitle">{{ memoryPanelSubtitle }}</text>
         </view>
         <view class="memory-actions">
-          <button class="memory-icon-btn" :disabled="memoryLoading" @click.stop="loadMemories">刷新</button>
-          <button class="memory-icon-btn ghost" @click="closeMemoryPanel">关闭</button>
+          <button class="memory-icon-btn" hover-class="memory-icon-btn-hover" :disabled="memoryLoading" @click.stop="loadMemories">刷新</button>
+          <button class="memory-icon-btn ghost" hover-class="memory-icon-btn-hover" @click="closeMemoryPanel">关闭</button>
         </view>
       </view>
       <scroll-view class="memory-list" scroll-y>
@@ -361,7 +362,7 @@
             <text class="memory-state-title">加载失败</text>
             <text class="memory-state-text">{{ memoryError }}</text>
           </view>
-          <button class="memory-retry" @click.stop="loadMemories">重试</button>
+          <button class="memory-retry" hover-class="memory-icon-btn-hover" @click.stop="loadMemories">重试</button>
         </view>
         <view v-else-if="memories.length === 0" class="memory-empty">
           <text class="memory-empty-icon">记</text>
@@ -373,7 +374,7 @@
             <text class="memory-tag">{{ mem.category || '偏好' }}</text>
             <text class="memory-content">{{ mem.content }}</text>
           </view>
-          <button class="memory-delete" :disabled="deletingMemoryId === (mem.memId || mem.id)" @click="deleteMemory(mem)">
+          <button class="memory-delete" hover-class="memory-delete-hover" :disabled="deletingMemoryId === (mem.memId || mem.id)" @click="deleteMemory(mem)">
             {{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}
           </button>
         </view>
@@ -3300,6 +3301,37 @@ onUnmounted(detachActiveStream)
   box-shadow: none;
 }
 
+.inline-map-control::after,
+.inline-map-open::after {
+  border: none;
+}
+
+.tool-btn-hover,
+.inline-map-control-hover,
+.memory-icon-btn-hover,
+.memory-retry-hover {
+  background: rgba(31, 68, 122, 0.12) !important;
+  border-color: rgba(31, 68, 122, 0.2) !important;
+}
+
+.inline-map-open-hover {
+  background: #dbeafe !important;
+  border-color: #b6ccff !important;
+  color: #1f447a !important;
+}
+
+.inline-map-order-hover {
+  background: #183760 !important;
+  border-color: #1f447a !important;
+  color: #ffffff !important;
+}
+
+.tool-btn-danger-hover,
+.memory-delete-hover {
+  background: rgba(180, 35, 24, 0.14) !important;
+  border-color: rgba(180, 35, 24, 0.18) !important;
+}
+
 .inline-map-hint {
   display: block;
   padding: 0 18rpx 18rpx;
@@ -4014,6 +4046,12 @@ onUnmounted(detachActiveStream)
     color: #dbe7f8;
   }
 
+  .memory-icon-btn.ghost {
+    background: #101a2a;
+    border-color: rgba(148, 163, 184, 0.24);
+    color: #dbe7f8;
+  }
+
   .artifact-action.primary,
   .inline-map-order,
   .send-btn {
@@ -4036,6 +4074,38 @@ onUnmounted(detachActiveStream)
     background: #1f2d44 !important;
     border-color: rgba(154, 184, 255, 0.38) !important;
     box-shadow: 0 12rpx 26rpx rgba(0, 0, 0, 0.24);
+  }
+
+  .tool-btn-hover,
+  .inline-map-control-hover,
+  .inline-map-control:hover,
+  .inline-map-open-hover,
+  .inline-map-open:hover,
+  .memory-icon-btn-hover,
+  .memory-icon-btn:hover,
+  .memory-retry:hover {
+    background: #1f2d44 !important;
+    border-color: rgba(154, 184, 255, 0.38) !important;
+    color: #edf4ff !important;
+    box-shadow: 0 12rpx 26rpx rgba(0, 0, 0, 0.24);
+  }
+
+  .inline-map-order-hover,
+  .inline-map-order:hover,
+  .artifact-action.primary:hover {
+    background: #4f7ff0 !important;
+    border-color: #7aa2ff !important;
+    color: #ffffff !important;
+    box-shadow: 0 14rpx 30rpx rgba(37, 99, 235, 0.28);
+  }
+
+  .tool-btn-danger-hover,
+  .tool-btn.danger:hover,
+  .memory-delete-hover,
+  .memory-delete:hover {
+    background: rgba(248, 113, 113, 0.18) !important;
+    border-color: rgba(248, 113, 113, 0.28) !important;
+    color: #fecaca !important;
   }
 
   .markdown-body :deep(code) {
