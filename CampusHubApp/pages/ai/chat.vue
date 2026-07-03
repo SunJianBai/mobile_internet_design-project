@@ -108,6 +108,15 @@
                     <text class="artifact-title">{{ artifact.title || '结果卡片' }}</text>
                     <text v-if="artifact.description" class="artifact-description">{{ artifact.description }}</text>
                   </view>
+                  <view class="artifact-status-stack">
+                    <text class="artifact-status-pill">{{ getArtifactTypeLabel(artifact) }}</text>
+                    <text v-if="getArtifactCountLabel(artifact)" class="artifact-status-count">{{ getArtifactCountLabel(artifact) }}</text>
+                  </view>
+                </view>
+                <view v-if="getArtifactPrimaryActionLabel(artifact)" class="artifact-progress-strip">
+                  <view class="artifact-progress-mark"></view>
+                  <text class="artifact-progress-label">下一步</text>
+                  <text class="artifact-progress-value">{{ getArtifactPrimaryActionLabel(artifact) }}</text>
                 </view>
                 <view v-if="getArtifactDigest(artifact).length" class="artifact-digest">
                   <view
@@ -883,11 +892,23 @@ const getArtifactCountLabel = (artifact) => {
 }
 
 const getArtifactDigest = (artifact) => {
-  const chips = [{ label: '类型', value: getArtifactTypeLabel(artifact) }]
+  const chips = []
   const countLabel = getArtifactCountLabel(artifact)
-  const actionLabel = getArtifactPrimaryActionLabel(artifact)
   if (countLabel) chips.push({ label: '内容', value: countLabel })
-  if (actionLabel) chips.push({ label: '下一步', value: actionLabel })
+
+  const guardField = (artifact?.fields || []).find(field =>
+    ['调度守卫', '安全策略', '写操作保护'].includes(String(field?.label || ''))
+  )
+  if (guardField && !isArtifactFieldMissing(guardField)) {
+    chips.push({ label: '守卫', value: truncateArtifactValue(formatArtifactValue(guardField.value), 14) })
+  }
+
+  if (artifact?.type === 'confirmation') {
+    chips.push({ label: '状态', value: artifactHasMissingFields(artifact) ? '待补充' : '待确认' })
+  } else if (artifact?.type === 'plan') {
+    chips.push({ label: '状态', value: '已规划' })
+  }
+
   return chips.slice(0, 3)
 }
 
@@ -2931,6 +2952,8 @@ onUnmounted(detachActiveStream)
 }
 
 .artifact-card {
+  position: relative;
+  overflow: hidden;
   padding: 18rpx;
   border: 1rpx solid #dbe5f3;
   border-radius: 16rpx;
@@ -2938,14 +2961,32 @@ onUnmounted(detachActiveStream)
   box-shadow: 0 8rpx 22rpx rgba(22, 34, 51, 0.06);
 }
 
+.artifact-card::before {
+  content: '';
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 6rpx;
+  background: #1f447a;
+}
+
 .artifact-confirmation {
   border-color: #b8d4ff;
   background: #f8fbff;
 }
 
+.artifact-confirmation::before {
+  background: #2563eb;
+}
+
 .artifact-plan {
   border-color: #c7d2fe;
   background: #f5f7ff;
+}
+
+.artifact-plan::before {
+  background: #6366f1;
 }
 
 .artifact-plan .artifact-icon {
@@ -2957,6 +2998,10 @@ onUnmounted(detachActiveStream)
   background: #f0fdfa;
 }
 
+.artifact-guide::before {
+  background: #0f766e;
+}
+
 .artifact-guide .artifact-icon {
   background: #0f766e;
 }
@@ -2964,6 +3009,10 @@ onUnmounted(detachActiveStream)
 .artifact-weather {
   border-color: #b8d4ff;
   background: #eef6ff;
+}
+
+.artifact-weather::before {
+  background: #2563eb;
 }
 
 .artifact-weather .artifact-icon {
@@ -2975,6 +3024,10 @@ onUnmounted(detachActiveStream)
   background: #f0fdf4;
 }
 
+.artifact-order::before {
+  background: #16a34a;
+}
+
 .artifact-order .artifact-icon {
   background: #16a34a;
 }
@@ -2982,6 +3035,10 @@ onUnmounted(detachActiveStream)
 .artifact-content {
   border-color: #ddd6fe;
   background: #f5f3ff;
+}
+
+.artifact-content::before {
+  background: #7c3aed;
 }
 
 .artifact-content .artifact-icon {
@@ -2993,6 +3050,10 @@ onUnmounted(detachActiveStream)
   background: #f0fdfa;
 }
 
+.artifact-memory::before {
+  background: #0f766e;
+}
+
 .artifact-memory .artifact-icon {
   background: #0f766e;
 }
@@ -3000,6 +3061,10 @@ onUnmounted(detachActiveStream)
 .artifact-user {
   border-color: #fed7aa;
   background: #fff7ed;
+}
+
+.artifact-user::before {
+  background: #ea580c;
 }
 
 .artifact-user .artifact-icon {
@@ -3028,6 +3093,7 @@ onUnmounted(detachActiveStream)
 
 .artifact-heading {
   min-width: 0;
+  flex: 1;
   display: flex;
   flex-direction: column;
   gap: 4rpx;
@@ -3044,6 +3110,84 @@ onUnmounted(detachActiveStream)
   color: #667085;
   font-size: 23rpx;
   line-height: 1.45;
+}
+
+.artifact-status-stack {
+  max-width: 180rpx;
+  margin-left: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6rpx;
+  flex: 0 0 auto;
+}
+
+.artifact-status-pill {
+  max-width: 180rpx;
+  padding: 6rpx 11rpx;
+  border: 1rpx solid rgba(31, 68, 122, 0.12);
+  border-radius: 999rpx;
+  background: rgba(255, 255, 255, 0.68);
+  color: #1f447a;
+  font-size: 19rpx;
+  font-weight: 900;
+  line-height: 1.2;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  box-sizing: border-box;
+}
+
+.artifact-status-count {
+  max-width: 180rpx;
+  color: #667085;
+  font-size: 18rpx;
+  font-weight: 800;
+  line-height: 1.2;
+  text-align: right;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-progress-strip {
+  display: flex;
+  align-items: center;
+  gap: 10rpx;
+  margin-top: 14rpx;
+  padding: 10rpx 12rpx;
+  border: 1rpx solid rgba(31, 68, 122, 0.1);
+  border-radius: 14rpx;
+  background: rgba(255, 255, 255, 0.54);
+  box-sizing: border-box;
+}
+
+.artifact-progress-mark {
+  width: 32rpx;
+  height: 6rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(90deg, #1f447a 0%, rgba(31, 68, 122, 0.24) 100%);
+  flex: 0 0 32rpx;
+}
+
+.artifact-progress-label {
+  color: #667085;
+  font-size: 19rpx;
+  font-weight: 900;
+  line-height: 1.25;
+  flex: 0 0 auto;
+}
+
+.artifact-progress-value {
+  min-width: 0;
+  color: #172033;
+  font-size: 22rpx;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .artifact-digest {
@@ -3451,13 +3595,15 @@ onUnmounted(detachActiveStream)
 }
 
 .plan-step-list {
+  position: relative;
   display: flex;
   flex-direction: column;
-  gap: 10rpx;
+  gap: 8rpx;
   margin-top: 16rpx;
 }
 
 .plan-step {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 12rpx;
@@ -3467,7 +3613,24 @@ onUnmounted(detachActiveStream)
   background: rgba(255, 255, 255, 0.78);
 }
 
+.plan-step::before {
+  content: '';
+  position: absolute;
+  left: 32rpx;
+  top: 54rpx;
+  bottom: -16rpx;
+  width: 2rpx;
+  border-radius: 999rpx;
+  background: linear-gradient(180deg, rgba(99, 102, 241, 0.28) 0%, rgba(99, 102, 241, 0.04) 100%);
+}
+
+.plan-step:last-child::before {
+  display: none;
+}
+
 .plan-step-index {
+  position: relative;
+  z-index: 1;
   width: 38rpx;
   height: 38rpx;
   border-radius: 999rpx;
@@ -4752,6 +4915,23 @@ onUnmounted(detachActiveStream)
 }
 
 @media screen and (min-width: 768px) {
+  .message-item {
+    width: 100%;
+    max-width: 1080px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .assistant-row {
+    width: 100%;
+    max-width: 100%;
+  }
+
+  .assistant-bubble {
+    flex: 1;
+    max-width: calc(100% - 70rpx);
+  }
+
   .memory-panel {
     width: 420px;
     max-width: 42vw;
@@ -5030,6 +5210,8 @@ onUnmounted(detachActiveStream)
   .artifact-field,
   .artifact-highlight,
   .artifact-digest-chip,
+  .artifact-status-pill,
+  .artifact-progress-strip,
   .artifact-result-item,
   .route-place,
   .route-metric,
@@ -5039,6 +5221,23 @@ onUnmounted(detachActiveStream)
     background: #101a2a;
     border-color: rgba(148, 163, 184, 0.22);
     color: #edf4ff;
+  }
+
+  .artifact-status-count,
+  .artifact-progress-label {
+    color: #94a3b8;
+  }
+
+  .artifact-progress-value {
+    color: #edf4ff;
+  }
+
+  .artifact-progress-mark {
+    background: linear-gradient(90deg, #9ab8ff 0%, rgba(154, 184, 255, 0.22) 100%);
+  }
+
+  .plan-step::before {
+    background: linear-gradient(180deg, rgba(154, 184, 255, 0.28) 0%, rgba(154, 184, 255, 0.04) 100%);
   }
 
   .route-guide-panel {
