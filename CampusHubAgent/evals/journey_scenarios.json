@@ -1,0 +1,173 @@
+{
+  "version": 1,
+  "description": "Multi-turn CampusHub user journeys. Each journey accumulates history to verify contextual routing, confirmation gates, and draft edits across realistic sessions.",
+  "default_user": {
+    "uid": 4,
+    "nickname": "Codex QA",
+    "campus": "LIANGXIANG"
+  },
+  "journeys": [
+    {
+      "id": "massage_map_to_order_draft_edit",
+      "persona": "先查地点再创建约伴的学生",
+      "turns": [
+        {
+          "message": "我想要找3个人一起去洗脚按摩，有什么推荐的店吗",
+          "expect": {
+            "primary_intent": "map.search",
+            "domain": "map",
+            "operation_type": "read",
+            "requires_confirmation": false,
+            "next_action": "execute_read_tools"
+          },
+          "assistant_context": "我先按北京理工大学良乡校区周边帮你找了几个按摩地点。\n1. 景阳阁SPA会所(绿地诺亚方舟悦公馆南区店) 地址：绿地诺亚方舟悦公馆南区 经纬度：116.181457,39.730239\n:::map{lng=116.181457 lat=39.730239 zoom=15 title=景阳阁SPA会所(绿地诺亚方舟悦公馆南区店)}\n2. 友健盲人按摩 地址：卓秀北街10号院 经纬度：116.181853,39.728846\n:::map{lng=116.181853 lat=39.728846 zoom=15 title=友健盲人按摩}"
+        },
+        {
+          "message": "就第一家吧，帮我约三个人，明晚八点，先生成草稿",
+          "expect": {
+            "primary_intent": "order.create",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": true,
+            "confirmation_gate": true,
+            "next_action": "prepare_draft",
+            "markers": ["contextual_map_shortcut"]
+          },
+          "assistant_context": "确认创建约伴活动：按摩约伴订单草稿，地点为景阳阁SPA会所，时间为明晚八点，参与人数 3 人。请确认或继续修改。"
+        },
+        {
+          "message": "人数改成4个，标题别太正式，其他不变",
+          "expect": {
+            "primary_intent": "order.create",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": true,
+            "confirmation_gate": true,
+            "next_action": "prepare_draft",
+            "markers": ["draft_edit_shortcut"]
+          }
+        }
+      ]
+    },
+    {
+      "id": "content_draft_to_memory_preference",
+      "persona": "发布动态后补充长期偏好的学生",
+      "turns": [
+        {
+          "message": "帮我发个动态：今晚八点三楼自习，缺搭子，看到的同学可以一起来",
+          "expect": {
+            "primary_intent": "content.create",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": true,
+            "confirmation_gate": true,
+            "next_action": "prepare_draft"
+          },
+          "assistant_context": "确认发布动态：今晚八点三楼自习，缺搭子，看到的同学可以一起来。请确认发布或继续修改这个动态草稿。"
+        },
+        {
+          "message": "语气改得轻松一点，加一句带水杯",
+          "expect": {
+            "primary_intent": "content.create",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": true,
+            "confirmation_gate": true,
+            "next_action": "prepare_draft",
+            "markers": ["draft_edit_shortcut"]
+          },
+          "assistant_context": "已更新动态确认草稿，语气更轻松，并补充提醒带水杯。"
+        },
+        {
+          "message": "以后推荐自习搭子时记住我更喜欢图书馆三楼",
+          "expect": {
+            "primary_intent": "memory.manage",
+            "domain": "memory",
+            "operation_type": "write",
+            "requires_confirmation": true,
+            "confirmation_gate": true,
+            "next_action": "prepare_draft"
+          }
+        }
+      ]
+    },
+    {
+      "id": "sports_search_apply_then_content_read",
+      "persona": "先找活动再谨慎报名的学生",
+      "turns": [
+        {
+          "message": "有没有今天晚上能加入的羽毛球约伴？良乡校区最好，帮我看看",
+          "expect": {
+            "primary_intent_any": ["order.search", "order.manage"],
+            "domain": "order",
+            "operation_type": "read",
+            "requires_confirmation": false,
+            "next_action": "execute_read_tools"
+          },
+          "assistant_context": "找到一个可加入的羽毛球约伴：订单 12，良乡体育馆，今晚 19:30，还缺 1 人。"
+        },
+        {
+          "message": "那帮我报名加入订单12，执行前先确认",
+          "expect": {
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": true,
+            "confirmation_gate": true,
+            "next_action": "prepare_draft"
+          },
+          "assistant_context": "确认报名加入订单 12：羽毛球约伴。请确认后再执行报名。"
+        },
+        {
+          "message": "先算了，搜一下最近有没有人在动态里约图书馆自习",
+          "expect": {
+            "primary_intent": "content.search",
+            "domain": "content",
+            "operation_type": "read",
+            "requires_confirmation": false,
+            "next_action": "execute_read_tools"
+          }
+        }
+      ]
+    },
+    {
+      "id": "weather_to_indoor_place_to_memory",
+      "persona": "根据天气调整安排的学生",
+      "turns": [
+        {
+          "message": "查一下今天北京天气，适不适合晚上去操场跑步",
+          "expect": {
+            "primary_intent": "weather.query",
+            "domain": "weather",
+            "operation_type": "read",
+            "requires_confirmation": false,
+            "next_action": "execute_read_tools"
+          },
+          "assistant_context": "今晚北京可能有风，户外跑步需要注意保暖，也可以考虑室内活动。"
+        },
+        {
+          "message": "那帮我找附近室内桌游店，先只看地点，别发活动",
+          "expect": {
+            "primary_intent": "map.search",
+            "domain": "map",
+            "operation_type": "read",
+            "requires_confirmation": false,
+            "next_action": "execute_read_tools"
+          },
+          "assistant_context": "已推荐三家良乡校区附近室内桌游店并展示地图。"
+        },
+        {
+          "message": "以后如果天气不适合户外，就优先给我推荐室内活动",
+          "expect": {
+            "primary_intent": "memory.manage",
+            "domain": "memory",
+            "operation_type": "write",
+            "requires_confirmation": true,
+            "confirmation_gate": true,
+            "next_action": "prepare_draft"
+          }
+        }
+      ]
+    }
+  ]
+}

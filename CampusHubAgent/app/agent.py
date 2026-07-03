@@ -112,7 +112,7 @@ Additional semantic routing guide:
 - If the user asks to first inspect places/options and only later invite people, organize, publish, or create an activity, classify as multi_step/mixed with next_action=execute_read_tools. Do not jump directly to a write confirmation before the read step.
 - If the latest message edits a previous order/content confirmation draft, preserve the original create action from context. Editing an order draft is order.create, not order.manage.
 - "主页", "个人主页", "资料", "号同学", or asking what a user has posted means user.profile/read.
-- "记住", "以后推荐时记得", "以后优先", or durable preference updates mean memory.manage/write and domain=memory.
+- "记住", "以后推荐时记得", "以后/下次/今后 + 优先/偏好/记得", or durable preference updates mean memory.manage/write and domain=memory.
 - Weather-based planning such as "如果下雨我就改室内" is still weather.query/read unless the user asks CampusHub to create, publish, update, or apply for something.
 - Do not turn a recommendation/search request into content.create or order.create unless the user explicitly asks to publish, create, invite, organize, post, or place an order/activity in CampusHub.
 - For "我想要找3个人一起去洗脚按摩，有什么推荐的店吗", classify as:
@@ -217,7 +217,7 @@ Rules:
 - Read-only search, browse, explain, recommend, route, weather, and place lookup tasks are read operations.
 - If the user is not looking for stores/places and instead wants people, classmates, partners, or "搭子", classify as order.search/read.
 - If the user is editing a previous creation draft, preserve the original create action from context. Do not convert draft edits into order.manage.
-- Durable preference updates such as "以后推荐时记得..." are memory.manage/write with domain=memory.
+- Durable preference updates such as "以后推荐时记得..." or "以后...优先给我推荐..." are memory.manage/write with domain=memory.
 - Homepage/profile requests are user.profile/read, even when the user asks what that person has posted.
 - Weather suitability and personal fallback planning are weather.query/read unless the user asks CampusHub to modify or create a platform object.
 - Return JSON only. No Markdown. No explanation.
@@ -903,6 +903,31 @@ def _has_any(text: str, cues: tuple[str, ...]) -> bool:
     return any(cue in text for cue in cues)
 
 
+def _looks_like_memory_preference_update(text: str) -> bool:
+    """Detect durable user preferences that should be confirmed before saving."""
+    text = " ".join(str(text or "").split())
+    if not text:
+        return False
+    if _has_any(text, ("记住", "记得我", "偏好")):
+        return True
+    durable_cues = ("以后", "下次", "今后", "往后", "以后如果", "以后推荐")
+    preference_cues = ("优先", "尽量", "更喜欢", "不要", "避开", "推荐给我", "给我推荐")
+    topic_cues = (
+        "推荐",
+        "安排",
+        "活动",
+        "地点",
+        "店",
+        "自习",
+        "吃饭",
+        "天气",
+        "户外",
+        "室内",
+        "搭子",
+    )
+    return _has_any(text, durable_cues) and _has_any(text, preference_cues) and _has_any(text, topic_cues)
+
+
 def _looks_like_companion_search(text: str) -> bool:
     """Detect read-only requests for people/companions rather than places."""
     text = " ".join(str(text or "").split())
@@ -1150,6 +1175,8 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
     text = " ".join(str(user_message or "").split())
     lowered = text.lower()
     if not text:
+        return None
+    if _looks_like_memory_preference_update(text):
         return None
 
     hard_write_cues = (
@@ -1473,7 +1500,7 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
         "router_timeout": False,
     }
 
-    if _has_any(text, ("记住", "以后优先", "偏好")):
+    if _looks_like_memory_preference_update(text):
         return {
             **base,
             "primary_intent": "memory.manage",

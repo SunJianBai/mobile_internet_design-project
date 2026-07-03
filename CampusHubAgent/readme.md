@@ -11,6 +11,7 @@ python scripts/run_intent_eval.py --suite evals/semantic_scenarios.json --semant
 python scripts/run_direct_read_eval.py
 python scripts/run_contextual_order_eval.py
 python scripts/run_delegation_guard_eval.py
+python scripts/run_journey_eval.py
 python scripts/run_router_fallback_eval.py
 ```
 
@@ -23,6 +24,8 @@ python scripts/run_router_fallback_eval.py
 `run_contextual_order_eval.py` 验证多轮地图到订单草稿的衔接：用户先查地图候选，下一轮说“就第一家”时，Agent 应进入订单草稿确认门控，并自动带上地点名称、坐标、人数、活动类型和校区。
 
 `run_delegation_guard_eval.py` 不会调用真实大模型、后端或高德接口，只验证同一轮对话内的调度防线：重复任务复用、语义相近任务复用、单个专家调用上限、总委派上限，以及不同用户轮次之间的状态隔离。
+
+`run_journey_eval.py` 使用多轮真人旅程验证上下文路由：先查地图再创建草稿、草稿追改、谨慎报名、只读切换、天气后改室内安排，以及长期偏好记忆确认。
 
 `run_router_fallback_eval.py` 会模拟轻量意图路由模型不可用，验证明确只读请求仍能安全降级到地图/约伴查询，而不是退化成 `unknown`。
 
