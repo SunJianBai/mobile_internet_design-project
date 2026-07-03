@@ -443,6 +443,33 @@ async def scenario_execution_plan_describes_tool_path() -> DirectReadResult:
     return DirectReadResult("execution_plan_describes_tool_path", not failures, failures, {"plan": plan})
 
 
+async def scenario_execution_plan_surfaces_missing_slots() -> DirectReadResult:
+    from app import agent as agent_module
+
+    plan = agent_module._build_execution_plan_artifact({
+        "primary_intent": "order.create",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "suggested_agents": ["order_draft"],
+        "missing_slots": ["地点", "时间"],
+        "next_action": "ask_clarification",
+    })
+    failures: list[str] = []
+    fields = {field.get("label"): field.get("value") for field in plan.get("fields", []) if isinstance(field, dict)}
+    if fields.get("待补充") != "地点、时间":
+        failures.append(f"expected missing slot field, got {fields.get('待补充')!r}")
+    titles = [step.get("title") for step in plan.get("steps", []) if isinstance(step, dict)]
+    if "标出待补充信息" not in titles:
+        failures.append("plan should include a missing-slot explanation step")
+    intent = plan.get("intent") if isinstance(plan.get("intent"), dict) else {}
+    if intent.get("missing_slots") != ["地点", "时间"]:
+        failures.append(f"expected normalized missing slots in intent, got {intent.get('missing_slots')!r}")
+    if intent.get("allowed_delegation_agents") != ["order"]:
+        failures.append(f"expected allowed order delegation, got {intent.get('allowed_delegation_agents')!r}")
+    return DirectReadResult("execution_plan_surfaces_missing_slots", not failures, failures, {"plan": plan})
+
+
 async def run_all() -> list[DirectReadResult]:
     scenarios = [
         scenario_map_search_returns_followup_artifact,
@@ -453,6 +480,7 @@ async def run_all() -> list[DirectReadResult]:
         scenario_order_search_empty_returns_action_card,
         scenario_content_search_returns_result_artifact,
         scenario_execution_plan_describes_tool_path,
+        scenario_execution_plan_surfaces_missing_slots,
     ]
     return [await scenario() for scenario in scenarios]
 

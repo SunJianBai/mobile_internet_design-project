@@ -3112,10 +3112,23 @@ def _operation_display_name(operation_type: str) -> str:
     return labels.get(str(operation_type or ""), operation_type or "待确认")
 
 
+def _missing_slots_list(intent_analysis: dict) -> list[str]:
+    slots = intent_analysis.get("missing_slots") if isinstance(intent_analysis, dict) else []
+    if not isinstance(slots, list):
+        return []
+    return [str(item).strip() for item in slots if str(item or "").strip()]
+
+
+def _missing_slots_display(intent_analysis: dict) -> str:
+    slots = _missing_slots_list(intent_analysis)
+    return "、".join(slots)
+
+
 def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
     primary_intent = (intent_analysis.get("primary_intent") or "").lower()
     operation_type = (intent_analysis.get("operation_type") or "").lower()
     next_action = (intent_analysis.get("next_action") or "").lower()
+    missing_slots = _missing_slots_display(intent_analysis)
     suggested_agents = [
         _agent_display_name(agent)
         for agent in (intent_analysis.get("suggested_agents") or [])
@@ -3133,6 +3146,12 @@ def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
         "detail": _delegation_guard_detail(intent_analysis),
         "state": "completed",
     })
+    if missing_slots:
+        steps.append({
+            "title": "标出待补充信息",
+            "detail": f"还需要：{missing_slots}",
+            "state": "completed",
+        })
 
     if primary_intent == "weather.query":
         steps.extend([
@@ -3177,6 +3196,7 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
     operation_type = (intent_analysis.get("operation_type") or "unknown").lower()
     requires_confirmation = bool(intent_analysis.get("requires_confirmation"))
     suggested_agents = intent_analysis.get("suggested_agents") or []
+    missing_slots = _missing_slots_list(intent_analysis)
     strategy = "确认门控" if requires_confirmation else "直接执行只读工具"
     if primary_intent == "chat.general":
         strategy = "直接回答"
@@ -3185,26 +3205,33 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
     elif suggested_agents:
         strategy = "领域专家委派"
 
+    fields = [
+        {"label": "任务", "value": _intent_display_name(primary_intent)},
+        {"label": "类型", "value": _operation_display_name(operation_type)},
+    ]
+    if missing_slots:
+        fields.append({"label": "待补充", "value": "、".join(missing_slots)})
+    fields.extend([
+        {"label": "策略", "value": strategy},
+        {
+            "label": "专家",
+            "value": "、".join(_agent_display_name(agent) for agent in suggested_agents[:3]) or "无需额外专家",
+        },
+        {"label": "调度守卫", "value": _delegation_guard_display(intent_analysis)},
+    ])
+
     return {
         "type": "plan",
         "title": "本轮执行计划",
         "description": "根据意图分析生成的可视化调度计划；写操作仍会先等待你确认。",
-        "fields": [
-            {"label": "任务", "value": _intent_display_name(primary_intent)},
-            {"label": "类型", "value": _operation_display_name(operation_type)},
-            {"label": "策略", "value": strategy},
-            {
-                "label": "专家",
-                "value": "、".join(_agent_display_name(agent) for agent in suggested_agents[:3]) or "无需额外专家",
-            },
-            {"label": "调度守卫", "value": _delegation_guard_display(intent_analysis)},
-        ],
+        "fields": fields,
         "steps": _build_execution_plan_steps(intent_analysis),
         "state": "running",
         "intent": {
             "primary_intent": primary_intent,
             "next_action": intent_analysis.get("next_action"),
             "requires_confirmation": requires_confirmation,
+            "missing_slots": missing_slots,
             "allowed_delegation_agents": _ordered_delegation_agents(_build_allowed_delegation_agents(intent_analysis)),
         },
     }
