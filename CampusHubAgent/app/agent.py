@@ -37,7 +37,14 @@ from app.tools_order import (
 )
 from app.tools_content import CONTENT_TOOLS, search_contents, create_content, create_comment, like_content
 from app.tools_user import USER_TOOLS, get_user_profile, search_users
-from app.mcp_tools import MCP_TOOLS, maps_around_search, maps_geo, maps_weather
+from app.mcp_tools import (
+    MCP_TOOLS,
+    maps_around_search,
+    maps_direction_driving,
+    maps_direction_walking,
+    maps_geo,
+    maps_weather,
+)
 from app.tools_utils import UTIL_TOOLS
 from app.prompts import (
     build_main_agent_prompt,
@@ -3989,6 +3996,46 @@ def _extract_map_keyword(user_message: str) -> str:
     return "校园周边"
 
 
+def _is_route_request(user_message: str) -> bool:
+    text = str(user_message or "").lower()
+    return any(cue in text for cue in (
+        "怎么走",
+        "路线怎么",
+        "导航到",
+        "导航去",
+        "带路",
+        "route to",
+        "directions to",
+        "how do i get to",
+        "how to get to",
+    ))
+
+
+def _extract_route_destination_text(user_message: str) -> str:
+    text = str(user_message or "").strip()
+    patterns = (
+        r"(?:到|去|前往|导航到|导航去)\s*([^，。,.?？!！\n]{2,40})",
+        r"(?:route to|directions to|how do i get to|how to get to)\s+([^,.?!\n]{2,60})",
+    )
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE)
+        if not match:
+            continue
+        destination = match.group(1)
+        destination = re.split(r"(?:怎么走|路线|导航|给我|展示|show|map)", destination, maxsplit=1, flags=re.IGNORECASE)[0]
+        destination = destination.strip(" 的地附近周边路线导航")
+        if destination:
+            return destination
+    return ""
+
+
+def _route_mode(user_message: str) -> tuple[str, object, str]:
+    text = str(user_message or "").lower()
+    if any(cue in text for cue in ("开车", "驾车", "打车", "自驾", "driving", "drive", "taxi")):
+        return "驾车", maps_direction_driving, "maps_direction_driving"
+    return "步行", maps_direction_walking, "maps_direction_walking"
+
+
 def _extract_location_from_geo(text: str) -> str:
     data = _safe_json_object(text)
     candidates = data.get("return") or data.get("geocodes") or []
@@ -4867,6 +4914,124 @@ def _build_map_followup_artifact(keyword: str, center_name: str, pois: list[dict
     }
 
 
+def _extract_route_path(route_text: str) -> dict:
+    data = _safe_json_object(route_text)
+    route = data.get("route") if isinstance(data.get("route"), dict) else data
+    paths = route.get("paths") if isinstance(route, dict) else None
+    if isinstance(paths, list) and paths:
+        path = paths[0] if isinstance(paths[0], dict) else {}
+    else:
+        path = route if isinstance(route, dict) else {}
+    steps = path.get("steps") if isinstance(path.get("steps"), list) else []
+    return {
+        "distance": str(path.get("distance") or ""),
+        "duration": str(path.get("duration") or ""),
+        "steps": [
+            str(step.get("instruction") or step.get("road") or "").strip()
+            for step in steps
+            if isinstance(step, dict) and str(step.get("instruction") or step.get("road") or "").strip()
+        ],
+    }
+
+
+def _format_route_metric(value: str, unit: str) -> str:
+    try:
+        number = float(str(value or "").strip())
+    except ValueError:
+        return ""
+    if unit == "m":
+        return f"{number / 1000:.1f} 公里" if number >= 1000 else f"{int(number)} 米"
+    if unit == "s":
+        minutes = max(1, round(number / 60))
+        return f"{minutes} 分钟"
+    return str(value)
+
+
+def _format_route_direct_reply(
+    origin_name: str,
+    origin_location: str,
+    destination_name: str,
+    destination_location: str,
+    mode_label: str,
+    route_info: dict,
+) -> str:
+    origin_lng, origin_lat = [part.strip() for part in origin_location.split(",", 1)]
+    dest_lng, dest_lat = [part.strip() for part in destination_location.split(",", 1)]
+    distance = _format_route_metric(route_info.get("distance", ""), "m") or "路线距离待确认"
+    duration = _format_route_metric(route_info.get("duration", ""), "s") or "耗时待确认"
+    steps = route_info.get("steps") or []
+    lines = [
+        f"我按 **{mode_label}** 帮你规划了从 **{origin_name}** 到 **{destination_name}** 的路线。",
+        "",
+        f"- 预计距离：{distance}",
+        f"- 预计耗时：{duration}",
+        "",
+        f":::map{{lng={origin_lng} lat={origin_lat} zoom=15 title={origin_name}}}",
+        f":::map{{lng={dest_lng} lat={dest_lat} zoom=15 title={destination_name}}}",
+    ]
+    if steps:
+        lines.extend(["", "路线要点："])
+        lines.extend(f"{index}. {step}" for index, step in enumerate(steps[:4], start=1))
+    lines.append("")
+    lines.append("页面里会直接显示起点和终点地图；如果要基于这个地点发起约伴，我会先生成确认草稿。")
+    return "\n".join(lines).strip()
+
+
+def _build_route_artifact(
+    origin_name: str,
+    destination_name: str,
+    destination_location: str,
+    mode_label: str,
+    route_info: dict,
+    intent_analysis: dict,
+) -> dict:
+    distance = _format_route_metric(route_info.get("distance", ""), "m") or "待确认"
+    duration = _format_route_metric(route_info.get("duration", ""), "s") or "待确认"
+    steps = route_info.get("steps") or []
+    return {
+        "type": "guide",
+        "title": "路线规划结果",
+        "description": "已整理成可继续操作的路线卡片；创建活动或发布动态仍会先确认。",
+        "fields": [
+            {"label": "起点", "value": origin_name},
+            {"label": "终点", "value": destination_name},
+            {"label": "方式", "value": mode_label},
+            {"label": "距离", "value": distance},
+            {"label": "耗时", "value": duration},
+        ],
+        "items": [
+            {
+                "title": f"{index}. {step}",
+                "subtitle": destination_name if index == 1 else "",
+                "meta": mode_label,
+                "badge": "路线",
+                "hint": "只读规划",
+            }
+            for index, step in enumerate(steps[:5], start=1)
+        ],
+        "actions": [
+            {
+                "label": "用终点约伴",
+                "prompt": f"基于路线终点「{destination_name}」创建一个约伴订单草稿，地点坐标：{destination_location}。不要直接发布，先让我确认。",
+                "primary": False,
+            },
+            {
+                "label": "查终点附近餐厅",
+                "prompt": f"帮我查「{destination_name}」附近的餐厅，并展示地图，先只查询。",
+            },
+            {
+                "label": "换个目的地",
+                "prompt": "帮我重新规划到另一个目的地的路线，并展示地图。",
+            },
+        ],
+        "state": "completed",
+        "intent": {
+            "primary_intent": intent_analysis.get("primary_intent"),
+            "next_action": intent_analysis.get("next_action"),
+        },
+    }
+
+
 def _format_weather_direct_reply(weather_text: str) -> str:
     data = _safe_json_object(weather_text)
     forecasts = data.get("forecasts") if isinstance(data.get("forecasts"), list) else []
@@ -5112,6 +5277,86 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
 
     keyword = _extract_map_keyword(user_message)
     center, center_name = _select_campus_center(user_info, user_message)
+    if _is_route_request(user_message):
+        await _emit_event("agent_step", {
+            "phase": "route_direct",
+            "title": "解析路线请求",
+            "detail": "正在确定起点、终点和路线方式",
+            "state": "running",
+        })
+        destination_query = _extract_route_destination_text(user_message)
+        destination_keyword = _extract_map_keyword(destination_query or user_message)
+        destination_name = destination_query or destination_keyword
+        destination_location = ""
+        tool_calls = []
+
+        use_nearby_destination = (
+            not destination_query
+            or "最近" in destination_query
+            or "附近" in destination_query
+            or destination_query in {destination_keyword, f"最近的{destination_keyword}", f"附近的{destination_keyword}"}
+        )
+        if use_nearby_destination and destination_keyword != "校园周边":
+            search_text = await _invoke_tool_text(
+                maps_around_search,
+                {"location": center, "keywords": destination_keyword, "radius": "3000"},
+            )
+            tool_calls.append({"name": "maps_around_search", "args": {"location": center, "keywords": destination_keyword, "radius": "3000"}})
+            data = _safe_json_object(search_text)
+            pois = data.get("pois") if isinstance(data.get("pois"), list) else []
+            resolved = await _resolve_poi_locations(pois, limit=1)
+            if resolved:
+                destination = resolved[0]
+                destination_name = destination.get("name") or destination_keyword
+                destination_location = destination.get("location") or ""
+        else:
+            geo_text = await _invoke_tool_text(maps_geo, {"address": destination_query, "city": "北京"})
+            tool_calls.append({"name": "maps_geo", "args": {"address": destination_query, "city": "北京"}})
+            destination_location = _extract_location_from_geo(geo_text)
+
+        if not destination_location or "," not in destination_location:
+            return None
+
+        mode_label, direction_tool, direction_tool_name = _route_mode(user_message)
+        await _emit_event("agent_step", {
+            "phase": "route_direct",
+            "title": "调用路线规划",
+            "detail": f"正在规划从{center_name}到{destination_name}的{mode_label}路线",
+            "state": "running",
+        })
+        route_text = await _invoke_tool_text(direction_tool, {"origin": center, "destination": destination_location})
+        tool_calls.append({"name": direction_tool_name, "args": {"origin": center, "destination": destination_location}})
+        route_info = _extract_route_path(route_text)
+        reply = _format_route_direct_reply(
+            center_name,
+            center,
+            destination_name,
+            destination_location,
+            mode_label,
+            route_info,
+        )
+        route_artifact = _build_route_artifact(
+            center_name,
+            destination_name,
+            destination_location,
+            mode_label,
+            route_info,
+            intent_analysis,
+        )
+        await _emit_event("artifact", route_artifact)
+        await _emit_event("agent_step", {
+            "phase": "route_direct",
+            "title": "路线规划完成",
+            "detail": "已把路线、起终点地图和后续动作整理成卡片",
+            "state": "completed",
+        })
+        return {
+            "reply": reply,
+            "tool_calls": tool_calls,
+            "intent": intent_analysis,
+            "artifacts": [route_artifact],
+        }
+
     include_weather_context = bool(intent_analysis.get("weather_context")) or _has_weather_context(user_message)
     weather_reply = ""
     weather_artifact = None

@@ -77,6 +77,20 @@ class DirectReadHarness:
                     "- 小白 (ID: 12)\n"
                     "- 小白同学 (ID: 15)"
                 )
+            if tool_name in {"maps_direction_walking", "maps_direction_driving"}:
+                return json.dumps({
+                    "route": {
+                        "paths": [{
+                            "distance": "1800",
+                            "duration": "1320",
+                            "steps": [
+                                {"instruction": "从北京理工大学良乡校区出发，向东步行"},
+                                {"instruction": "沿良乡东路继续前行"},
+                                {"instruction": "到达首创奥特莱斯电影院"},
+                            ],
+                        }]
+                    }
+                }, ensure_ascii=False)
             if "city" in args:
                 return json.dumps({
                     "city": "北京",
@@ -88,6 +102,14 @@ class DirectReadHarness:
                     }],
                 }, ensure_ascii=False)
             if "location" in args:
+                if args.get("keywords") == "电影院":
+                    return json.dumps({
+                        "pois": [{
+                            "name": "首创奥特莱斯电影院",
+                            "address": "北京市房山区首创奥莱",
+                            "location": "116.186600,39.722900",
+                        }],
+                    }, ensure_ascii=False)
                 return json.dumps({
                     "pois": [
                         {
@@ -368,6 +390,68 @@ async def scenario_map_weather_combo_returns_two_artifacts() -> DirectReadResult
     if event_artifact_types[:2] != ["weather", "guide"]:
         failures.append(f"expected streaming artifact events for weather and guide, got {event_artifact_types!r}")
     return DirectReadResult("map_weather_combo_returns_two_artifacts", not failures, failures, actual)
+
+
+async def scenario_route_request_returns_route_artifact() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="从良乡校区到最近的电影院怎么走？给我地图就行",
+            intent_analysis={
+                "primary_intent": "map.search",
+                "domain": "map",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts", []) if result else [],
+            "tool_calls": result.get("tool_calls", []) if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifacts = actual.get("artifacts") or []
+    artifact = artifacts[0] if artifacts else {}
+    fields = {
+        field.get("label"): field.get("value")
+        for field in artifact.get("fields", [])
+        if isinstance(field, dict)
+    }
+    tool_names = [call.get("name") for call in actual.get("tool_calls", []) if isinstance(call, dict)]
+    artifact_events = [
+        item.get("data", {})
+        for item in actual.get("events", [])
+        if item.get("event") == "artifact" and isinstance(item.get("data"), dict)
+    ]
+    if actual.get("reply", "").count(":::map") < 2:
+        failures.append("route reply should render both origin and destination maps")
+    if "路线要点" not in actual.get("reply", ""):
+        failures.append("route reply should include route step highlights")
+    if artifact.get("type") != "guide":
+        failures.append(f"expected route guide artifact, got {artifact.get('type')!r}")
+    if artifact.get("title") != "路线规划结果":
+        failures.append(f"expected route artifact title, got {artifact.get('title')!r}")
+    if fields.get("终点") != "首创奥特莱斯电影院":
+        failures.append(f"expected resolved cinema destination, got {fields.get('终点')!r}")
+    if fields.get("方式") != "步行":
+        failures.append(f"expected walking route mode, got {fields.get('方式')!r}")
+    if fields.get("距离") != "1.8 公里":
+        failures.append(f"expected formatted distance, got {fields.get('距离')!r}")
+    if "maps_around_search" not in tool_names or "maps_direction_walking" not in tool_names:
+        failures.append(f"expected around-search then walking direction tools, got {tool_names!r}")
+    labels = [action.get("label") for action in artifact.get("actions", []) if isinstance(action, dict)]
+    if "用终点约伴" not in labels:
+        failures.append("route artifact should offer a draft-from-destination action")
+    prompts = [action.get("prompt", "") for action in artifact.get("actions", []) if isinstance(action, dict)]
+    if not any("不要直接发布" in prompt and "首创奥特莱斯电影院" in prompt for prompt in prompts):
+        failures.append("route follow-up prompt should preserve confirmation before publishing")
+    if not artifact_events or artifact_events[0].get("title") != "路线规划结果":
+        failures.append("route direct flow should emit the route artifact for streaming clients")
+    return DirectReadResult("route_request_returns_route_artifact", not failures, failures, actual)
 
 
 async def scenario_order_search_returns_result_artifact() -> DirectReadResult:
@@ -667,6 +751,7 @@ async def run_all() -> list[DirectReadResult]:
         scenario_multi_step_marks_primary_draft_action,
         scenario_weather_direct_returns_artifact,
         scenario_map_weather_combo_returns_two_artifacts,
+        scenario_route_request_returns_route_artifact,
         scenario_order_search_returns_result_artifact,
         scenario_order_search_empty_returns_action_card,
         scenario_content_search_returns_result_artifact,
