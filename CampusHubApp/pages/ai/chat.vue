@@ -2661,6 +2661,30 @@ onUnmounted(detachActiveStream)
   padding: 26rpx 24rpx;
   background: #f3f5f9;
   box-sizing: border-box;
+  scrollbar-color: rgba(96, 165, 250, 0.42) rgba(15, 23, 42, 0.48);
+}
+
+.messages-scroll::-webkit-scrollbar,
+.memory-list::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+
+.messages-scroll::-webkit-scrollbar-track,
+.memory-list::-webkit-scrollbar-track {
+  background: rgba(15, 23, 42, 0.52);
+}
+
+.messages-scroll::-webkit-scrollbar-thumb,
+.memory-list::-webkit-scrollbar-thumb {
+  border: 2px solid rgba(15, 23, 42, 0.52);
+  border-radius: 999px;
+  background: rgba(96, 165, 250, 0.46);
+}
+
+.messages-scroll::-webkit-scrollbar-thumb:hover,
+.memory-list::-webkit-scrollbar-thumb:hover {
+  background: rgba(147, 197, 253, 0.72);
 }
 
 .message-item {
@@ -4733,6 +4757,7 @@ onUnmounted(detachActiveStream)
   height: 0;
   padding: 20rpx 24rpx 28rpx;
   box-sizing: border-box;
+  scrollbar-color: rgba(96, 165, 250, 0.42) rgba(15, 23, 42, 0.48);
 }
 
 .memory-state,
@@ -4933,8 +4958,16 @@ onUnmounted(detachActiveStream)
   }
 
   .memory-panel {
-    width: 420px;
-    max-width: 42vw;
+    width: 520px;
+    max-width: 48vw;
+  }
+
+  .memory-header {
+    padding: 24px 28px;
+  }
+
+  .memory-list {
+    padding: 22px 26px 30px;
   }
 }
 
