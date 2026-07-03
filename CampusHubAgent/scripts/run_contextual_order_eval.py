@@ -49,9 +49,26 @@ MAP_HISTORY = [
     },
 ]
 
+ORDER_HISTORY = [
+    {
+        "role": "user",
+        "content": "帮我看看良乡校区今天有没有适合加入的篮球或羽毛球约伴活动",
+    },
+    {
+        "role": "assistant",
+        "content": (
+            "找到 2 个约伴订单：\n\n"
+            "- **[订单#42](/orders/42)** BASKETBALL | LIANGXIANG | 良乡体育馆 | 2026-07-03 19:00:00 | 2/4人\n"
+            "- **[订单#43](/orders/43)** BADMINTON | LIANGXIANG | 羽毛球馆 | 2026-07-03 20:00:00 | 1/4人"
+        ),
+    },
+]
+
 FOLLOWUP_MESSAGE = "就第一家吧，帮我约三个人，明晚八点，先生成草稿"
 SECOND_FOLLOWUP_MESSAGE = "就第二家吧，帮我约三个人，周六晚上8点，先生成草稿"
 NAMED_FOLLOWUP_MESSAGE = "还是选悦康足道，帮我创建一个4人的按摩约伴，明晚八点，先生成草稿"
+ORDER_APPLY_FOLLOWUP_MESSAGE = "就第二个吧，帮我报名，先生成确认草稿，不要直接提交"
+ORDER_APPLY_NAMED_MESSAGE = "羽毛球馆那个约伴我想加入，先让我确认"
 
 MAP_ACTION_MESSAGE = (
     "我想基于刚才查询到的这个地点创建一个约伴订单草稿。\n"
@@ -90,6 +107,19 @@ class FakeGenericManageRouter:
             "description": "用户想管理一个约伴订单申请。",
             "fields": [],
             "missing_fields": [],
+            "reply": "",
+        }
+        return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
+
+
+class FakeApplyRouter:
+    async def ainvoke(self, _messages):
+        content = {
+            "title": "确认报名加入约伴活动",
+            "description": "用户想基于上一轮查询结果报名加入约伴活动。",
+            "action_kind": "order.apply",
+            "fields": [{"label": "申请留言", "value": "我会准时到"}],
+            "missing_fields": ["订单ID"],
             "reply": "",
         }
         return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
@@ -149,6 +179,32 @@ async def scenario_selects_named_map_candidate() -> EvalResult:
     return EvalResult("selects_named_map_candidate", not failures, failures, actual)
 
 
+async def scenario_selects_second_order_candidate() -> EvalResult:
+    from app import agent as agent_module
+
+    candidate = agent_module._extract_contextual_order_selection(ORDER_HISTORY, ORDER_APPLY_FOLLOWUP_MESSAGE)
+    actual = {"candidate": candidate}
+    failures: list[str] = []
+    if not candidate:
+        failures.append("expected a selected order candidate")
+    elif candidate.get("id") != "43":
+        failures.append(f"expected second order id 43, got {candidate.get('id')!r}")
+    return EvalResult("selects_second_order_candidate", not failures, failures, actual)
+
+
+async def scenario_selects_named_order_candidate() -> EvalResult:
+    from app import agent as agent_module
+
+    candidate = agent_module._extract_contextual_order_selection(ORDER_HISTORY, ORDER_APPLY_NAMED_MESSAGE)
+    actual = {"candidate": candidate}
+    failures: list[str] = []
+    if not candidate:
+        failures.append("expected a named order candidate")
+    elif candidate.get("id") != "43":
+        failures.append(f"expected named order id 43, got {candidate.get('id')!r}")
+    return EvalResult("selects_named_order_candidate", not failures, failures, actual)
+
+
 async def scenario_contextual_intent_routes_to_order_create() -> EvalResult:
     from app import agent as agent_module
 
@@ -195,6 +251,26 @@ async def scenario_map_action_payload_routes_to_order_create() -> EvalResult:
     if not analysis.get("contextual_map_shortcut"):
         failures.append("expected contextual_map_shortcut marker")
     return EvalResult("map_action_payload_routes_to_order_create", not failures, failures, actual)
+
+
+async def scenario_contextual_order_apply_routes_to_confirmed_write() -> EvalResult:
+    from app import agent as agent_module
+
+    agent_module._intent_cache.clear()
+    analysis = await agent_module.analyze_intent(DEFAULT_USER, [], ORDER_HISTORY, ORDER_APPLY_FOLLOWUP_MESSAGE)
+    actual = dict(analysis)
+    failures: list[str] = []
+    expected = {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "next_action": "prepare_draft",
+    }
+    for key, value in expected.items():
+        if actual.get(key) != value:
+            failures.append(f"{key}: expected {value!r}, got {actual.get(key)!r}")
+    return EvalResult("contextual_order_apply_routes_to_confirmed_write", not failures, failures, actual)
 
 
 async def scenario_confirmation_enriches_map_fields() -> EvalResult:
@@ -287,6 +363,49 @@ async def scenario_named_confirmation_enriches_map_fields() -> EvalResult:
     if artifact.get("missingFields"):
         failures.append(f"expected no missing fields after named enrichment, got {artifact.get('missingFields')!r}")
     return EvalResult("named_confirmation_enriches_map_fields", not failures, failures, actual)
+
+
+async def scenario_confirmation_enriches_order_apply_fields() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeApplyRouter()
+    try:
+        analysis = {
+            "primary_intent": "order.manage",
+            "domain": "order",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["order_draft"],
+            "next_action": "prepare_draft",
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            ORDER_HISTORY,
+            ORDER_APPLY_FOLLOWUP_MESSAGE,
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "actionKind": artifact.get("actionKind"),
+        "fields": fields,
+        "missingFields": artifact.get("missingFields") or [],
+        "reply": artifact.get("reply"),
+    }
+    failures: list[str] = []
+    if artifact.get("actionKind") != "order.apply":
+        failures.append(f"expected order.apply actionKind, got {artifact.get('actionKind')!r}")
+    if fields.get("订单ID") != "43":
+        failures.append(f"expected selected order id 43, got {fields.get('订单ID')!r}")
+    if "羽毛球馆" not in fields.get("订单信息", ""):
+        failures.append(f"expected selected order summary with 羽毛球馆, got {fields.get('订单信息')!r}")
+    if artifact.get("missingFields"):
+        failures.append(f"expected no missing fields after order selection enrichment, got {artifact.get('missingFields')!r}")
+    return EvalResult("confirmation_enriches_order_apply_fields", not failures, failures, actual)
 
 
 async def scenario_high_confidence_gated_write_skips_review() -> EvalResult:
@@ -537,10 +656,14 @@ async def run_all() -> list[EvalResult]:
         scenario_selects_first_map_candidate,
         scenario_selects_second_map_candidate,
         scenario_selects_named_map_candidate,
+        scenario_selects_second_order_candidate,
+        scenario_selects_named_order_candidate,
         scenario_contextual_intent_routes_to_order_create,
         scenario_map_action_payload_routes_to_order_create,
+        scenario_contextual_order_apply_routes_to_confirmed_write,
         scenario_confirmation_enriches_map_fields,
         scenario_named_confirmation_enriches_map_fields,
+        scenario_confirmation_enriches_order_apply_fields,
         scenario_high_confidence_gated_write_skips_review,
         scenario_confirmed_action_kind_marker_wins,
         scenario_confirmation_infers_manage_action_kind,

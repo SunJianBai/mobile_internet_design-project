@@ -2775,6 +2775,122 @@ def _extract_applicant_id_reference(text: str) -> int | None:
     return None
 
 
+def _extract_recent_order_candidates(history: list) -> list[dict]:
+    """Recover recent order-result candidates so follow-up apply actions keep order context."""
+    candidates: list[dict] = []
+    seen: set[str] = set()
+
+    def add_candidate(order_id: str, summary: str = "", activity: str = "", location: str = "") -> None:
+        order_id = str(order_id or "").strip()
+        if not order_id or order_id in seen:
+            return
+        seen.add(order_id)
+        candidates.append({
+            "id": order_id,
+            "summary": str(summary or "").strip(),
+            "activity": str(activity or "").strip(),
+            "location": str(location or "").strip(),
+        })
+
+    for item in reversed(history or []):
+        if not isinstance(item, dict) or item.get("role") == "user":
+            continue
+        content = str(item.get("content") or "")
+        if not content:
+            continue
+
+        parsed_orders = _parse_order_result_lines(content)
+        for order in parsed_orders:
+            summary = " · ".join(
+                part for part in [
+                    order.get("activity"),
+                    order.get("location"),
+                    order.get("time"),
+                    order.get("people"),
+                ]
+                if part
+            )
+            add_candidate(order.get("id"), summary, order.get("activity"), order.get("location"))
+
+        if not parsed_orders:
+            for line in content.splitlines():
+                match = re.search(r"(?:订单|约伴|活动)\s*#?\s*(\d+)", line, flags=re.IGNORECASE)
+                if not match:
+                    continue
+                add_candidate(match.group(1), line.strip())
+
+        if candidates:
+            break
+    return candidates[:5]
+
+
+def _order_candidate_aliases(candidate: dict) -> list[str]:
+    order_id = str(candidate.get("id") or "").strip()
+    aliases = []
+    if order_id:
+        aliases.extend([order_id, f"订单{order_id}", f"订单#{order_id}", f"order{order_id}", f"order#{order_id}"])
+    for key in ("activity", "location", "summary"):
+        value = str(candidate.get(key) or "").strip()
+        if not value:
+            continue
+        aliases.append(value)
+        for part in re.split(r"[|｜·,，:：\s]+", value):
+            part = part.strip()
+            if len(part) >= 2:
+                aliases.append(part)
+
+    unique: list[str] = []
+    seen: set[str] = set()
+    for alias in aliases:
+        normalized = _normalize_map_match_text(alias)
+        if len(normalized) < 2 or normalized in seen:
+            continue
+        seen.add(normalized)
+        unique.append(alias)
+    return unique
+
+
+def _match_recent_order_candidate(candidates: list[dict], user_message: str) -> dict | None:
+    explicit_id = _extract_order_id_reference(user_message)
+    if explicit_id:
+        for candidate in candidates or []:
+            if str(candidate.get("id") or "") == str(explicit_id):
+                return candidate
+        return {"id": str(explicit_id)}
+
+    selected_index = _map_selection_index(user_message)
+    if selected_index is not None:
+        if selected_index < len(candidates or []):
+            return candidates[selected_index]
+        return None
+
+    user_text = _normalize_map_match_text(user_message)
+    if not user_text:
+        return None
+
+    scored: list[tuple[int, int, dict]] = []
+    for index, candidate in enumerate(candidates or []):
+        best_score = 0
+        for alias in _order_candidate_aliases(candidate):
+            normalized_alias = _normalize_map_match_text(alias)
+            if normalized_alias and normalized_alias in user_text:
+                best_score = max(best_score, len(normalized_alias))
+        if best_score:
+            scored.append((best_score, -index, candidate))
+
+    if not scored:
+        return None
+    scored.sort(reverse=True)
+    if len(scored) > 1 and scored[0][0] == scored[1][0]:
+        return None
+    return scored[0][2]
+
+
+def _extract_contextual_order_selection(history: list, user_message: str) -> dict | None:
+    candidates = _extract_recent_order_candidates(history)
+    return _match_recent_order_candidate(candidates, user_message)
+
+
 def _infer_activity_label(text: str) -> str:
     lowered = str(text or "").lower()
     activity_rules = [
@@ -2857,13 +2973,21 @@ def _enrich_order_confirmation_fields(
     lowered_context = context_text.lower()
 
     if primary_intent == "order.manage":
-        order_id = _extract_order_id_reference(context_text)
+        selected_order = _extract_contextual_order_selection(history, user_message) or {}
+        selected_order_id = str(selected_order.get("id") or "").strip()
+        order_id = _extract_order_id_reference(user_message)
+        if not order_id and selected_order_id.isdigit():
+            order_id = int(selected_order_id)
+        if not order_id:
+            order_id = _extract_order_id_reference(context_text)
         apply_id = _extract_application_id_reference(context_text)
         applicant_id = _extract_applicant_id_reference(context_text)
 
         if order_id:
             _set_artifact_field(enriched_fields, ("订单ID", "约伴ID", "活动ID"), "订单ID", str(order_id))
             enriched_missing = _drop_missing_fields(enriched_missing, ("订单ID", "约伴ID", "活动ID"))
+        if selected_order.get("summary"):
+            _set_artifact_field(enriched_fields, ("订单信息", "订单摘要", "活动信息"), "订单信息", selected_order["summary"])
         if apply_id:
             _set_artifact_field(enriched_fields, ("申请ID", "申请记录ID", "申请编号"), "申请ID", str(apply_id))
             enriched_missing = _drop_missing_fields(enriched_missing, ("申请ID", "申请记录ID", "申请编号"))
