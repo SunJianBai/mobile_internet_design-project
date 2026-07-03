@@ -31,6 +31,9 @@ public class AiMessage {
     @Column
     private Integer tokenCount;
 
+    @Column(columnDefinition = "MEDIUMTEXT")
+    private String uiMetadata;
+
     @CreationTimestamp
     @Column(nullable = false, updatable = false)
     private LocalDateTime createdAt;

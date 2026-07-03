@@ -77,6 +77,8 @@ public class AgentStreamService {
         // 流式调用 Python Agent，逐 chunk 转发 SSE
         StringBuilder fullReply = new StringBuilder();
         List<Map<?, ?>> committedMemories = new ArrayList<>();
+        List<Map<String, Object>> uiOperations = new ArrayList<>();
+        List<Object> uiArtifacts = new ArrayList<>();
 
         pythonAgentClient.streamChat(user, history, userMessage,
                 // onDelta
@@ -91,6 +93,7 @@ public class AgentStreamService {
                 // onToolCall
                 (eventName, data) -> {
                     try {
+                        recordUiEvent(eventName, data, uiOperations, uiArtifacts);
                         if ("memory_commit".equals(eventName)) {
                             parseMemoryCommit(data).ifPresent(committedMemories::add);
                         }
@@ -105,7 +108,11 @@ public class AgentStreamService {
                         // 保存完整回复
                         String replyText = fullReply.toString();
                         if (replyText.isBlank()) replyText = "抱歉，我暂时无法回复。";
-                        agentService.saveMessage(conv, "assistant", replyText, null, null);
+                        String uiMetadata = agentService.buildUiMetadataJson(
+                                finalizeUiOperations(uiOperations),
+                                uiArtifacts
+                        );
+                        agentService.saveMessage(conv, "assistant", replyText, null, null, uiMetadata);
 
                         // 先应用用户明确确认的记忆操作，再异步提取普通对话中的隐式记忆
                         agentService.applyCommittedMemoryOperations(user, committedMemories);
@@ -131,6 +138,89 @@ public class AgentStreamService {
                     }
                 }
         );
+    }
+
+    private void recordUiEvent(
+            String eventName,
+            String data,
+            List<Map<String, Object>> operations,
+            List<Object> artifacts
+    ) {
+        Map<String, Object> payload = parseEventPayload(data);
+        Map<String, Object> operation = agentService.normalizeUiOperation(eventName, payload, false);
+        mergeOperation(operations, operation);
+
+        if ("artifact".equals(eventName) || "confirm_required".equals(eventName)) {
+            Map<String, Object> artifact = new LinkedHashMap<>(payload);
+            if (!artifact.containsKey("type") && "confirm_required".equals(eventName)) {
+                artifact.put("type", "confirmation");
+            }
+            mergeArtifact(artifacts, artifact);
+        }
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseEventPayload(String data) {
+        if (data == null || data.isBlank()) {
+            return new LinkedHashMap<>();
+        }
+        try {
+            Map<String, Object> parsed = objectMapper.readValue(data, Map.class);
+            return parsed == null ? new LinkedHashMap<>() : parsed;
+        } catch (Exception e) {
+            Map<String, Object> fallback = new LinkedHashMap<>();
+            fallback.put("title", data);
+            return fallback;
+        }
+    }
+
+    private void mergeOperation(List<Map<String, Object>> operations, Map<String, Object> operation) {
+        String phase = String.valueOf(operation.getOrDefault("phase", ""));
+        String eventName = String.valueOf(operation.getOrDefault("eventName", ""));
+        String state = String.valueOf(operation.getOrDefault("state", ""));
+        if (!"running".equals(state)) {
+            for (int i = operations.size() - 1; i >= 0; i--) {
+                Map<String, Object> previous = operations.get(i);
+                if (phase.equals(String.valueOf(previous.getOrDefault("phase", "")))
+                        && eventName.equals(String.valueOf(previous.getOrDefault("eventName", "")))) {
+                    previous.putAll(operation);
+                    return;
+                }
+            }
+        }
+        operations.add(operation);
+    }
+
+    private List<Map<String, Object>> finalizeUiOperations(List<Map<String, Object>> operations) {
+        List<Map<String, Object>> result = new ArrayList<>();
+        for (Map<String, Object> operation : operations) {
+            Map<String, Object> next = new LinkedHashMap<>(operation);
+            if ("running".equals(String.valueOf(next.getOrDefault("state", "")))) {
+                next.put("state", "completed");
+            }
+            result.add(next);
+        }
+        return result;
+    }
+
+    private void mergeArtifact(List<Object> artifacts, Map<String, Object> artifact) {
+        String key = artifactKey(artifact);
+        for (Object item : artifacts) {
+            if (item instanceof Map<?, ?> existing && key.equals(artifactKey(existing))) {
+                return;
+            }
+        }
+        artifacts.add(artifact);
+    }
+
+    private String artifactKey(Map<?, ?> artifact) {
+        Object id = artifact.get("id");
+        if (id != null && !String.valueOf(id).isBlank()) {
+            return String.valueOf(id);
+        }
+        return String.valueOf(artifact.get("type") == null ? "" : artifact.get("type"))
+                + ":" + String.valueOf(artifact.get("title") == null ? "" : artifact.get("title"))
+                + ":" + String.valueOf(artifact.get("actionKind") == null ? "" : artifact.get("actionKind"));
     }
 
     @SuppressWarnings("unchecked")

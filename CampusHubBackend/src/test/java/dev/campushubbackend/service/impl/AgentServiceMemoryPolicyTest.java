@@ -2,11 +2,13 @@ package dev.campushubbackend.service.impl;
 
 import dev.campushubbackend.entity.AiMemory;
 import org.junit.jupiter.api.Test;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.List;
 import java.util.Map;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
+import static org.junit.jupiter.api.Assertions.assertNotNull;
 import static org.junit.jupiter.api.Assertions.assertTrue;
 
 class AgentServiceMemoryPolicyTest {
@@ -135,5 +137,36 @@ class AgentServiceMemoryPolicyTest {
         );
 
         assertTrue(kept.isEmpty());
+    }
+
+    @Test
+    @SuppressWarnings("unchecked")
+    void serializesUiMetadataForConversationHistoryRestore() throws Exception {
+        ObjectMapper objectMapper = new ObjectMapper();
+        AgentServiceImpl service = new AgentServiceImpl(null, null, null, null, null, objectMapper);
+
+        Map<String, Object> completedOperation = service.normalizeUiOperation(
+                "agent_step",
+                Map.of("phase", "map", "title", "地图查询完成", "detail", "已生成地图卡片"),
+                true
+        );
+        Map<String, Object> pendingConfirmation = service.normalizeUiOperation(
+                "confirm_required",
+                Map.of("phase", "confirmation", "title", "等待确认", "actionKind", "order.create"),
+                true
+        );
+        String metadata = service.buildUiMetadataJson(
+                List.of(completedOperation, pendingConfirmation),
+                List.of(Map.of("type", "confirmation", "title", "确认创建约伴活动"))
+        );
+
+        assertNotNull(metadata);
+        Map<String, Object> parsed = objectMapper.readValue(metadata, Map.class);
+        List<Map<String, Object>> operations = (List<Map<String, Object>>) parsed.get("operations");
+        List<Map<String, Object>> artifacts = (List<Map<String, Object>>) parsed.get("artifacts");
+
+        assertEquals("completed", operations.get(0).get("state"));
+        assertEquals("pending", operations.get(1).get("state"));
+        assertEquals("confirmation", artifacts.getFirst().get("type"));
     }
 }

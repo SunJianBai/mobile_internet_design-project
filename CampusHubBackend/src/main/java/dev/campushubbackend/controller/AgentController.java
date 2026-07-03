@@ -11,8 +11,10 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.http.MediaType;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
+import tools.jackson.databind.ObjectMapper;
 
 import java.util.LinkedHashMap;
+import java.util.ArrayList;
 import java.util.List;
 import java.util.Map;
 
@@ -24,6 +26,7 @@ public class AgentController extends BaseController {
 
     private final AgentService agentService;
     private final AgentStreamService agentStreamService;
+    private final ObjectMapper objectMapper;
 
     // ==================== 会话管理 ====================
 
@@ -140,7 +143,25 @@ public class AgentController extends BaseController {
         map.put("toolName", msg.getToolName());
         map.put("tokenCount", msg.getTokenCount());
         map.put("createdAt", msg.getCreatedAt());
+        Map<String, Object> uiMetadata = parseUiMetadata(msg.getUiMetadata());
+        if (!uiMetadata.isEmpty()) {
+            map.put("operations", uiMetadata.getOrDefault("operations", new ArrayList<>()));
+            map.put("artifacts", uiMetadata.getOrDefault("artifacts", new ArrayList<>()));
+        }
         return map;
+    }
+
+    @SuppressWarnings("unchecked")
+    private Map<String, Object> parseUiMetadata(String raw) {
+        if (raw == null || raw.isBlank()) {
+            return Map.of();
+        }
+        try {
+            return objectMapper.readValue(raw, Map.class);
+        } catch (Exception e) {
+            log.warn("解析 AI 消息 UI 元数据失败: {}", e.getMessage());
+            return Map.of();
+        }
     }
 
     private Map<String, Object> toMemoryMap(AiMemory mem) {

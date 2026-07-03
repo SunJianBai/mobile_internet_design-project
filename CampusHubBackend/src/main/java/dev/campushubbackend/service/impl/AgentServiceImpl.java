@@ -9,6 +9,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.scheduling.annotation.Async;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
+import tools.jackson.databind.ObjectMapper;
 
 import java.time.LocalDateTime;
 import java.util.*;
@@ -27,6 +28,7 @@ public class AgentServiceImpl implements AgentService {
     private final AiMemoryRepository memoryRepository;
     private final UserRepository userRepository;
     private final PythonAgentClient pythonAgentClient;
+    private final ObjectMapper objectMapper;
 
     private static final int MAX_HISTORY_MESSAGES = 40;
     static final int MAX_AUTO_MEMORIES_PER_TURN = 2;
@@ -107,6 +109,7 @@ public class AgentServiceImpl implements AgentService {
 
         // 4. 调用 Python LangChain Agent
         String assistantReply;
+        String uiMetadata = null;
         List<Map<?, ?>> committedMemories = List.of();
         try {
             Map<String, Object> result = pythonAgentClient.chat(user, history, userMessage);
@@ -114,6 +117,7 @@ public class AgentServiceImpl implements AgentService {
             if (assistantReply == null || assistantReply.isBlank()) {
                 assistantReply = "抱歉，我暂时无法回复。";
             }
+            uiMetadata = buildUiMetadataJson(buildNonStreamingOperations(result), coerceUiList(result.get("artifacts")));
             committedMemories = coerceMemoryCommits(result.get("memory_commits"));
         } catch (Exception e) {
             log.error("Python Agent 调用失败", e);
@@ -121,7 +125,7 @@ public class AgentServiceImpl implements AgentService {
         }
 
         // 5. 保存 AI 回复
-        AiMessage aiMsg = saveMessage(conv, "assistant", assistantReply, null, null);
+        AiMessage aiMsg = saveMessage(conv, "assistant", assistantReply, null, null, uiMetadata);
 
         // 6. 先保存用户明确确认的记忆，再异步提取普通对话中的隐式记忆
         applyCommittedMemoryOperations(user, committedMemories);
@@ -510,13 +514,140 @@ public class AgentServiceImpl implements AgentService {
     }
 
     AiMessage saveMessage(AiConversation conv, String role, String content, String toolName, Integer tokenCount) {
+        return saveMessage(conv, role, content, toolName, tokenCount, null);
+    }
+
+    AiMessage saveMessage(AiConversation conv, String role, String content, String toolName, Integer tokenCount, String uiMetadata) {
         AiMessage msg = new AiMessage();
         msg.setConversation(conv);
         msg.setRole(role);
         msg.setContent(content);
         msg.setToolName(toolName);
         msg.setTokenCount(tokenCount);
+        msg.setUiMetadata(uiMetadata);
         return messageRepository.save(msg);
+    }
+
+    @SuppressWarnings("unchecked")
+    List<Object> coerceUiList(Object value) {
+        if (value instanceof List<?> list) {
+            return new ArrayList<>((List<Object>) list);
+        }
+        return new ArrayList<>();
+    }
+
+    @SuppressWarnings("unchecked")
+    List<Map<String, Object>> buildNonStreamingOperations(Map<String, Object> result) {
+        List<Map<String, Object>> operations = new ArrayList<>();
+        Object intentValue = result == null ? null : result.get("intent");
+        if (intentValue instanceof Map<?, ?> intentMap) {
+            Map<String, Object> intent = new LinkedHashMap<>();
+            intentMap.forEach((key, value) -> intent.put(String.valueOf(key), value));
+            operations.add(normalizeUiOperation("intent", intent, true));
+        }
+        Object toolCallsValue = result == null ? null : result.get("tool_calls");
+        if (toolCallsValue instanceof List<?> toolCalls && !toolCalls.isEmpty()) {
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("phase", "tool_call");
+            payload.put("title", "工具调用完成");
+            payload.put("detail", "已调用 " + toolCalls.size() + " 个工具");
+            payload.put("state", "completed");
+            operations.add(normalizeUiOperation("tool_call", payload, true));
+        }
+        return operations;
+    }
+
+    Map<String, Object> normalizeUiOperation(String eventName, Map<String, Object> payload, boolean finalizeRunning) {
+        Map<String, Object> operation = new LinkedHashMap<>();
+        String title = stringValue(payload.get("title"));
+        if (title.isBlank()) {
+            title = switch (eventName) {
+                case "intent" -> "识别意图";
+                case "artifact" -> "生成结果卡片";
+                case "confirm_required" -> "等待确认";
+                case "memory_commit" -> "提交长期记忆";
+                default -> eventName;
+            };
+        }
+        String detail = stringValue(payload.get("detail"));
+        if (detail.isBlank()) {
+            detail = stringValue(payload.get("summary"));
+        }
+        if ("intent".equals(eventName) && detail.isBlank()) {
+            List<String> parts = new ArrayList<>();
+            addIfPresent(parts, payload.get("primary_intent"));
+            addIfPresent(parts, payload.get("operation_type"));
+            if (Boolean.TRUE.equals(payload.get("requires_confirmation"))) {
+                parts.add("需要确认");
+            }
+            detail = String.join(" · ", parts);
+        }
+
+        String state = stringValue(payload.get("state"));
+        if (state.isBlank()) {
+            state = "confirm_required".equals(eventName) ? "pending" : "running";
+        }
+        if (finalizeRunning && "running".equals(state)) {
+            state = "completed";
+        }
+
+        operation.put("eventName", eventName);
+        operation.put("phase", firstNonBlank(
+                stringValue(payload.get("phase")),
+                stringValue(payload.get("domain")),
+                eventName
+        ));
+        operation.put("title", title);
+        operation.put("detail", detail);
+        operation.put("state", state);
+
+        Map<String, Object> meta = new LinkedHashMap<>();
+        putIfPresent(meta, "primaryIntent", payload.get("primary_intent"));
+        putIfPresent(meta, "domain", payload.get("domain"));
+        putIfPresent(meta, "operationType", payload.get("operation_type"));
+        putIfPresent(meta, "confidence", payload.get("confidence"));
+        putIfPresent(meta, "requiresConfirmation", payload.get("requires_confirmation"));
+        operation.put("meta", meta);
+        return operation;
+    }
+
+    String buildUiMetadataJson(List<Map<String, Object>> operations, List<Object> artifacts) {
+        boolean hasOperations = operations != null && !operations.isEmpty();
+        boolean hasArtifacts = artifacts != null && !artifacts.isEmpty();
+        if (!hasOperations && !hasArtifacts) {
+            return null;
+        }
+        Map<String, Object> metadata = new LinkedHashMap<>();
+        metadata.put("operations", hasOperations ? operations : List.of());
+        metadata.put("artifacts", hasArtifacts ? artifacts : List.of());
+        try {
+            return objectMapper.writeValueAsString(metadata);
+        } catch (Exception e) {
+            log.warn("序列化 AI UI 元数据失败: {}", e.getMessage());
+            return null;
+        }
+    }
+
+    private String firstNonBlank(String... values) {
+        for (String value : values) {
+            if (value != null && !value.isBlank()) {
+                return value;
+            }
+        }
+        return "";
+    }
+
+    private void addIfPresent(List<String> target, Object value) {
+        String text = stringValue(value);
+        if (!text.isBlank()) {
+            target.add(text);
+        }
+    }
+
+    private void putIfPresent(Map<String, Object> target, String key, Object value) {
+        if (value != null) {
+            target.put(key, value);
+        }
     }
 
     User findUserOrThrow(Long userId) {
