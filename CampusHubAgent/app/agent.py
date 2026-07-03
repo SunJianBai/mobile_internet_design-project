@@ -1333,6 +1333,16 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "资料",
         "信息",
     )
+    generic_read_cues = generic_read_cues + (
+        "search",
+        "find",
+        "browse",
+        "look up",
+        "show me",
+        "check",
+        "view",
+        "list",
+    )
     if _looks_like_companion_search(text):
         return {
             "primary_intent": "order.search",
@@ -1366,11 +1376,25 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         }
 
     negated_content_write = _has_any(text, ("不要发布动态", "别发布动态", "不用发布动态", "不要发动态", "别发动态", "不用发动态"))
+    english_content_read = _has_any(lowered, generic_read_cues) and _has_any(
+        lowered,
+        (
+            "post",
+            "posts",
+            "campus post",
+            "campus posts",
+            "feed",
+            "campus feed",
+            "timeline",
+            "content",
+        ),
+    )
     if (
-        _has_any(text, generic_read_cues)
-        and _has_any(text, ("动态", "帖子", "评论区", "校园圈"))
-        and not (negated_content_write and _has_any(text, ("店", "地方", "地点", "附近", "密室", "商家")))
-    ):
+        (
+            _has_any(text, generic_read_cues)
+            and _has_any(text, ("动态", "帖子", "评论区", "校园圈"))
+        ) or english_content_read
+    ) and not (negated_content_write and _has_any(text, ("店", "地方", "地点", "附近", "密室", "商家"))):
         return {
             "primary_intent": "content.search",
             "domain": "content",
@@ -1516,6 +1540,135 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
     return None
 
 
+def _recent_history_has_confirmation_draft(history: list) -> bool:
+    recent = "\n".join(str(item.get("content", "")) for item in (history or [])[-6:] if isinstance(item, dict))
+    if not recent:
+        return False
+    return _has_any(
+        recent,
+        (
+            "草稿",
+            "待确认",
+            "确认草稿",
+            "确认创建",
+            "确认发布",
+            "确认执行",
+            "confirm",
+            "confirmation",
+            "draft",
+        ),
+    )
+
+
+def _looks_like_new_business_request(text: str) -> bool:
+    return _has_any(
+        text,
+        (
+            "搜索",
+            "搜一下",
+            "查一下",
+            "看看",
+            "推荐",
+            "找",
+            "创建",
+            "发布",
+            "报名",
+            "申请",
+            "评论",
+            "点赞",
+            "记住",
+            "地图",
+            "天气",
+            "订单",
+            "动态",
+            "search",
+            "find",
+            "recommend",
+            "create",
+            "publish",
+            "apply",
+            "comment",
+            "like",
+            "remember",
+            "map",
+            "weather",
+            "order",
+        ),
+    )
+
+
+def _detect_draft_cancel_shortcut(history: list, user_message: str) -> dict | None:
+    """Treat draft cancellation as a safe direct answer, not as a write action."""
+    text = " ".join(str(user_message or "").split())
+    if not text or not _recent_history_has_confirmation_draft(history):
+        return None
+
+    lower_text = text.lower()
+    cancel_cues = (
+        "取消这个草稿",
+        "取消草稿",
+        "这个草稿取消",
+        "先取消",
+        "先算了",
+        "算了",
+        "不用了",
+        "不发了",
+        "不发布了",
+        "不创建了",
+        "别发了",
+        "别发布了",
+        "别创建了",
+        "先不发",
+        "先不发布",
+        "先不创建",
+        "cancel this draft",
+        "cancel the draft",
+        "drop this draft",
+        "discard this draft",
+        "never mind",
+        "nevermind",
+        "forget it",
+        "do not publish",
+        "don't publish",
+        "do not create",
+        "don't create",
+    )
+    destructive_cancel_targets = (
+        "取消点赞",
+        "取消报名",
+        "取消申请",
+        "取消订单",
+        "取消活动",
+        "unlike",
+        "cancel my application",
+        "cancel order",
+    )
+    if _has_any(lower_text, destructive_cancel_targets):
+        return None
+    if not _has_any(lower_text, cancel_cues):
+        return None
+    residual_text = lower_text
+    for cue in cancel_cues:
+        residual_text = residual_text.replace(cue, " ")
+    if _looks_like_new_business_request(residual_text):
+        return None
+
+    return {
+        "primary_intent": "chat.general",
+        "domain": "general",
+        "operation_type": "read",
+        "requires_confirmation": False,
+        "confidence": 0.9,
+        "summary": "用户取消了上一条待确认草稿",
+        "missing_slots": [],
+        "suggested_agents": ["general"],
+        "next_action": "direct_answer",
+        "reviewed": False,
+        "draft_cancel_shortcut": True,
+        "router_timeout": False,
+    }
+
+
 def _detect_draft_edit_shortcut(history: list, user_message: str) -> dict | None:
     """Keep draft edits in the original write domain without another slow router round."""
     text = " ".join(str(user_message or "").split())
@@ -1527,7 +1680,7 @@ def _detect_draft_edit_shortcut(history: list, user_message: str) -> dict | None
         return None
 
     recent = "\n".join(str(item.get("content", "")) for item in (history or [])[-6:])
-    if not _has_any(recent, ("草稿", "待确认", "确认草稿", "确认创建", "确认发布", "确认执行")):
+    if not _recent_history_has_confirmation_draft(history):
         return None
 
     if _has_any(recent, ("动态", "帖子", "发布")):
@@ -1971,6 +2124,25 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
             "phase": "intent_safety",
             "title": "识别明确安全路径",
             "detail": detail,
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
+    draft_cancel_analysis = _detect_draft_cancel_shortcut(history, user_message)
+    if draft_cancel_analysis:
+        analysis = _normalize_intent_analysis(draft_cancel_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_draft_cancel",
+            "title": "取消待确认草稿",
+            "detail": "识别到用户放弃上一条草稿，本轮不会执行创建、发布或报名等写操作",
             "state": "completed",
         })
         await _emit_event("intent", {

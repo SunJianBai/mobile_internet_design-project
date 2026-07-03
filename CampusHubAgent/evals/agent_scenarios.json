@@ -169,6 +169,19 @@
       }
     },
     {
+      "id": "content_search_english_posts",
+      "category": "content_read",
+      "message": "search recent campus posts about library study, no comment or publish",
+      "expect": {
+        "primary_intent": "content.search",
+        "domain": "content",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools",
+        "max_duration_ms": 1000
+      }
+    },
+    {
       "id": "content_create_dynamic",
       "category": "content_write",
       "message": "帮我发一条动态：今晚七点图书馆二楼自习，欢迎同学一起加入",
@@ -357,6 +370,28 @@
         "domain": "content",
         "operation_type": "write",
         "requires_confirmation": true
+      }
+    },
+    {
+      "id": "draft_cancel_context",
+      "category": "draft_followup",
+      "message": "never mind, cancel this draft for now",
+      "history": [
+        {
+          "role": "user",
+          "content": "Help me draft a study group post for tonight, but ask me before publishing."
+        },
+        {
+          "role": "assistant",
+          "content": "Draft confirmation: campus post draft. Please confirm or edit before execution."
+        }
+      ],
+      "expect": {
+        "primary_intent": "chat.general",
+        "domain": "general",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "direct_answer"
       }
     },
     {

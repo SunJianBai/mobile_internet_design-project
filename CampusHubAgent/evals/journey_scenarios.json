@@ -168,6 +168,44 @@
           }
         }
       ]
+    },
+    {
+      "id": "draft_cancel_then_read_pivot",
+      "persona": "Cancels a pending draft and pivots to a read-only search",
+      "initial_history": [
+        {
+          "role": "user",
+          "content": "Help me draft a study group post for tonight, but ask me before publishing."
+        },
+        {
+          "role": "assistant",
+          "content": "Draft confirmation: campus post draft. Please confirm or edit before execution."
+        }
+      ],
+      "turns": [
+        {
+          "message": "never mind, cancel this draft for now",
+          "expect": {
+            "primary_intent": "chat.general",
+            "domain": "general",
+            "operation_type": "read",
+            "requires_confirmation": false,
+            "next_action": "direct_answer",
+            "markers": ["draft_cancel_shortcut"]
+          },
+          "assistant_context": "已取消上一条待确认草稿，本轮不会执行发布操作。"
+        },
+        {
+          "message": "search recent campus posts about library study, no comment or publish",
+          "expect": {
+            "primary_intent": "content.search",
+            "domain": "content",
+            "operation_type": "read",
+            "requires_confirmation": false,
+            "next_action": "execute_read_tools"
+          }
+        }
+      ]
     }
   ]
 }
