@@ -45,6 +45,31 @@
           <view class="assistant-bubble">
             <view v-if="msg.operations && msg.operations.length" class="operation-timeline">
               <view
+                v-for="overview in [getOperationOverview(msg)]"
+                :key="`${msg.mid || msg.localId || 'msg'}-overview`"
+                class="operation-overview"
+                :class="overview.state"
+              >
+                <view class="operation-overview-main">
+                  <view class="overview-status-dot" :class="overview.state"></view>
+                  <view class="overview-copy">
+                    <text class="overview-kicker">{{ overview.kicker }}</text>
+                    <text class="overview-title">{{ overview.title }}</text>
+                    <text v-if="overview.detail" class="overview-detail">{{ overview.detail }}</text>
+                  </view>
+                </view>
+                <view class="overview-metrics">
+                  <view v-for="metric in overview.metrics" :key="metric.label" class="overview-metric">
+                    <text class="overview-metric-label">{{ metric.label }}</text>
+                    <text class="overview-metric-value">{{ metric.value }}</text>
+                  </view>
+                </view>
+              </view>
+              <view v-if="!msg.loading && msg.content" class="operation-summary-head">
+                <text>执行摘要</text>
+                <text>{{ msg.operations.length }} 步</text>
+              </view>
+              <view
                 v-for="(operation, opIndex) in msg.operations"
                 :key="`${msg.mid || msg.localId || 'msg'}-${opIndex}`"
                 class="operation-step"
@@ -391,6 +416,32 @@ const AGENT_EVENT_TITLES = {
   status: '处理中'
 }
 
+const OPERATION_PHASE_LABELS = {
+  intent: '意图',
+  router: '路由',
+  planning: '规划',
+  order: '订单',
+  content: '动态',
+  map: '地图',
+  weather: '天气',
+  memory: '记忆',
+  response: '回复',
+  delegation_guard: '防循环',
+  tool_call: '工具',
+  tool_start: '工具',
+  tool_result: '工具',
+  artifact: '卡片',
+  confirm_required: '确认',
+  status: '状态'
+}
+
+const OPERATION_STATE_LABELS = {
+  running: '执行中',
+  pending: '待确认',
+  completed: '已完成',
+  failed: '异常'
+}
+
 const parseAgentEventData = (data) => {
   if (!data) return {}
   if (typeof data !== 'string') return data
@@ -422,7 +473,55 @@ const normalizeAgentOperation = (eventName, data) => {
     phase: payload.phase || payload.domain || eventName,
     title,
     detail,
-    state: payload.state || (eventName === 'confirm_required' ? 'pending' : 'running')
+    state: payload.state || (eventName === 'confirm_required' ? 'pending' : 'running'),
+    meta: {
+      primaryIntent: payload.primary_intent,
+      domain: payload.domain,
+      operationType: payload.operation_type,
+      confidence: payload.confidence,
+      requiresConfirmation: payload.requires_confirmation
+    }
+  }
+}
+
+const getOperationPhaseLabel = (phase) => {
+  const key = String(phase || '').toLowerCase()
+  return OPERATION_PHASE_LABELS[key] || phase || '执行'
+}
+
+const getOperationOverview = (message) => {
+  const operations = Array.isArray(message?.operations) ? message.operations : []
+  const intentOperation = operations.find(item => item.eventName === 'intent' || item.meta?.primaryIntent)
+  const failedCount = operations.filter(item => item.state === 'failed').length
+  const pendingCount = operations.filter(item => item.state === 'pending').length
+  const completedCount = operations.filter(item => (item.state || 'running') === 'completed').length
+  const needsConfirmation = pendingCount > 0 || (message?.artifacts || []).some(item => item.type === 'confirmation')
+  const state = failedCount
+    ? 'failed'
+    : (needsConfirmation ? 'pending' : (message?.loading ? 'running' : 'completed'))
+  const latestActive = [...operations].reverse().find(item => ['running', 'pending'].includes(item.state))
+  const latestCompleted = [...operations].reverse().find(item => item.state === 'completed')
+  const latest = state === 'completed'
+    ? (latestCompleted || operations[operations.length - 1] || {})
+    : (latestActive || latestCompleted || operations[operations.length - 1] || {})
+  const intentLabel = intentOperation?.meta?.primaryIntent || intentOperation?.phase || '识别中'
+  const confidence = intentOperation?.meta?.confidence
+  const effectiveCompletedCount = state === 'completed' ? operations.length : completedCount
+  const metrics = [
+    { label: '阶段', value: getOperationPhaseLabel(latest.phase || latest.eventName) },
+    { label: '进度', value: `${effectiveCompletedCount}/${operations.length || 1}` }
+  ]
+  if (intentLabel) metrics.push({ label: '意图', value: intentLabel })
+  if (typeof confidence === 'number') metrics.push({ label: '置信度', value: `${Math.round(confidence * 100)}%` })
+  if (needsConfirmation) metrics.push({ label: '确认', value: '需要确认' })
+  if (failedCount) metrics.push({ label: '异常', value: `${failedCount} 步` })
+
+  return {
+    state,
+    kicker: OPERATION_STATE_LABELS[state] || '执行中',
+    title: latest.title || (message?.loading ? '正在处理你的请求' : '执行已完成'),
+    detail: latest.detail || (needsConfirmation ? '请检查确认卡片后再决定是否执行。' : ''),
+    metrics: metrics.slice(0, 5)
   }
 }
 
@@ -1852,6 +1951,159 @@ onUnmounted(detachActiveStream)
   background: #f8fafc;
 }
 
+.operation-overview {
+  display: flex;
+  align-items: stretch;
+  justify-content: space-between;
+  gap: 16rpx;
+  padding: 18rpx;
+  margin-bottom: 12rpx;
+  border: 1rpx solid #dbeafe;
+  border-radius: 14rpx;
+  background: linear-gradient(135deg, #eff6ff 0%, #f8fbff 100%);
+}
+
+.operation-overview.completed {
+  border-color: #bbf7d0;
+  background: linear-gradient(135deg, #ecfdf5 0%, #f8fffb 100%);
+}
+
+.operation-overview.pending {
+  border-color: #fed7aa;
+  background: linear-gradient(135deg, #fff7ed 0%, #fffaf5 100%);
+}
+
+.operation-overview.failed {
+  border-color: #fecaca;
+  background: linear-gradient(135deg, #fef2f2 0%, #fffafa 100%);
+}
+
+.operation-overview-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  align-items: flex-start;
+  gap: 14rpx;
+}
+
+.overview-status-dot {
+  flex: 0 0 16rpx;
+  width: 16rpx;
+  height: 16rpx;
+  margin-top: 10rpx;
+  border-radius: 999rpx;
+  background: #2563eb;
+  box-shadow: 0 0 0 8rpx rgba(37, 99, 235, 0.12);
+}
+
+.overview-status-dot.completed {
+  background: #16a34a;
+  box-shadow: 0 0 0 8rpx rgba(22, 163, 74, 0.12);
+}
+
+.overview-status-dot.pending {
+  background: #d97706;
+  box-shadow: 0 0 0 8rpx rgba(217, 119, 6, 0.12);
+}
+
+.overview-status-dot.failed {
+  background: #dc2626;
+  box-shadow: 0 0 0 8rpx rgba(220, 38, 38, 0.12);
+}
+
+.overview-copy {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4rpx;
+}
+
+.overview-kicker {
+  color: #2563eb;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 1.25;
+}
+
+.operation-overview.completed .overview-kicker {
+  color: #15803d;
+}
+
+.operation-overview.pending .overview-kicker {
+  color: #b45309;
+}
+
+.operation-overview.failed .overview-kicker {
+  color: #b91c1c;
+}
+
+.overview-title {
+  color: #172033;
+  font-size: 25rpx;
+  font-weight: 900;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.overview-detail {
+  color: #64748b;
+  font-size: 21rpx;
+  line-height: 1.45;
+  word-break: break-word;
+}
+
+.overview-metrics {
+  flex: 0 0 auto;
+  max-width: 46%;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-content: flex-start;
+  gap: 8rpx;
+}
+
+.overview-metric {
+  min-width: 92rpx;
+  padding: 8rpx 10rpx;
+  border: 1rpx solid rgba(148, 163, 184, 0.2);
+  border-radius: 12rpx;
+  background: rgba(255, 255, 255, 0.72);
+  display: flex;
+  flex-direction: column;
+  gap: 2rpx;
+}
+
+.overview-metric-label {
+  color: #64748b;
+  font-size: 18rpx;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.overview-metric-value {
+  max-width: 150rpx;
+  color: #172033;
+  font-size: 20rpx;
+  font-weight: 900;
+  line-height: 1.25;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.operation-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+  padding: 0 0 12rpx;
+  margin-bottom: 4rpx;
+  border-bottom: 1rpx solid #edf2f7;
+  color: #475569;
+  font-size: 22rpx;
+  font-weight: 900;
+}
+
 .operation-step {
   display: flex;
   gap: 14rpx;
@@ -3245,6 +3497,21 @@ onUnmounted(detachActiveStream)
   }
 }
 
+@media screen and (max-width: 520px) {
+  .operation-overview {
+    flex-direction: column;
+  }
+
+  .overview-metrics {
+    max-width: none;
+    justify-content: flex-start;
+  }
+
+  .overview-metric-value {
+    max-width: 210rpx;
+  }
+}
+
 @media (hover: hover) {
   .tool-btn.subtle:hover,
   .top-action:hover,
@@ -3322,7 +3589,45 @@ onUnmounted(detachActiveStream)
     color: #e0e7ff;
   }
 
+  .operation-overview {
+    background: linear-gradient(135deg, rgba(37, 99, 235, 0.18) 0%, rgba(23, 34, 53, 0.96) 100%);
+    border-color: rgba(96, 165, 250, 0.28);
+  }
+
+  .operation-overview.completed {
+    background: linear-gradient(135deg, rgba(22, 163, 74, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%);
+    border-color: rgba(74, 222, 128, 0.24);
+  }
+
+  .operation-overview.pending {
+    background: linear-gradient(135deg, rgba(217, 119, 6, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%);
+    border-color: rgba(251, 191, 36, 0.26);
+  }
+
+  .operation-overview.failed {
+    background: linear-gradient(135deg, rgba(220, 38, 38, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%);
+    border-color: rgba(248, 113, 113, 0.26);
+  }
+
+  .overview-kicker {
+    color: #93c5fd;
+  }
+
+  .operation-overview.completed .overview-kicker {
+    color: #86efac;
+  }
+
+  .operation-overview.pending .overview-kicker {
+    color: #fbbf24;
+  }
+
+  .operation-overview.failed .overview-kicker {
+    color: #fca5a5;
+  }
+
   .operation-title,
+  .overview-title,
+  .overview-metric-value,
   .artifact-title,
   .artifact-field-value,
   .plan-step-title,
@@ -3341,6 +3646,9 @@ onUnmounted(detachActiveStream)
   }
 
   .operation-detail,
+  .overview-detail,
+  .overview-metric-label,
+  .operation-summary-head,
   .artifact-description,
   .artifact-field-label,
   .artifact-highlight text:first-child,
@@ -3369,9 +3677,15 @@ onUnmounted(detachActiveStream)
   }
 
   .operation-step + .operation-step,
+  .operation-summary-head,
   .memory-header,
   .memory-item {
     border-color: rgba(148, 163, 184, 0.16);
+  }
+
+  .overview-metric {
+    background: rgba(15, 23, 42, 0.46);
+    border-color: rgba(148, 163, 184, 0.18);
   }
 
   .artifact-field,
