@@ -475,13 +475,19 @@
     <view v-if="showMemoryPanel" class="memory-mask" @click="closeMemoryPanel"></view>
     <view v-if="showMemoryPanel" class="memory-panel">
       <view class="memory-header">
-        <view class="memory-heading">
-          <text class="memory-title">AI 记忆</text>
-          <text class="memory-subtitle">{{ memoryPanelSubtitle }}</text>
+        <view class="memory-heading-row">
+          <view class="memory-heading">
+            <text class="memory-title">AI 记忆</text>
+            <text class="memory-subtitle">{{ memoryPanelSubtitle }}</text>
+          </view>
+          <view class="memory-close-btn" hover-class="memory-icon-btn-hover" @click="closeMemoryPanel">
+            <text>关闭</text>
+          </view>
         </view>
         <view class="memory-actions">
-          <button class="memory-icon-btn" hover-class="memory-icon-btn-hover" :disabled="memoryLoading" @click.stop="loadMemories">刷新</button>
-          <button class="memory-icon-btn ghost" hover-class="memory-icon-btn-hover" @click="closeMemoryPanel">关闭</button>
+          <view class="memory-icon-btn" :class="{ disabled: memoryLoading }" hover-class="memory-icon-btn-hover" @click.stop="loadMemories">
+            <text>刷新</text>
+          </view>
         </view>
       </view>
       <scroll-view class="memory-list" scroll-y>
@@ -507,12 +513,14 @@
         </view>
         <view v-for="mem in memories" :key="mem.memId || mem.id" class="memory-item">
           <view class="memory-main">
-            <text class="memory-tag">{{ mem.category || '偏好' }}</text>
+            <view class="memory-item-head">
+              <text class="memory-tag">{{ mem.category || '偏好' }}</text>
+              <view class="memory-delete" :class="{ disabled: deletingMemoryId === (mem.memId || mem.id) }" hover-class="memory-delete-hover" @click="deleteMemory(mem)">
+                <text>{{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}</text>
+              </view>
+            </view>
             <text class="memory-content">{{ mem.content }}</text>
           </view>
-          <button class="memory-delete" hover-class="memory-delete-hover" :disabled="deletingMemoryId === (mem.memId || mem.id)" @click="deleteMemory(mem)">
-            {{ deletingMemoryId === (mem.memId || mem.id) ? '...' : '删除' }}
-          </button>
         </view>
       </scroll-view>
     </view>
@@ -1817,6 +1825,7 @@ const sendMessage = async () => {
 }
 
 const loadMemories = async () => {
+  if (memoryLoading.value) return
   memoryLoading.value = true
   memoryError.value = ''
   try {
@@ -4478,11 +4487,13 @@ onUnmounted(detachActiveStream)
 .memory-header {
   min-height: 112rpx;
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 18rpx;
+  align-items: stretch;
+  flex-direction: column;
+  justify-content: center;
+  gap: 16rpx;
   padding: 20rpx 28rpx;
   border-bottom: 1rpx solid rgba(226, 232, 240, 0.9);
+  box-sizing: border-box;
 }
 
 .memory-heading {
@@ -4490,6 +4501,15 @@ onUnmounted(detachActiveStream)
   display: flex;
   flex-direction: column;
   gap: 6rpx;
+}
+
+.memory-heading-row {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14rpx;
 }
 
 .memory-title {
@@ -4507,23 +4527,45 @@ onUnmounted(detachActiveStream)
 }
 
 .memory-actions {
-  flex: 0 0 auto;
+  width: 100%;
   display: flex;
   align-items: center;
   gap: 10rpx;
+  justify-content: flex-end;
 }
 
 .memory-icon-btn {
-  height: 56rpx;
-  min-width: 84rpx;
+  flex: 0 0 auto;
+  width: 132rpx;
+  height: 64rpx;
   padding: 0 18rpx;
   border: 1rpx solid #dbeafe;
   border-radius: 14rpx;
   background: #edf4ff;
   color: #1f447a;
-  font-size: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 26rpx;
   font-weight: 900;
-  line-height: 54rpx;
+  line-height: 1.2;
+}
+
+.memory-close-btn {
+  flex: 0 0 auto;
+  width: 132rpx;
+  height: 60rpx;
+  padding: 0;
+  border: 1rpx solid #e2e8f0;
+  border-radius: 14rpx;
+  background: #ffffff;
+  color: #475467;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24rpx;
+  font-weight: 900;
+  line-height: 1.2;
 }
 
 .memory-icon-btn.ghost {
@@ -4532,11 +4574,13 @@ onUnmounted(detachActiveStream)
   border-color: #e2e8f0;
 }
 
-.memory-icon-btn[disabled] {
+.memory-icon-btn.disabled {
   opacity: 0.62;
+  pointer-events: none;
 }
 
 .memory-icon-btn::after,
+.memory-close-btn::after,
 .memory-retry::after,
 .memory-delete::after {
   border: none;
@@ -4644,8 +4688,9 @@ onUnmounted(detachActiveStream)
 
 .memory-item {
   display: flex;
+  flex-direction: column;
   align-items: flex-start;
-  gap: 16rpx;
+  gap: 14rpx;
   padding: 20rpx;
   margin-bottom: 14rpx;
   border: 1rpx solid rgba(226, 232, 240, 0.96);
@@ -4655,6 +4700,7 @@ onUnmounted(detachActiveStream)
 }
 
 .memory-main {
+  width: 100%;
   flex: 1;
   min-width: 0;
   display: flex;
@@ -4662,8 +4708,18 @@ onUnmounted(detachActiveStream)
   gap: 12rpx;
 }
 
+.memory-item-head {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12rpx;
+}
+
 .memory-tag {
-  align-self: flex-start;
+  flex: 1;
+  min-width: 0;
   max-width: 100%;
   padding: 5rpx 14rpx;
   border-radius: 999rpx;
@@ -4686,20 +4742,25 @@ onUnmounted(detachActiveStream)
 }
 
 .memory-delete {
-  width: 96rpx;
-  height: 52rpx;
+  flex: 0 0 auto;
+  width: 104rpx;
+  height: 56rpx;
   border: 1rpx solid transparent;
   border-radius: 14rpx;
   background: #fff1f0;
   color: #b42318;
-  font-size: 22rpx;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 24rpx;
   font-weight: 900;
-  line-height: 50rpx;
+  line-height: 1.2;
   padding: 0;
 }
 
-.memory-delete[disabled] {
+.memory-delete.disabled {
   opacity: 0.55;
+  pointer-events: none;
 }
 
 @keyframes memory-spin {
@@ -5134,6 +5195,7 @@ onUnmounted(detachActiveStream)
   .inline-map-control,
   .inline-map-open,
   .memory-icon-btn,
+  .memory-close-btn,
   .memory-retry,
   .markdown-body :deep(.map-card-action),
   .markdown-body :deep(.entity-link-card) {
@@ -5190,6 +5252,7 @@ onUnmounted(detachActiveStream)
   .inline-map-open:hover,
   .memory-icon-btn-hover,
   .memory-icon-btn:hover,
+  .memory-close-btn:hover,
   .memory-retry:hover {
     background: #1f2d44 !important;
     border-color: rgba(154, 184, 255, 0.38) !important;
