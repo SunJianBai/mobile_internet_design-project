@@ -247,11 +247,11 @@
                             <template v-else>
                               <button
                                 class="artifact-action primary"
-                                :disabled="sending || artifactHasMissingFields(artifact)"
-                                :title="artifactHasMissingFields(artifact) ? '请先点击修改草稿补充缺失信息' : ''"
-                                @click="handleArtifactAction(artifact, 'confirm')"
+                                :disabled="sending"
+                                :title="artifactHasMissingFields(artifact) ? '打开编辑器补充缺失信息' : ''"
+                                @click="handleArtifactAction(artifact, artifactHasMissingFields(artifact) ? 'edit' : 'confirm')"
                               >
-                                {{ artifactHasMissingFields(artifact) ? '补充后确认' : '确认执行' }}
+                                {{ artifactHasMissingFields(artifact) ? '补充信息' : '确认执行' }}
                               </button>
                               <button class="artifact-action" :disabled="sending" @click="handleArtifactAction(artifact, 'edit')">
                                 修改草稿
@@ -1028,6 +1028,18 @@ function handleArtifactAction(artifact, action) {
     return
   }
   if (action === 'confirm') {
+    if (artifactHasMissingFields(artifact)) {
+      artifact.editing = true
+      artifact.fields = (artifact.fields || []).map(field => ({
+        ...field,
+        editValue: field.editValue ?? (
+          ['未填写', '待补充'].includes(formatArtifactValue(field.value))
+            ? ''
+            : formatArtifactValue(field.value)
+        )
+      }))
+      return
+    }
     sendMessageText(buildArtifactConfirmMessage(artifact, false))
     return
   }

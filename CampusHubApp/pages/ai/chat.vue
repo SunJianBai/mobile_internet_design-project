@@ -177,8 +177,12 @@
                     <button class="artifact-action ghost" :disabled="isArtifactActionDisabled(artifact, 'cancel-edit')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel-edit')">退出编辑</button>
                   </template>
                   <template v-else>
-                    <button class="artifact-action primary" :disabled="isArtifactActionDisabled(artifact, 'confirm')" @click.stop.prevent="requestArtifactAction(artifact, 'confirm')">
-                      {{ artifactHasMissingFields(artifact) ? '补充后确认' : '确认执行' }}
+                    <button
+                      class="artifact-action primary"
+                      :disabled="isArtifactActionDisabled(artifact, artifactHasMissingFields(artifact) ? 'edit' : 'confirm')"
+                      @click.stop.prevent="requestArtifactAction(artifact, artifactHasMissingFields(artifact) ? 'edit' : 'confirm')"
+                    >
+                      {{ artifactHasMissingFields(artifact) ? '补充信息' : '确认执行' }}
                     </button>
                     <button class="artifact-action" :disabled="isArtifactActionDisabled(artifact, 'edit')" @click.stop.prevent="requestArtifactAction(artifact, 'edit')">修改草稿</button>
                     <button class="artifact-action ghost" :disabled="isArtifactActionDisabled(artifact, 'cancel')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel')">取消</button>
