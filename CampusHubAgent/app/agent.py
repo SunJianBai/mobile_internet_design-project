@@ -88,6 +88,8 @@ DOMAIN_TO_DELEGATION = {
     "user": "content",
 }
 
+DELEGATION_AGENT_ORDER = ("order", "content", "map")
+
 INTENT_ANALYSIS_PROMPT = """你是 CampusHub 的意图分析智能体。请基于用户消息、最近对话和用户信息判断请求类型。
 
 要求：
@@ -3047,6 +3049,41 @@ def _agent_display_name(agent_key: str) -> str:
     return labels.get(str(agent_key or ""), str(agent_key or "通用助手"))
 
 
+def _delegation_agent_display_name(agent_key: str) -> str:
+    labels = {
+        "order": "订单专家",
+        "content": "动态/用户专家",
+        "map": "地图天气专家",
+    }
+    return labels.get(str(agent_key or ""), str(agent_key or "通用助手"))
+
+
+def _ordered_delegation_agents(allowed_agents: set[str] | None) -> list[str]:
+    if not allowed_agents:
+        return []
+    ordered = [agent for agent in DELEGATION_AGENT_ORDER if agent in allowed_agents]
+    ordered.extend(sorted(agent for agent in allowed_agents if agent not in DELEGATION_AGENT_ORDER))
+    return ordered
+
+
+def _delegation_guard_display(intent_analysis: dict) -> str:
+    allowed_agents = _build_allowed_delegation_agents(intent_analysis)
+    ordered = _ordered_delegation_agents(allowed_agents)
+    if not ordered:
+        return "无需子专家委派"
+    names = "、".join(_delegation_agent_display_name(agent) for agent in ordered)
+    return f"仅允许：{names}"
+
+
+def _delegation_guard_detail(intent_analysis: dict) -> str:
+    allowed_agents = _build_allowed_delegation_agents(intent_analysis)
+    ordered = _ordered_delegation_agents(allowed_agents)
+    if not ordered:
+        return "本轮无需进入子专家委派，直接回答或等待确认"
+    names = "、".join(_delegation_agent_display_name(agent) for agent in ordered)
+    return f"如需进入专家委派，仅允许 {names}；计划外专家会被拦截"
+
+
 def _intent_display_name(primary_intent: str) -> str:
     labels = {
         "order.search": "查询约伴活动",
@@ -3091,6 +3128,11 @@ def _build_execution_plan_steps(intent_analysis: dict) -> list[dict]:
         "detail": f"{_intent_display_name(primary_intent)} · {_operation_display_name(operation_type)}",
         "state": "completed",
     }]
+    steps.append({
+        "title": "锁定本轮专家范围",
+        "detail": _delegation_guard_detail(intent_analysis),
+        "state": "completed",
+    })
 
     if primary_intent == "weather.query":
         steps.extend([
@@ -3155,6 +3197,7 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
                 "label": "专家",
                 "value": "、".join(_agent_display_name(agent) for agent in suggested_agents[:3]) or "无需额外专家",
             },
+            {"label": "调度守卫", "value": _delegation_guard_display(intent_analysis)},
         ],
         "steps": _build_execution_plan_steps(intent_analysis),
         "state": "running",
@@ -3162,6 +3205,7 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
             "primary_intent": primary_intent,
             "next_action": intent_analysis.get("next_action"),
             "requires_confirmation": requires_confirmation,
+            "allowed_delegation_agents": _ordered_delegation_agents(_build_allowed_delegation_agents(intent_analysis)),
         },
     }
 

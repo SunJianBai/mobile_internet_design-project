@@ -422,11 +422,18 @@ async def scenario_execution_plan_describes_tool_path() -> DirectReadResult:
     fields = {field.get("label"): field.get("value") for field in plan.get("fields", []) if isinstance(field, dict)}
     if fields.get("策略") != "确定性工具路径":
         failures.append(f"expected deterministic tool strategy, got {fields.get('策略')!r}")
+    if fields.get("调度守卫") != "仅允许：订单专家":
+        failures.append(f"expected order-only delegation guard, got {fields.get('调度守卫')!r}")
     titles = [step.get("title") for step in plan.get("steps", []) if isinstance(step, dict)]
+    if "锁定本轮专家范围" not in titles:
+        failures.append("plan should include the delegation guard step")
     if "查询约伴活动" not in titles:
         failures.append("plan should include an order query step")
     if "生成订单结果卡" not in titles:
         failures.append("plan should include a result-card step")
+    intent = plan.get("intent") if isinstance(plan.get("intent"), dict) else {}
+    if intent.get("allowed_delegation_agents") != ["order"]:
+        failures.append(f"expected allowed_delegation_agents ['order'], got {intent.get('allowed_delegation_agents')!r}")
     return DirectReadResult("execution_plan_describes_tool_path", not failures, failures, {"plan": plan})
 
 
