@@ -3121,6 +3121,22 @@ def _format_order_result_preview(orders: list[dict], limit: int = 3) -> str:
     return "；".join(previews)
 
 
+def _build_order_result_items(orders: list[dict], limit: int = 3) -> list[dict]:
+    items = []
+    for order in orders[:limit]:
+        order_id = order.get("id")
+        title = " · ".join(part for part in [f"订单#{order_id}" if order_id else "", order.get("activity")] if part)
+        subtitle = " · ".join(part for part in [order.get("location"), order.get("time")] if part)
+        items.append({
+            "title": title or "约伴订单",
+            "subtitle": subtitle or "地点和时间待查看详情",
+            "meta": order.get("people") or "人数待查看",
+            "badge": order.get("campus_or_status") or "约伴",
+            "route": f"/orders/{order_id}" if order_id else "",
+        })
+    return items
+
+
 def _build_order_result_artifact(order_text: str, args: dict, user_message: str, intent_analysis: dict) -> dict | None:
     orders = _parse_order_result_lines(order_text)
     if not orders:
@@ -3178,6 +3194,7 @@ def _build_order_result_artifact(order_text: str, args: dict, user_message: str,
         if part
     )
     result_preview = _format_order_result_preview(orders)
+    result_items = _build_order_result_items(orders)
     draft_prompt = (
         f"参考刚才查询到的{scope}约伴活动，帮我整理一个新的约伴订单草稿。"
         "如果还缺少地点、时间、人数等必要信息，请先追问；不要直接发布。"
@@ -3199,6 +3216,7 @@ def _build_order_result_artifact(order_text: str, args: dict, user_message: str,
             {"label": "第一条", "value": f"订单#{first.get('id')} · {first_summary}"},
             {"label": "安全策略", "value": "查看可直接跳转，报名/创建需确认"},
         ],
+        "items": result_items,
         "actions": [
             {
                 "label": f"打开订单#{first.get('id')}",
@@ -3268,6 +3286,23 @@ def _format_content_result_preview(contents: list[dict], limit: int = 3) -> str:
     return "；".join(previews)
 
 
+def _build_content_result_items(contents: list[dict], limit: int = 3) -> list[dict]:
+    items = []
+    for content in contents[:limit]:
+        content_id = content.get("id")
+        text = content.get("text") or "无正文预览"
+        if len(text) > 42:
+            text = f"{text[:42]}..."
+        items.append({
+            "title": " · ".join(part for part in [f"动态#{content_id}" if content_id else "", content.get("author") or "匿名"] if part),
+            "subtitle": text,
+            "meta": "查看详情",
+            "badge": "动态",
+            "route": f"/contents/{content_id}" if content_id else "",
+        })
+    return items
+
+
 def _build_content_result_artifact(content_text: str, keyword: str, intent_analysis: dict) -> dict | None:
     contents = _parse_content_result_lines(content_text)
     if not contents:
@@ -3311,6 +3346,7 @@ def _build_content_result_artifact(content_text: str, keyword: str, intent_analy
     if len(first_text) > 48:
         first_text = f"{first_text[:48]}..."
     result_preview = _format_content_result_preview(contents)
+    result_items = _build_content_result_items(contents)
 
     return {
         "type": "content",
@@ -3323,6 +3359,7 @@ def _build_content_result_artifact(content_text: str, keyword: str, intent_analy
             {"label": "第一条", "value": f"动态#{first.get('id')} · {first.get('author')}"},
             {"label": "摘要", "value": first_text},
         ],
+        "items": result_items,
         "actions": [
             {
                 "label": f"打开动态#{first.get('id')}",

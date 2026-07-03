@@ -81,6 +81,25 @@
                     <text class="artifact-highlight-value">{{ highlight.value }}</text>
                   </view>
                 </view>
+                <view v-if="artifact.items && artifact.items.length" class="artifact-result-list">
+                  <button
+                    v-for="(item, itemIndex) in artifact.items"
+                    :key="`${artifactIndex}-item-${itemIndex}`"
+                    class="artifact-result-item"
+                    hover-class="artifact-result-item-hover"
+                    :disabled="loading || !artifactItemHasAction(item)"
+                    @click="handleArtifactItemAction(item)"
+                  >
+                    <view class="artifact-result-main">
+                      <view class="artifact-result-title-row">
+                        <text v-if="item.badge" class="artifact-result-badge">{{ item.badge }}</text>
+                        <text class="artifact-result-title">{{ item.title || '结果项' }}</text>
+                      </view>
+                      <text v-if="item.subtitle" class="artifact-result-subtitle">{{ item.subtitle }}</text>
+                    </view>
+                    <text v-if="item.meta" class="artifact-result-meta">{{ item.meta }}</text>
+                  </button>
+                </view>
                 <view v-if="artifact.type === 'plan' && artifact.steps && artifact.steps.length" class="plan-step-list">
                   <view
                     v-for="(step, stepIndex) in artifact.steps"
@@ -421,7 +440,7 @@ const truncateArtifactValue = (value, maxLength = 18) => {
 
 const getArtifactHighlights = (artifact) => {
   if (!['guide', 'weather', 'order', 'content', 'plan'].includes(artifact?.type)) return []
-  const lowPriorityLabels = ['安全策略', '写操作保护', '摘要', '建议', '下一步']
+  const lowPriorityLabels = ['安全策略', '写操作保护', '摘要', '建议', '下一步', '结果预览']
   const fields = (artifact?.fields || [])
     .filter(field => field && field.label && !field.missing && !['未填写', '待补充'].includes(formatArtifactValue(field.value)))
   const primaryFields = fields.filter(field => !lowPriorityLabels.includes(String(field.label)))
@@ -807,7 +826,8 @@ const refreshArtifactMessages = () => {
             ? artifact.fields.map(field => ({ ...field }))
             : artifact.fields,
           actions: Array.isArray(artifact.actions) ? [...artifact.actions] : artifact.actions,
-          steps: Array.isArray(artifact.steps) ? [...artifact.steps] : artifact.steps
+          steps: Array.isArray(artifact.steps) ? [...artifact.steps] : artifact.steps,
+          items: Array.isArray(artifact.items) ? artifact.items.map(item => ({ ...item })) : artifact.items
         }))
       : message.artifacts
   }))
@@ -924,6 +944,15 @@ const handleArtifactPromptAction = (action) => {
   if (prompt) {
     sendMessageText(prompt)
   }
+}
+
+const artifactItemHasAction = (item) => {
+  return Boolean(String(item?.route || '').trim() || String(item?.prompt || '').trim())
+}
+
+const handleArtifactItemAction = (item) => {
+  if (!artifactItemHasAction(item)) return
+  handleArtifactPromptAction(item)
 }
 
 const getGuideActionHint = (prompt) => {
@@ -1986,6 +2015,97 @@ onUnmounted(detachActiveStream)
   white-space: nowrap;
 }
 
+.artifact-result-list {
+  display: flex;
+  flex-direction: column;
+  gap: 10rpx;
+  margin-top: 14rpx;
+}
+
+.artifact-result-item {
+  width: 100%;
+  min-height: 94rpx;
+  padding: 14rpx;
+  border: 1rpx solid rgba(148, 163, 184, 0.24);
+  border-radius: 14rpx;
+  background: rgba(255, 255, 255, 0.76);
+  color: #172033;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14rpx;
+  text-align: left;
+  line-height: 1.35;
+  box-shadow: none;
+}
+
+.artifact-result-item::after {
+  border: none;
+}
+
+.artifact-result-item[disabled] {
+  opacity: 0.72;
+}
+
+.artifact-result-item-hover {
+  background: #edf4ff !important;
+  border-color: #b6ccff !important;
+}
+
+.artifact-result-main {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 6rpx;
+}
+
+.artifact-result-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8rpx;
+}
+
+.artifact-result-badge {
+  flex: 0 0 auto;
+  padding: 4rpx 8rpx;
+  border-radius: 999rpx;
+  background: rgba(31, 68, 122, 0.1);
+  color: #1f447a;
+  font-size: 18rpx;
+  font-weight: 900;
+  line-height: 1.2;
+}
+
+.artifact-result-title {
+  min-width: 0;
+  color: #172033;
+  font-size: 24rpx;
+  font-weight: 900;
+  line-height: 1.35;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.artifact-result-subtitle {
+  color: #667085;
+  font-size: 21rpx;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
+.artifact-result-meta {
+  flex: 0 0 auto;
+  max-width: 120rpx;
+  color: #475467;
+  font-size: 20rpx;
+  font-weight: 800;
+  line-height: 1.3;
+  text-align: right;
+}
+
 .plan-step-list {
   display: flex;
   flex-direction: column;
@@ -2933,6 +3053,7 @@ onUnmounted(detachActiveStream)
   .top-action:hover,
   .picker-view:hover,
   .artifact-action:hover,
+  .artifact-result-item:hover,
   .starter-card:hover,
   .inline-map-control:hover,
   .inline-map-open:hover,
@@ -3057,6 +3178,7 @@ onUnmounted(detachActiveStream)
 
   .artifact-field,
   .artifact-highlight,
+  .artifact-result-item,
   .plan-step,
   .artifact-edit-input,
   .input {
@@ -3078,6 +3200,26 @@ onUnmounted(detachActiveStream)
 
   .artifact-highlight-value {
     color: #edf4ff;
+  }
+
+  .artifact-result-item-hover,
+  .artifact-result-item:hover {
+    background: #1f2d44 !important;
+    border-color: rgba(154, 184, 255, 0.38) !important;
+  }
+
+  .artifact-result-title {
+    color: #edf4ff;
+  }
+
+  .artifact-result-subtitle,
+  .artifact-result-meta {
+    color: #94a3b8;
+  }
+
+  .artifact-result-badge {
+    background: #223554;
+    color: #bfdbfe;
   }
 
   .plan-step-index {

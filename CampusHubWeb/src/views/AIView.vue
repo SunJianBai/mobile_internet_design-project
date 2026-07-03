@@ -168,6 +168,24 @@
                               <strong>{{ highlight.value }}</strong>
                             </div>
                           </div>
+                          <div v-if="artifact.items?.length" class="artifact-result-list">
+                            <button
+                              v-for="(item, itemIndex) in artifact.items"
+                              :key="`${artifactIndex}-item-${itemIndex}`"
+                              class="artifact-result-item"
+                              :disabled="sending || !artifactItemHasAction(item)"
+                              @click="handleArtifactItemAction(item)"
+                            >
+                              <span class="artifact-result-main">
+                                <span class="artifact-result-title-row">
+                                  <span v-if="item.badge" class="artifact-result-badge">{{ item.badge }}</span>
+                                  <span class="artifact-result-title">{{ item.title || '结果项' }}</span>
+                                </span>
+                                <span v-if="item.subtitle" class="artifact-result-subtitle">{{ item.subtitle }}</span>
+                              </span>
+                              <span v-if="item.meta" class="artifact-result-meta">{{ item.meta }}</span>
+                            </button>
+                          </div>
                           <div v-if="artifact.type === 'plan' && artifact.steps?.length" class="plan-step-list">
                             <div
                               v-for="(step, stepIndex) in artifact.steps"
@@ -919,7 +937,7 @@ function isActionCardArtifact(artifact) {
 
 function getArtifactHighlights(artifact) {
   if (!['guide', 'weather', 'order', 'content', 'plan'].includes(artifact?.type)) return []
-  const lowPriorityLabels = new Set(['安全策略', '写操作保护', '摘要', '建议', '下一步'])
+  const lowPriorityLabels = new Set(['安全策略', '写操作保护', '摘要', '建议', '下一步', '结果预览'])
   const fields = (artifact?.fields || [])
     .filter(field => field && field.label && !isArtifactFieldMissing(field))
   const primaryFields = fields.filter(field => !lowPriorityLabels.has(String(field.label)))
@@ -1027,6 +1045,15 @@ function handleArtifactPromptAction(action) {
   const prompt = String(action?.prompt || '').trim()
   if (!prompt) return
   sendMessageText(prompt)
+}
+
+function artifactItemHasAction(item) {
+  return Boolean(String(item?.route || '').trim() || String(item?.prompt || '').trim())
+}
+
+function handleArtifactItemAction(item) {
+  if (!artifactItemHasAction(item)) return
+  handleArtifactPromptAction(item)
 }
 
 function getGuideActionHint(prompt) {
@@ -2328,6 +2355,84 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.artifact-result-list {
+  display: grid;
+  gap: 8px;
+  margin-top: 10px;
+}
+.artifact-result-item {
+  width: 100%;
+  min-height: 58px;
+  padding: 9px 10px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.74);
+  color: #172033;
+  cursor: pointer;
+  text-align: left;
+  transition: border-color 0.15s, background 0.15s, transform 0.15s, box-shadow 0.15s;
+}
+.artifact-result-item:hover:not(:disabled) {
+  background: #f8fbff;
+  border-color: #93c5fd;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 18px rgba(37, 99, 235, 0.08);
+}
+.artifact-result-item:disabled {
+  opacity: 0.68;
+  cursor: default;
+}
+.artifact-result-main {
+  min-width: 0;
+  flex: 1;
+  display: grid;
+  gap: 3px;
+}
+.artifact-result-title-row {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.artifact-result-badge {
+  flex: 0 0 auto;
+  padding: 2px 6px;
+  border-radius: 999px;
+  background: rgba(37, 99, 235, 0.1);
+  color: #1d4ed8;
+  font-size: 10px;
+  font-weight: 900;
+  line-height: 1.35;
+}
+.artifact-result-title {
+  min-width: 0;
+  overflow: hidden;
+  color: #0f172a;
+  font-size: 13px;
+  font-weight: 800;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.artifact-result-subtitle {
+  color: #64748b;
+  font-size: 12px;
+  line-height: 1.35;
+  word-break: break-word;
+}
+.artifact-result-meta {
+  flex: 0 0 auto;
+  max-width: 86px;
+  color: #475569;
+  font-size: 11px;
+  font-weight: 800;
+  line-height: 1.25;
+  text-align: right;
+}
 .plan-step-list {
   display: grid;
   gap: 8px;
@@ -3374,6 +3479,7 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .artifact-field,
+:global(:root[data-theme='dark']) .artifact-result-item,
 :global(:root[data-theme='dark']) .plan-step,
 :global(:root[data-theme='dark']) .artifact-edit-field textarea {
   background: #101a2a;
@@ -3414,6 +3520,8 @@ onBeforeUnmount(() => {
 
 :global(:root[data-theme='dark']) .artifact-field-label,
 :global(:root[data-theme='dark']) .artifact-edit-field,
+:global(:root[data-theme='dark']) .artifact-result-subtitle,
+:global(:root[data-theme='dark']) .artifact-result-meta,
 :global(:root[data-theme='dark']) .plan-step-detail,
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-subtitle),
 :global(:root[data-theme='dark']) .markdown-body :deep(.execution-subtitle),
@@ -3447,11 +3555,21 @@ onBeforeUnmount(() => {
 }
 
 :global(:root[data-theme='dark']) .artifact-action:hover:not(:disabled),
+:global(:root[data-theme='dark']) .artifact-result-item:hover:not(:disabled),
 :global(:root[data-theme='dark']) .markdown-body :deep(.entity-link-card:hover),
 :global(:root[data-theme='dark']) .markdown-body :deep(.execution-result-card:hover) {
   background: #1f2d44;
   border-color: rgba(154, 184, 255, 0.38);
   color: #f8fbff;
+}
+
+:global(:root[data-theme='dark']) .artifact-result-title {
+  color: #edf4ff;
+}
+
+:global(:root[data-theme='dark']) .artifact-result-badge {
+  background: #223554;
+  color: #bfdbfe;
 }
 
 :global(:root[data-theme='dark']) .guide-action-card:hover:not(:disabled) {

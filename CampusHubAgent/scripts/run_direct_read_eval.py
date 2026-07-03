@@ -265,6 +265,12 @@ async def scenario_order_search_returns_result_artifact() -> DirectReadResult:
     preview = str(fields.get("结果预览") or "")
     if "订单#42" not in preview or "订单#43" not in preview:
         failures.append(f"expected order preview to include top results, got {preview!r}")
+    items = artifact.get("items") or []
+    if len(items) != 2:
+        failures.append(f"expected 2 structured order items, got {len(items)}")
+    item_routes = [item.get("route") for item in items if isinstance(item, dict)]
+    if "/orders/42" not in item_routes or "/orders/43" not in item_routes:
+        failures.append(f"expected order item routes, got {item_routes!r}")
     actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
     first_action = actions[0] if actions else {}
     if first_action.get("route") != "/orders/42":
@@ -351,6 +357,12 @@ async def scenario_content_search_returns_result_artifact() -> DirectReadResult:
     preview = str(fields.get("结果预览") or "")
     if "动态#77" not in preview or "动态#78" not in preview:
         failures.append(f"expected content preview to include top results, got {preview!r}")
+    items = artifact.get("items") or []
+    if len(items) != 2:
+        failures.append(f"expected 2 structured content items, got {len(items)}")
+    item_routes = [item.get("route") for item in items if isinstance(item, dict)]
+    if "/contents/77" not in item_routes or "/contents/78" not in item_routes:
+        failures.append(f"expected content item routes, got {item_routes!r}")
     actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
     first_action = actions[0] if actions else {}
     if first_action.get("route") != "/contents/77":
