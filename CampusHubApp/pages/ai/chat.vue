@@ -100,7 +100,7 @@
                     v-for="(field, fieldIndex) in artifact.fields"
                     :key="fieldIndex"
                     class="artifact-field"
-                    :class="{ missing: field.missing }"
+                    :class="{ missing: isArtifactFieldMissing(field) }"
                   >
                     <text class="artifact-field-label">{{ field.label }}</text>
                     <text class="artifact-field-value">{{ formatArtifactValue(field.value) }}</text>
@@ -118,19 +118,26 @@
                       class="artifact-edit-input"
                       auto-height
                       maxlength="500"
-                      :placeholder="field.missing ? '补充这个信息' : '修改内容'"
+                      :placeholder="isArtifactFieldMissing(field) ? '补充这个信息' : '修改内容'"
+                      @input="handleArtifactFieldInput(field, $event)"
                     />
+                  </view>
+                  <view v-if="artifactHasEmptyRequiredEdits(artifact)" class="artifact-edit-hint">
+                    请先补充缺失信息，再保存或确认执行。
                   </view>
                 </view>
                 <view v-if="artifact.type === 'confirmation'" class="artifact-actions">
                   <template v-if="artifact.editing">
-                    <button class="artifact-action primary" :disabled="loading" @click="handleArtifactAction(artifact, 'confirm-edited')">保存并确认</button>
-                    <button class="artifact-action ghost" :disabled="loading" @click="handleArtifactAction(artifact, 'cancel-edit')">退出编辑</button>
+                    <button class="artifact-action" :disabled="isArtifactActionDisabled(artifact, 'save-edit')" @click.stop.prevent="requestArtifactAction(artifact, 'save-edit')">保存修改</button>
+                    <button class="artifact-action primary" :disabled="isArtifactActionDisabled(artifact, 'confirm-edited')" @click.stop.prevent="requestArtifactAction(artifact, 'confirm-edited')">保存并确认</button>
+                    <button class="artifact-action ghost" :disabled="isArtifactActionDisabled(artifact, 'cancel-edit')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel-edit')">退出编辑</button>
                   </template>
                   <template v-else>
-                    <button class="artifact-action primary" :disabled="loading" @click="handleArtifactAction(artifact, 'confirm')">确认执行</button>
-                    <button class="artifact-action" :disabled="loading" @click="handleArtifactAction(artifact, 'edit')">修改草稿</button>
-                    <button class="artifact-action ghost" :disabled="loading" @click="handleArtifactAction(artifact, 'cancel')">取消</button>
+                    <button class="artifact-action primary" :disabled="isArtifactActionDisabled(artifact, 'confirm')" @click.stop.prevent="requestArtifactAction(artifact, 'confirm')">
+                      {{ artifactHasMissingFields(artifact) ? '补充后确认' : '确认执行' }}
+                    </button>
+                    <button class="artifact-action" :disabled="isArtifactActionDisabled(artifact, 'edit')" @click.stop.prevent="requestArtifactAction(artifact, 'edit')">修改草稿</button>
+                    <button class="artifact-action ghost" :disabled="isArtifactActionDisabled(artifact, 'cancel')" @click.stop.prevent="requestArtifactAction(artifact, 'cancel')">取消</button>
                   </template>
                 </view>
                 <view
@@ -342,7 +349,7 @@ const normalizeArtifact = (eventName, data) => {
       const displayValue = formatArtifactValue(normalized.value)
       return {
         ...normalized,
-        editValue: displayValue === '未填写' ? '' : displayValue
+        editValue: ['未填写', '待补充'].includes(displayValue) ? '' : displayValue
       }
     }),
     steps: steps
@@ -504,6 +511,46 @@ const formatArtifactValue = (value) => {
   if (Array.isArray(value)) return value.join('、')
   if (typeof value === 'object') return JSON.stringify(value)
   return String(value)
+}
+
+const isArtifactFieldMissing = (field) => {
+  if (field?.missing) return true
+  return ['未填写', '待补充'].includes(formatArtifactValue(field?.value))
+}
+
+const artifactHasMissingFields = (artifact) => {
+  return (artifact?.fields || []).some(isArtifactFieldMissing)
+}
+
+const artifactHasEmptyRequiredEdits = (artifact) => {
+  return (artifact?.fields || []).some(field =>
+    isArtifactFieldMissing(field) && !String(field.editValue ?? '').trim()
+  )
+}
+
+const applyArtifactEdits = (artifact) => {
+  if (!artifact?.fields?.length) return true
+  if (artifactHasEmptyRequiredEdits(artifact)) {
+    showError('请先补充草稿中的缺失信息')
+    return false
+  }
+  artifact.fields = artifact.fields.map(field => {
+    const nextValue = String(field.editValue ?? '').trim()
+    const updated = { ...field }
+    if (nextValue) {
+      updated.value = nextValue
+      updated.missing = false
+    } else if (!isArtifactFieldMissing(field)) {
+      updated.value = ''
+    }
+    updated.editValue = nextValue
+    return updated
+  })
+  artifact.missingFields = (artifact.missingFields || [])
+    .filter(label => artifact.fields.some(field =>
+      String(field.label || '') === String(label || '') && isArtifactFieldMissing(field)
+    ))
+  return true
 }
 
 const conversationTitles = computed(() => {
@@ -688,26 +735,133 @@ const sendMessageText = async (text) => {
   await sendMessage()
 }
 
+const persistCurrentArtifactMessage = () => {
+  const cid = currentCid.value
+  const stored = getStoredStreamState(cid)
+  if (!cid || !stored?.assistant) return
+  const assistant = messages.value.find(item =>
+    (stored.assistant.mid && item.mid === stored.assistant.mid) ||
+    (stored.assistant.localId && item.localId === stored.assistant.localId) ||
+    (item.restored && item.role === 'assistant')
+  )
+  if (!assistant) return
+  const states = readStreamStates()
+  states[String(cid)] = {
+    ...stored,
+    updatedAt: Date.now(),
+    assistant: snapshotAssistantMessage(assistant, stored.state || 'completed')
+  }
+  writeStreamStates(states)
+}
+
+const refreshArtifactMessages = () => {
+  messages.value = messages.value.map(message => ({
+    ...message,
+    artifacts: Array.isArray(message.artifacts)
+      ? message.artifacts.map(artifact => ({
+          ...artifact,
+          fields: Array.isArray(artifact.fields)
+            ? artifact.fields.map(field => ({ ...field }))
+            : artifact.fields,
+          actions: Array.isArray(artifact.actions) ? [...artifact.actions] : artifact.actions,
+          steps: Array.isArray(artifact.steps) ? [...artifact.steps] : artifact.steps
+        }))
+      : message.artifacts
+  }))
+  persistCurrentArtifactMessage()
+}
+
+const getInputEventValue = (event) => {
+  if (event?.detail && Object.prototype.hasOwnProperty.call(event.detail, 'value')) {
+    return event.detail.value
+  }
+  if (event?.target && Object.prototype.hasOwnProperty.call(event.target, 'value')) {
+    return event.target.value
+  }
+  return ''
+}
+
+const handleArtifactFieldInput = (field, event) => {
+  field.editValue = String(getInputEventValue(event) ?? '')
+  refreshArtifactMessages()
+}
+
 const handleArtifactAction = (artifact, action) => {
   const title = artifact?.title || '这个草稿'
   if (action === 'edit') {
     artifact.editing = true
     artifact.fields = (artifact.fields || []).map(field => ({
       ...field,
-      editValue: field.editValue ?? (formatArtifactValue(field.value) === '未填写' ? '' : formatArtifactValue(field.value))
+      editValue: field.editValue ?? (
+        ['未填写', '待补充'].includes(formatArtifactValue(field.value))
+          ? ''
+          : formatArtifactValue(field.value)
+      )
     }))
+    refreshArtifactMessages()
     return
   }
   if (action === 'cancel-edit') {
     artifact.editing = false
+    refreshArtifactMessages()
     return
   }
-  const messages = {
-    confirm: artifact?.confirmMessage || `我确认执行这个草稿：${title}`,
-    'confirm-edited': buildEditedArtifactMessage(artifact),
-    cancel: artifact?.cancelMessage || `取消这个草稿：${title}`
+  if (action === 'save-edit') {
+    if (!applyArtifactEdits(artifact)) return
+    artifact.editing = false
+    refreshArtifactMessages()
+    showSuccess('草稿已更新，请确认后执行')
+    return
   }
-  sendMessageText(messages[action])
+  if (action === 'confirm-edited') {
+    if (!applyArtifactEdits(artifact)) return
+    artifact.editing = false
+    refreshArtifactMessages()
+    sendMessageText(buildArtifactConfirmMessage(artifact, true))
+    return
+  }
+  if (action === 'confirm') {
+    if (artifactHasMissingFields(artifact)) {
+      showError('请先点击修改草稿补充缺失信息')
+      return
+    }
+    sendMessageText(buildArtifactConfirmMessage(artifact, false))
+    return
+  }
+  if (action === 'cancel') {
+    sendMessageText(artifact?.cancelMessage || `取消这个草稿：${title}`)
+  }
+}
+
+const isArtifactActionDisabled = (artifact, action) => {
+  if (loading.value) return true
+  if (['save-edit', 'confirm-edited'].includes(action)) {
+    return artifactHasEmptyRequiredEdits(artifact)
+  }
+  if (action === 'confirm') {
+    return artifactHasMissingFields(artifact)
+  }
+  return false
+}
+
+const requestArtifactAction = (artifact, action) => {
+  if (isArtifactActionDisabled(artifact, action)) return
+  handleArtifactAction(artifact, action)
+}
+
+const buildArtifactConfirmMessage = (artifact, edited = false) => {
+  const title = artifact?.title || '这个草稿'
+  const fields = (artifact?.fields || [])
+    .map(field => {
+      const value = edited
+        ? String(field.editValue ?? '').trim()
+        : formatArtifactValue(field.value)
+      return value ? `${field.label}: ${value}` : ''
+    })
+    .filter(Boolean)
+  const fieldText = fields.length ? `\n${fields.join('\n')}` : ''
+  const prefix = edited ? '我确认按修改后的内容执行这个草稿' : '我确认执行这个草稿'
+  return `${prefix}：${title}${fieldText}`
 }
 
 const handleArtifactPromptAction = (action) => {
@@ -732,18 +886,6 @@ const handleArtifactPromptAction = (action) => {
 const getGuideActionHint = (prompt) => {
   const text = String(prompt || '').replace(/\s+/g, ' ').trim()
   return text.length > 32 ? `${text.slice(0, 32)}...` : text
-}
-
-const buildEditedArtifactMessage = (artifact) => {
-  const title = artifact?.title || '这个草稿'
-  const fields = (artifact?.fields || [])
-    .map(field => {
-      const value = String(field.editValue ?? '').trim()
-      return value ? `${field.label}: ${value}` : ''
-    })
-    .filter(Boolean)
-  const fieldText = fields.length ? `\n${fields.join('\n')}` : ''
-  return `我确认按修改后的内容执行这个草稿：${title}${fieldText}`
 }
 
 const streamAssistantReply = (cid, userMessage, assistantMsg) => {
@@ -1928,7 +2070,6 @@ onUnmounted(detachActiveStream)
   width: auto;
   min-width: 138rpx;
   height: 58rpx;
-  line-height: 58rpx;
   padding: 0 18rpx;
   border: 1rpx solid #cfd8e6;
   border-radius: 999rpx;
@@ -1936,6 +2077,11 @@ onUnmounted(detachActiveStream)
   color: #344054;
   font-size: 24rpx;
   font-weight: 800;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  line-height: 1;
+  box-sizing: border-box;
 }
 
 .guide-action-card {
@@ -1985,6 +2131,12 @@ onUnmounted(detachActiveStream)
   color: #667085;
 }
 
+.artifact-action[disabled],
+.artifact-action.disabled {
+  opacity: 0.52;
+  pointer-events: none;
+}
+
 .artifact-editor {
   display: flex;
   flex-direction: column;
@@ -2008,6 +2160,17 @@ onUnmounted(detachActiveStream)
   background: #f8fafc;
   color: #172033;
   font-size: 25rpx;
+  line-height: 1.45;
+}
+
+.artifact-edit-hint {
+  padding: 12rpx 14rpx;
+  border: 1rpx solid #fed7aa;
+  border-radius: 12rpx;
+  background: #fff7ed;
+  color: #b45309;
+  font-size: 22rpx;
+  font-weight: 700;
   line-height: 1.45;
 }
 
@@ -2773,6 +2936,12 @@ onUnmounted(detachActiveStream)
   .artifact-field.missing {
     background: rgba(245, 158, 11, 0.12);
     border-color: rgba(245, 158, 11, 0.35);
+  }
+
+  .artifact-edit-hint {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: #fbbf24;
   }
 
   .artifact-highlight-value {
