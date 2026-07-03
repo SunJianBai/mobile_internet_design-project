@@ -357,6 +357,73 @@
       }
     },
     {
+      "id": "persona_order_delete_requires_confirm",
+      "category": "persona_order_write",
+      "persona": "想下架自己发布订单的人",
+      "message": "把我发布的订单 18 删掉吧，先给我确认卡，不要直接操作",
+      "expect": {
+        "primary_intent": "order.manage",
+        "domain": "order",
+        "operation_type": "write",
+        "requires_confirmation": true,
+        "confirmation_gate": true,
+        "next_action": "prepare_draft"
+      }
+    },
+    {
+      "id": "persona_order_detail_no_apply",
+      "category": "persona_order_read",
+      "persona": "只想看订单详情但暂时不报名的人",
+      "message": "订单 12 这个篮球活动还有空位吗？帮我看看详情，先别报名",
+      "expect": {
+        "primary_intent_any": ["order.search", "order.manage"],
+        "domain": "order",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "persona_multi_search_then_create_if_none",
+      "category": "persona_multi_step",
+      "persona": "先找现成约伴，没有合适的再创建",
+      "message": "先看看今晚有没有良乡羽毛球约伴，没有合适的再帮我建一个草稿，别直接发布",
+      "expect": {
+        "primary_intent_any": ["multi_step", "order.search"],
+        "domain_any": ["multi", "order"],
+        "operation_type_any": ["mixed", "read"],
+        "requires_confirmation": true,
+        "confirmation_gate": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "persona_map_study_place_no_post",
+      "category": "persona_map_read",
+      "persona": "想找自习地点但不想发动态的人",
+      "message": "良乡附近有没有安静、有插座、适合三个人自习的咖啡馆？只看地点，不要发动态",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
+      "id": "persona_mixed_language_map_no_order",
+      "category": "persona_map_read",
+      "persona": "中英混合表达地点推荐的人",
+      "message": "near BIT Liangxiang find a quiet cafe for 3 people, show map only, no post no order",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
       "id": "persona_memory_forget_preference",
       "category": "persona_memory_write",
       "persona": "想删除或修改 AI 记忆的人",

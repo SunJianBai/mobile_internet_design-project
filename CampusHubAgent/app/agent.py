@@ -839,6 +839,11 @@ def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bo
     transition_cues = ("再", "然后", "之后", "如果", "合适", "不错")
     write_cues = (
         "创建",
+        "新建",
+        "建一个",
+        "建个",
+        "建活动",
+        "建订单",
         "发布",
         "发个动态",
         "发一条",
@@ -1363,6 +1368,15 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "别帮我评论",
         "不要点赞",
         "别点赞",
+        "不要报名",
+        "别报名",
+        "不用报名",
+        "先别报名",
+        "不要申请加入",
+        "别申请加入",
+        "不用申请加入",
+        "先别申请",
+        "先不要申请",
         "先只",
         "只推荐",
         "先推荐",
@@ -2004,12 +2018,28 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
             "next_action": "prepare_draft",
         }
 
-    if _has_any(text, ("取消订单", "取消活动")) or _has_any(text.lower(), ("cancel order", "cancel activity")):
+    order_delete_cues = ("删除", "删掉", "删了", "下架", "撤下", "移除")
+    if _has_any(
+        text,
+        (
+            "取消订单",
+            "取消活动",
+            "删除订单",
+            "删掉订单",
+            "删了订单",
+            "下架订单",
+            "撤下订单",
+            "移除订单",
+        ),
+    ) or _has_any(
+        text.lower(),
+        ("cancel order", "cancel activity", "delete order", "remove order", "take down order"),
+    ) or ("订单" in text and _has_any(text, order_delete_cues)):
         return {
             **base,
             "primary_intent": "order.manage",
             "domain": "order",
-            "summary": "用户想取消约伴订单或活动，需先确认并检查是否已有可执行工具",
+            "summary": "用户想取消、删除或下架约伴订单/活动，需先确认并检查是否已有可执行工具",
             "missing_slots": [],
             "suggested_agents": ["order_draft"],
             "next_action": "prepare_draft",
