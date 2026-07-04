@@ -5810,22 +5810,42 @@ def _format_map_direct_reply(keyword: str, center_name: str, pois: list[dict]) -
     return "\n".join(lines).strip()
 
 
-def _build_map_candidate_items(pois: list[dict], limit: int = 3) -> list[dict]:
+def _map_followup_draft_mode(intent_analysis: dict) -> str:
+    suggested_agents = {
+        str(agent or "").strip().lower()
+        for agent in (intent_analysis.get("suggested_agents") or [])
+    }
+    primary_intent = str(intent_analysis.get("primary_intent") or "").lower()
+    domain = str(intent_analysis.get("domain") or "").lower()
+    if "content_draft" in suggested_agents or primary_intent == "content.create" or domain == "content":
+        return "content"
+    return "order"
+
+
+def _build_map_place_draft_prompt(name: str, location: str, draft_mode: str) -> str:
+    if draft_mode == "content":
+        prompt = f"基于地图里的「{name}」写一条校园动态草稿，邀请同学一起去这个地点"
+    else:
+        prompt = f"基于地图里的「{name}」创建一个约伴订单草稿"
+    if location:
+        prompt += f"，地点坐标：{location}"
+    prompt += "。如果还缺少必要信息，请先让我补充；不要直接发布，先让我确认。"
+    return prompt
+
+
+def _build_map_candidate_items(pois: list[dict], draft_mode: str = "order", limit: int = 3) -> list[dict]:
     items = []
     for index, poi in enumerate(pois[:limit], start=1):
         name = str(poi.get("name") or f"地点{index}")
         address = str(poi.get("address") or "地址暂缺")
         location = str(poi.get("location") or "")
-        prompt = f"基于地图里的「{name}」创建一个约伴订单草稿"
-        if location:
-            prompt += f"，地点坐标：{location}"
-        prompt += "。如果还缺少必要信息，请先让我补充；不要直接发布。"
+        prompt = _build_map_place_draft_prompt(name, location, draft_mode)
         items.append({
             "title": f"{index}. {name}",
             "subtitle": address,
             "meta": location or "坐标待补全",
             "badge": "地点",
-            "actionLabel": "生成草稿",
+            "actionLabel": "写动态" if draft_mode == "content" else "生成草稿",
             "hint": "先确认再发布",
             "prompt": prompt,
         })
@@ -5836,37 +5856,43 @@ def _build_map_followup_artifact(keyword: str, center_name: str, pois: list[dict
     first = pois[0] if pois else {}
     first_name = str(first.get("name") or "第一个地点")
     first_location = str(first.get("location") or "")
-    first_prompt = f"基于地图里的「{first_name}」创建一个约伴订单草稿"
-    if first_location:
-        first_prompt += f"，地点坐标：{first_location}"
-    first_prompt += "。如果还缺少必要信息，请先让我补充；不要直接发布。"
+    draft_mode = _map_followup_draft_mode(intent_analysis)
+    first_prompt = _build_map_place_draft_prompt(first_name, first_location, draft_mode)
+    first_order_prompt = _build_map_place_draft_prompt(first_name, first_location, "order")
     is_multi_step = (intent_analysis.get("primary_intent") or "").lower() == "multi_step"
+    primary_action = {
+        "label": "用第一家写动态草稿" if draft_mode == "content" else "用第一家创建约伴草稿",
+        "prompt": first_prompt,
+        "primary": is_multi_step,
+    }
+    actions = [primary_action]
+    if draft_mode == "content":
+        actions.append({
+            "label": "改为创建约伴草稿",
+            "prompt": first_order_prompt,
+        })
+    actions.extend([
+        {
+            "label": "换一批附近推荐",
+            "prompt": f"换一批{center_name}附近的{keyword}推荐，并继续展示地图",
+        },
+        {
+            "label": "先查天气再决定",
+            "prompt": "查一下北京天气，并告诉我是否适合安排这个活动",
+        },
+    ])
 
     return {
         "type": "guide",
         "title": "接下来可以怎么做",
-        "description": "这些都是下一步入口；涉及创建订单时只会先生成确认草稿，不会直接发布。",
+        "description": "这些都是下一步入口；涉及创建订单或发布动态时只会先生成确认草稿，不会直接发布。",
         "fields": [
             {"label": "当前搜索", "value": f"{center_name}周边 · {keyword}"},
             {"label": "可选地点", "value": f"{len(pois)} 个可渲染地图结果"},
             {"label": "写操作保护", "value": "创建、发布、报名等操作都会先确认"},
         ],
-        "items": _build_map_candidate_items(pois),
-        "actions": [
-            {
-                "label": "用第一家创建约伴草稿",
-                "prompt": first_prompt,
-                "primary": is_multi_step,
-            },
-            {
-                "label": "换一批附近推荐",
-                "prompt": f"换一批{center_name}附近的{keyword}推荐，并继续展示地图",
-            },
-            {
-                "label": "先查天气再决定",
-                "prompt": "查一下北京天气，并告诉我是否适合安排这个活动",
-            },
-        ],
+        "items": _build_map_candidate_items(pois, draft_mode=draft_mode),
+        "actions": actions,
         "state": "completed",
     }
 

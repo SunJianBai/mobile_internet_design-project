@@ -304,6 +304,47 @@ async def scenario_multi_step_marks_primary_draft_action() -> DirectReadResult:
     return DirectReadResult("multi_step_marks_primary_draft_action", not failures, failures, actual)
 
 
+async def scenario_multi_step_content_draft_prefers_dynamic_action() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="先帮我找三家附近桌游店，等我选了再写动态召集同学一起去",
+            intent_analysis={
+                "primary_intent": "multi_step",
+                "domain": "multi",
+                "operation_type": "mixed",
+                "requires_confirmation": True,
+                "suggested_agents": ["map_weather", "content_draft"],
+                "next_action": "execute_read_tools",
+            },
+        )
+        return {
+            "artifacts": result.get("artifacts") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    artifact = (actual.get("artifacts") or [{}])[0]
+    items = artifact.get("items") or []
+    first_item = items[0] if items else {}
+    actions = [action for action in artifact.get("actions", []) if isinstance(action, dict)]
+    first_action = actions[0] if actions else {}
+    if first_item.get("actionLabel") != "写动态":
+        failures.append(f"expected map item to prefer a dynamic draft action, got {first_item.get('actionLabel')!r}")
+    if "动态草稿" not in first_item.get("prompt", ""):
+        failures.append("map item prompt should create a dynamic draft for content_draft multi-step requests")
+    if first_action.get("label") != "用第一家写动态草稿":
+        failures.append(f"expected the first action to write a dynamic draft, got {first_action.get('label')!r}")
+    if first_action.get("primary") is not True:
+        failures.append("multi-step content draft action should be primary")
+    if "沐春足道" not in first_action.get("prompt", "") or "不要直接发布" not in first_action.get("prompt", ""):
+        failures.append("dynamic draft action should keep the selected POI and no-direct-publish guard")
+    if not any(action.get("label") == "改为创建约伴草稿" for action in actions):
+        failures.append("content-first map card should still offer an order draft alternative")
+    return DirectReadResult("multi_step_content_draft_prefers_dynamic_action", not failures, failures, actual)
+
+
 async def scenario_weather_direct_returns_artifact() -> DirectReadResult:
     async def check(harness: DirectReadHarness) -> dict[str, Any]:
         result = await harness.agent.build_direct_read_response(
@@ -763,6 +804,7 @@ async def run_all() -> list[DirectReadResult]:
         scenario_english_map_restaurant_uses_precise_keyword,
         scenario_noisy_english_map_restaurant_uses_precise_keyword,
         scenario_multi_step_marks_primary_draft_action,
+        scenario_multi_step_content_draft_prefers_dynamic_action,
         scenario_weather_direct_returns_artifact,
         scenario_map_weather_combo_returns_two_artifacts,
         scenario_route_request_returns_route_artifact,

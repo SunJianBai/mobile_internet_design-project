@@ -647,11 +647,20 @@ const appendArtifactFollowups = (suggestions, artifacts) => {
     const title = getArtifactContextTitle(artifact)
 
     if (type === 'guide') {
-      pushArtifactActionSuggestion(suggestions, artifact, ['生成草稿', '约伴', '创建'], {
-        icon: '约',
-        label: '基于地点约伴',
-        prompt: `基于${title}，帮我整理一个约伴活动草稿，先不要发布`
-      })
+      const dynamicAction = getArtifactActionByLabel(artifact, ['写动态', '动态草稿', '发动态', '发布动态'])
+      if (dynamicAction) {
+        suggestions.push({
+          icon: '写',
+          label: '基于地点写动态',
+          prompt: dynamicAction.prompt
+        })
+      } else {
+        pushArtifactActionSuggestion(suggestions, artifact, ['生成草稿', '约伴', '创建'], {
+          icon: '约',
+          label: '基于地点约伴',
+          prompt: `基于${title}，帮我整理一个约伴活动草稿，先不要发布`
+        })
+      }
       suggestions.push(
         { icon: '路', label: '规划到这里路线', prompt: `帮我规划去${title}的路线，并继续展示地图` },
         { icon: '换', label: '换一批更近的', prompt: '换一批更近或评分更高的附近推荐，并继续展示地图' }
