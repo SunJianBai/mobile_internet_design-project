@@ -1931,7 +1931,8 @@ const renderMapCard = (props = {}) => {
       `</div>` +
       `<div class="map-card-actions">` +
         `<button type="button" class="map-card-action map-card-draft" data-map-intent="order-draft">用此地点约伴</button>` +
-        `<a href="${escapeHtml(markerUrl)}" target="_blank" rel="noopener noreferrer" class="map-card-action">打开高德地图</a>` +
+        `<button type="button" class="map-card-action map-card-content" data-map-intent="content-draft">发动态招人</button>` +
+        `<a href="${escapeHtml(markerUrl)}" target="_blank" rel="noopener noreferrer" class="map-card-action map-card-external">打开高德地图</a>` +
       `</div>` +
     `</div>` +
     `<div class="map-card-hint">可拖拽地图，也可以使用缩放和平移按钮。</div>` +
@@ -2213,6 +2214,8 @@ function sendMapIntent(card, intent) {
     : ''
   if (intent === 'order-draft') {
     sendMessageText(`基于地图里的「${title}」创建一个约伴订单草稿${coordText}。请沿用刚才推荐请求里的活动类型、人数和校区信息；如果还缺少必要信息，只追问缺失项，不要直接发布。`)
+  } else if (intent === 'content-draft') {
+    sendMessageText(`基于地图里的「${title}」写一条校园动态草稿，问问有没有同学一起去${coordText}。请先生成可编辑确认卡片，等我确认后再发布，不要直接发出去。`)
   }
 }
 
@@ -2232,7 +2235,7 @@ function setMapCardView(card, lng, lat, zoom) {
   const grid = buildMapTileGrid(nextLng, nextLat, nextZoom)
   const gridEl = card.querySelector('.map-tile-grid')
   const coordsEl = card.querySelector('.map-card-coords')
-  const actionEl = card.querySelector('.map-card-action')
+  const actionEl = card.querySelector('.map-card-external')
   const title = card.dataset.title || '位置'
 
   card.dataset.lng = String(nextLng)
@@ -3930,6 +3933,16 @@ onBeforeUnmount(() => {
   color: #ffffff;
   border-color: #1d4ed8;
 }
+.markdown-body :deep(.map-card-content) {
+  background: #0f766e;
+  color: #ffffff;
+  border-color: #0f766e;
+}
+.markdown-body :deep(.map-card-content:hover) {
+  background: #115e59;
+  color: #ffffff;
+  border-color: #115e59;
+}
 .markdown-body :deep(.map-tile-stage) {
   cursor: grab;
   user-select: none;
@@ -4760,6 +4773,18 @@ onBeforeUnmount(() => {
   border-color: #9ab8ff;
 }
 
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-content) {
+  background: #0f766e;
+  color: #ffffff;
+  border-color: #2dd4bf;
+}
+
+:global(:root[data-theme='dark']) .markdown-body :deep(.map-card-content:hover) {
+  background: #14b8a6;
+  color: #ffffff;
+  border-color: #5eead4;
+}
+
 :global(:root[data-theme='dark']) .markdown-body :deep(.map-badge) {
   background: rgba(15, 23, 42, 0.86);
   color: #bfdbfe;
@@ -4863,6 +4888,18 @@ onBeforeUnmount(() => {
   background: #4c7df0 !important;
   color: #ffffff !important;
   border-color: #9ab8ff !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .map-card-content) {
+  background: #0f766e !important;
+  color: #ffffff !important;
+  border-color: #2dd4bf !important;
+}
+
+:global(html[data-theme='dark'] .markdown-body .map-card-content:hover) {
+  background: #14b8a6 !important;
+  color: #ffffff !important;
+  border-color: #5eead4 !important;
 }
 
 :global(html[data-theme='dark'] .markdown-body .map-badge) {

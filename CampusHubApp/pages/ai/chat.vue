@@ -435,6 +435,14 @@
                     >
                       用此地点约伴
                     </button>
+                    <button
+                      class="inline-map-open inline-map-content"
+                      hover-class="inline-map-content-hover"
+                      :disabled="loading"
+                      @click="createContentDraftFromMap(mapCard)"
+                    >
+                      发动态招人
+                    </button>
                     <button class="inline-map-open" hover-class="inline-map-open-hover" @click="openExternalUrl(mapCard.link)">打开高德地图</button>
                   </view>
                 </view>
@@ -2336,9 +2344,28 @@ const buildMapOrderDraftPrompt = (card) => {
   ].join('\n')
 }
 
+const buildMapContentDraftPrompt = (card) => {
+  const title = String(card?.title || '这个地点').trim()
+  const lng = Number.isFinite(card?.lng) ? card.lng.toFixed(6) : ''
+  const lat = Number.isFinite(card?.lat) ? card.lat.toFixed(6) : ''
+  const coords = lng && lat ? `${lng}, ${lat}` : '未提供'
+  return [
+    '我想基于刚才查询到的这个地点写一条校园动态草稿，问问有没有同学一起去。',
+    '请先生成可编辑确认卡片，等我确认后再发布，不要直接发出去。',
+    `地点：${title}`,
+    `坐标：${coords}`,
+    '请结合上文的人数、活动类型、时间偏好和校区信息；如果缺少动态正文，请先给出可修改草稿。'
+  ].join('\n')
+}
+
 const createOrderDraftFromMap = (card) => {
   if (loading.value || !card) return
   sendMessageText(buildMapOrderDraftPrompt(card))
+}
+
+const createContentDraftFromMap = (card) => {
+  if (loading.value || !card) return
+  sendMessageText(buildMapContentDraftPrompt(card))
 }
 
 const setMapCardState = (key, nextState) => {
@@ -4895,6 +4922,13 @@ onUnmounted(detachActiveStream)
   box-shadow: 0 10rpx 24rpx rgba(31, 68, 122, 0.22);
 }
 
+.inline-map-content {
+  min-width: 154rpx;
+  background: #0f766e;
+  color: #ffffff;
+  box-shadow: 0 10rpx 24rpx rgba(15, 118, 110, 0.2);
+}
+
 .inline-map-open[disabled] {
   opacity: 0.58;
   box-shadow: none;
@@ -4922,6 +4956,12 @@ onUnmounted(detachActiveStream)
 .inline-map-order-hover {
   background: #183760 !important;
   border-color: #1f447a !important;
+  color: #ffffff !important;
+}
+
+.inline-map-content-hover {
+  background: #115e59 !important;
+  border-color: #0f766e !important;
   color: #ffffff !important;
 }
 
@@ -6021,6 +6061,12 @@ onUnmounted(detachActiveStream)
     color: #ffffff;
   }
 
+  .inline-map-content {
+    background: #0f766e;
+    border-color: #2dd4bf;
+    color: #ffffff;
+  }
+
   .chat-container .send-btn[disabled] {
     background: #1f2d44 !important;
     border-color: rgba(148, 163, 184, 0.18) !important;
@@ -6073,6 +6119,14 @@ onUnmounted(detachActiveStream)
     border-color: #7aa2ff !important;
     color: #ffffff !important;
     box-shadow: 0 14rpx 30rpx rgba(37, 99, 235, 0.28);
+  }
+
+  .inline-map-content-hover,
+  .inline-map-content:hover {
+    background: #14b8a6 !important;
+    border-color: #5eead4 !important;
+    color: #ffffff !important;
+    box-shadow: 0 14rpx 30rpx rgba(20, 184, 166, 0.24);
   }
 
   .tool-btn-danger-hover,
