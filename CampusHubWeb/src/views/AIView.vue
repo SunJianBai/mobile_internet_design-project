@@ -774,6 +774,27 @@ const OPERATION_PHASE_LABELS = {
   status: '状态'
 }
 
+const OPERATION_INTENT_LABELS = {
+  'map.search': '地点与路线查询',
+  'weather.query': '天气查询',
+  'order.search': '查找约伴',
+  'order.create': '创建约伴草稿',
+  'order.manage': '约伴操作确认',
+  'content.search': '搜索动态',
+  'content.create': '发布动态草稿',
+  'content.interact': '动态互动确认',
+  'user.profile': '查看用户资料',
+  'memory.manage': '管理 AI 记忆',
+  multi_step: '多步任务',
+  'chat.general': '普通对话'
+}
+
+const OPERATION_TYPE_LABELS = {
+  read: '查询',
+  write: '写操作',
+  mixed: '先查后写'
+}
+
 const OPERATION_STATE_LABELS = {
   running: '执行中',
   pending: '待确认',
@@ -791,13 +812,23 @@ function parseAgentEventData(data) {
   }
 }
 
+function getIntentLabel(intent) {
+  const key = String(intent || '').toLowerCase()
+  return OPERATION_INTENT_LABELS[key] || intent || ''
+}
+
+function getOperationTypeLabel(operationType) {
+  const key = String(operationType || '').toLowerCase()
+  return OPERATION_TYPE_LABELS[key] || operationType || ''
+}
+
 function formatIntentDetail(payload) {
   const parts = []
-  if (payload.primary_intent) parts.push(payload.primary_intent)
-  if (payload.operation_type) parts.push(payload.operation_type)
+  if (payload.primary_intent) parts.push(getIntentLabel(payload.primary_intent))
+  if (payload.operation_type) parts.push(getOperationTypeLabel(payload.operation_type))
   if (typeof payload.confidence === 'number') parts.push(`置信度 ${Math.round(payload.confidence * 100)}%`)
   if (payload.requires_confirmation) parts.push('需要确认')
-  return parts.join(' · ')
+  return parts.filter(Boolean).join(' · ')
 }
 
 function normalizeAgentOperation(eventName, data) {
@@ -840,7 +871,9 @@ function getOperationOverview(message) {
   const state = failedCount
     ? 'failed'
     : (needsConfirmation ? 'pending' : (message?.loading ? 'running' : 'completed'))
-  const intentLabel = intentOperation?.meta?.primaryIntent || intentOperation?.phase || '识别中'
+  const intentLabel = getIntentLabel(intentOperation?.meta?.primaryIntent) ||
+    getOperationPhaseLabel(intentOperation?.phase) ||
+    '识别中'
   const confidence = intentOperation?.meta?.confidence
   const metrics = [
     { label: '阶段', value: getOperationPhaseLabel(latest.phase || latest.eventName) },
