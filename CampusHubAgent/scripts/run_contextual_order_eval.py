@@ -116,6 +116,7 @@ ORDER_APPLY_FOLLOWUP_MESSAGE = "就第二个吧，帮我报名，先生成确认
 ORDER_APPLY_NAMED_MESSAGE = "羽毛球馆那个约伴我想加入，先让我确认"
 ORDER_CONTENT_FOLLOWUP_MESSAGE = "就第二个帮我发条动态宣传一下，先生成草稿发布前让我确认"
 ORDER_CREATED_CONTENT_FOLLOWUP_MESSAGE = "顺便基于这个订单发条动态宣传一下，先让我确认"
+MAP_CONTENT_FOLLOWUP_MESSAGE = "就第一家帮我写个动态问问有没有同学一起去，先生成草稿别直接发"
 CONTENT_COMMENT_FOLLOWUP_MESSAGE = "就第一条帮我评论一下：我也想去，先让我确认"
 CONTENT_LIKE_NAMED_MESSAGE = "小白那条动态帮我点个赞，先确认"
 
@@ -431,6 +432,30 @@ async def scenario_contextual_order_content_routes_to_confirmed_write() -> EvalR
     return EvalResult("contextual_order_content_routes_to_confirmed_write", not failures, failures, actual)
 
 
+async def scenario_contextual_map_content_routes_to_confirmed_write() -> EvalResult:
+    from app import agent as agent_module
+
+    agent_module._intent_cache.clear()
+    analysis = await agent_module.analyze_intent(DEFAULT_USER, [], MAP_HISTORY, MAP_CONTENT_FOLLOWUP_MESSAGE)
+    actual = dict(analysis)
+    failures: list[str] = []
+    expected = {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "next_action": "prepare_draft",
+    }
+    for key, value in expected.items():
+        if actual.get(key) != value:
+            failures.append(f"{key}: expected {value!r}, got {actual.get(key)!r}")
+    if not actual.get("contextual_map_content_shortcut"):
+        failures.append("expected contextual_map_content_shortcut marker")
+    if actual.get("contextual_map_shortcut"):
+        failures.append("map-to-content draft should not be claimed by order-create shortcut")
+    return EvalResult("contextual_map_content_routes_to_confirmed_write", not failures, failures, actual)
+
+
 async def scenario_confirmation_enriches_map_fields() -> EvalResult:
     from app import agent as agent_module
 
@@ -610,6 +635,55 @@ async def scenario_confirmation_enriches_order_content_fields() -> EvalResult:
     if artifact.get("missingFields"):
         failures.append(f"expected no missing fields after order content enrichment, got {artifact.get('missingFields')!r}")
     return EvalResult("confirmation_enriches_order_content_fields", not failures, failures, actual)
+
+
+async def scenario_confirmation_enriches_map_content_fields() -> EvalResult:
+    from app import agent as agent_module
+
+    original_router = agent_module._get_router_llm
+    agent_module._get_router_llm = lambda: FakeContentCreateRouter()
+    try:
+        analysis = {
+            "primary_intent": "content.create",
+            "domain": "content",
+            "operation_type": "write",
+            "requires_confirmation": True,
+            "missing_slots": [],
+            "suggested_agents": ["content_draft"],
+            "next_action": "prepare_draft",
+            "contextual_map_content_shortcut": True,
+        }
+        artifact = await agent_module.build_confirmation_artifact(
+            DEFAULT_USER,
+            MAP_HISTORY,
+            MAP_CONTENT_FOLLOWUP_MESSAGE,
+            analysis,
+        )
+    finally:
+        agent_module._get_router_llm = original_router
+
+    fields = _field_map(artifact.get("fields") or [])
+    actual = {
+        "actionKind": artifact.get("actionKind"),
+        "fields": fields,
+        "missingFields": artifact.get("missingFields") or [],
+        "reply": artifact.get("reply"),
+    }
+    failures: list[str] = []
+    if artifact.get("actionKind") != "content.create":
+        failures.append(f"expected content.create actionKind, got {artifact.get('actionKind')!r}")
+    if "景阳阁SPA会所" not in fields.get("地点名称", ""):
+        failures.append(f"expected first map place in fields, got {fields.get('地点名称')!r}")
+    if fields.get("地点坐标") != "116.181457, 39.730239":
+        failures.append(f"expected first map coords, got {fields.get('地点坐标')!r}")
+    draft_text = fields.get("动态内容", "")
+    if "景阳阁SPA会所" not in draft_text or "有兴趣的同学" not in draft_text:
+        failures.append(f"expected map-place dynamic draft text, got {draft_text!r}")
+    if "订单ID" in fields:
+        failures.append("map-place content draft should not force an order id field")
+    if artifact.get("missingFields"):
+        failures.append(f"expected no missing fields after map content enrichment, got {artifact.get('missingFields')!r}")
+    return EvalResult("confirmation_enriches_map_content_fields", not failures, failures, actual)
 
 
 async def scenario_confirmation_enriches_created_order_content_fields() -> EvalResult:
@@ -1004,10 +1078,12 @@ async def run_all() -> list[EvalResult]:
         scenario_contextual_content_comment_routes_to_confirmed_write,
         scenario_contextual_order_apply_routes_to_confirmed_write,
         scenario_contextual_order_content_routes_to_confirmed_write,
+        scenario_contextual_map_content_routes_to_confirmed_write,
         scenario_confirmation_enriches_map_fields,
         scenario_named_confirmation_enriches_map_fields,
         scenario_confirmation_enriches_order_apply_fields,
         scenario_confirmation_enriches_order_content_fields,
+        scenario_confirmation_enriches_map_content_fields,
         scenario_confirmation_enriches_created_order_content_fields,
         scenario_confirmation_enriches_content_comment_fields,
         scenario_confirmation_enriches_content_like_fields,

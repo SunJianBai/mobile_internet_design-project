@@ -1029,10 +1029,26 @@ def _extract_contextual_map_selection(history: list, user_message: str) -> tuple
     return candidate.get("title", ""), candidate.get("coords", "")
 
 
+CONTENT_CREATE_CUES = (
+    "发动态",
+    "发条动态",
+    "发布动态",
+    "写动态",
+    "写个动态",
+    "动态草稿",
+    "发帖",
+    "写帖子",
+    "写个帖子",
+    "post",
+)
+
+
 def _detect_contextual_order_create_shortcut(history: list, user_message: str) -> dict | None:
     """Route follow-ups like '就第一家，帮我约三个人' to a safe order draft."""
     text = " ".join(str(user_message or "").split())
     if not text or _contains_blocking_write_negation(text):
+        return None
+    if _has_any(text.lower(), CONTENT_CREATE_CUES):
         return None
     title, coords = _extract_contextual_map_selection(history, text)
     has_contextual_map_selection = bool(title or coords)
@@ -2574,6 +2590,25 @@ async def analyze_intent(user_info: dict, memories: list, history: list, user_me
         })
         return analysis
 
+    contextual_map_content_analysis = _detect_contextual_map_content_create_shortcut(history, user_message)
+    if contextual_map_content_analysis:
+        analysis = _normalize_intent_analysis(contextual_map_content_analysis)
+        analysis["router_elapsed_ms"] = int((time.perf_counter() - started_at) * 1000)
+        analysis["cache_hit"] = False
+        _store_intent(cache_key, analysis)
+        await _emit_event("agent_step", {
+            "phase": "intent_contextual_map_content",
+            "title": "沿用地图结果生成动态草稿",
+            "detail": "识别到用户想基于上一轮地图地点发布校园动态，先生成确认草稿",
+            "state": "completed",
+        })
+        await _emit_event("intent", {
+            **analysis,
+            "title": "意图分析完成",
+            "state": "completed",
+        })
+        return analysis
+
     safety_analysis = _detect_safety_intent_shortcut(user_message)
     if safety_analysis:
         analysis = _normalize_intent_analysis(safety_analysis)
@@ -3316,6 +3351,35 @@ def _detect_contextual_order_content_create_shortcut(history: list, user_message
     }
 
 
+def _detect_contextual_map_content_create_shortcut(history: list, user_message: str) -> dict | None:
+    """Route follow-ups like '就第一家写动态' to a safe content draft."""
+    text = " ".join(str(user_message or "").split())
+    if not text or _contains_blocking_write_negation(text):
+        return None
+
+    title, coords = _extract_contextual_map_selection(history, text)
+    if not title and not coords:
+        return None
+
+    if not _has_any(text.lower(), CONTENT_CREATE_CUES):
+        return None
+
+    return {
+        "primary_intent": "content.create",
+        "domain": "content",
+        "operation_type": "write",
+        "requires_confirmation": True,
+        "confidence": 0.9,
+        "summary": "用户想基于上一轮地图地点发布校园动态",
+        "missing_slots": [],
+        "suggested_agents": ["content_draft"],
+        "next_action": "prepare_draft",
+        "reviewed": False,
+        "contextual_map_content_shortcut": True,
+        "router_timeout": False,
+    }
+
+
 def _infer_activity_label(text: str) -> str:
     lowered = str(text or "").lower()
     activity_rules = [
@@ -3531,6 +3595,19 @@ def _build_order_content_draft_text(order: dict) -> str:
     return f"{opening}。感兴趣的同学可以一起加入，确认行程前记得看看订单详情。"
 
 
+def _build_map_content_draft_text(place_title: str, context_text: str) -> str:
+    place = str(place_title or "").strip()
+    activity = _order_activity_display(_infer_activity_label(context_text))
+    group_size = _extract_group_size(context_text)
+
+    subject = place or "这个地点"
+    if activity and activity != "校园活动":
+        subject = f"{subject}{activity}"
+
+    group_prefix = f"想约{group_size}人一起去" if group_size else "想找同学一起去"
+    return f"{group_prefix}{subject}，有兴趣的同学可以一起聊聊时间和人数。出发前我们再确认地点和安排。"
+
+
 def _enrich_content_confirmation_fields(
     fields: list,
     missing_fields: list,
@@ -3549,6 +3626,25 @@ def _enrich_content_confirmation_fields(
         selected_order = _extract_contextual_order_selection(history, user_message) or {}
         selected_order_id = str(selected_order.get("id") or "").strip()
         if not selected_order:
+            location_title, coords = _extract_contextual_map_selection(history, user_message)
+            if not location_title and not coords:
+                return enriched_fields, enriched_missing
+
+            context_text = _conversation_text(history, user_message)
+            if location_title:
+                _set_artifact_field(enriched_fields, ("地点名称", "地点", "位置"), "地点名称", location_title)
+                enriched_missing = _drop_missing_fields(enriched_missing, ("地点名称", "地点", "位置"))
+            if coords:
+                _set_artifact_field(enriched_fields, ("地点坐标", "坐标"), "地点坐标", coords)
+                enriched_missing = _drop_missing_fields(enriched_missing, ("地点坐标", "坐标"))
+
+            draft_text = _build_map_content_draft_text(location_title, context_text)
+            if draft_text:
+                _set_artifact_field(enriched_fields, ("动态内容", "正文", "内容", "文本"), "动态内容", draft_text)
+                enriched_missing = _drop_missing_fields(enriched_missing, ("动态内容", "正文", "内容", "文本"))
+
+            enriched_missing = _drop_missing_fields(enriched_missing, ("订单ID", "关联订单"))
+            _set_artifact_field(enriched_fields, ("媒体类型", "mediaType"), "媒体类型", "TEXT_ONLY")
             return enriched_fields, enriched_missing
 
         if selected_order_id:
