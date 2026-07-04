@@ -448,7 +448,7 @@
                 class="reply-action"
                 hover-class="reply-action-hover"
                 :disabled="loading"
-                @click="startSuggestedPrompt(suggestion.prompt)"
+                @click="handleFollowupSuggestion(msg, suggestion)"
               >
                 <text class="reply-action-icon">{{ suggestion.icon }}</text>
                 <text class="reply-action-label">{{ suggestion.label }}</text>
@@ -710,8 +710,8 @@ const getFollowupSuggestions = (message) => {
   const hasConfirmation = artifacts.some(item => item.type === 'confirmation')
   if (hasConfirmation) {
     return uniqSuggestions([
-      { icon: '改', label: '继续修改草稿', prompt: '我想继续修改这个草稿' },
-      { icon: '补', label: '补充缺失信息', prompt: '我来补充这个草稿缺少的信息' },
+      { icon: '改', label: '继续修改草稿', action: 'edit-confirmation', prompt: '我想继续修改这个草稿' },
+      { icon: '补', label: '补充缺失信息', action: 'edit-confirmation', focusMissing: true, prompt: '我来补充这个草稿缺少的信息' },
       { icon: '查', label: '先再查一下', prompt: '先帮我再查一下相关信息，暂时不要执行' }
     ])
   }
@@ -1941,6 +1941,30 @@ const isArtifactActionDisabled = (artifact, action) => {
 const requestArtifactAction = (artifact, action) => {
   if (isArtifactActionDisabled(artifact, action)) return
   handleArtifactAction(artifact, action)
+}
+
+const getLatestConfirmationArtifact = (message) => {
+  const artifacts = Array.isArray(message?.artifacts) ? message.artifacts : []
+  return [...artifacts].reverse().find(artifact => artifact?.type === 'confirmation')
+}
+
+const openConfirmationEditor = async (message, focusMissing = false) => {
+  const artifact = getLatestConfirmationArtifact(message)
+  if (!artifact) return false
+
+  handleArtifactAction(artifact, 'edit')
+  await nextTick()
+  scrollToBottom()
+  showSuccess(focusMissing ? '已打开草稿编辑器，请补充缺失信息' : '已打开草稿编辑器')
+  return true
+}
+
+const handleFollowupSuggestion = async (message, suggestion) => {
+  if (suggestion?.action === 'edit-confirmation') {
+    const opened = await openConfirmationEditor(message, Boolean(suggestion.focusMissing))
+    if (opened) return
+  }
+  startSuggestedPrompt(suggestion?.prompt)
 }
 
 const buildArtifactConfirmMessage = (artifact, edited = false) => {

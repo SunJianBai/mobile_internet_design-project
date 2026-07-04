@@ -310,7 +310,7 @@
                             <label
                               v-for="(field, fieldIndex) in artifact.fields"
                               :key="`edit-${fieldIndex}`"
-                              class="artifact-edit-field"
+                              :class="['artifact-edit-field', { missing: isArtifactFieldMissing(field) }]"
                             >
                               <span>{{ field.label }}</span>
                               <textarea v-model="field.editValue" rows="2" :placeholder="field.missing ? '补充这个信息' : '修改内容'"></textarea>
@@ -400,7 +400,7 @@
                             class="reply-action"
                             type="button"
                             :disabled="sending"
-                            @click="startSuggestedPrompt(suggestion.prompt)"
+                            @click="handleFollowupSuggestion(message, suggestion)"
                           >
                             <span>{{ suggestion.icon }}</span>
                             {{ suggestion.label }}
@@ -678,8 +678,8 @@ function getFollowupSuggestions(message) {
   const hasConfirmation = artifacts.some(item => item.type === 'confirmation')
   if (hasConfirmation) {
     return uniqSuggestions([
-      { icon: '改', label: '继续修改草稿', prompt: '我想继续修改这个草稿' },
-      { icon: '补', label: '补充缺失信息', prompt: '我来补充这个草稿缺少的信息' },
+      { icon: '改', label: '继续修改草稿', action: 'edit-confirmation', prompt: '我想继续修改这个草稿' },
+      { icon: '补', label: '补充缺失信息', action: 'edit-confirmation', focusMissing: true, prompt: '我来补充这个草稿缺少的信息' },
       { icon: '查', label: '先再查一下', prompt: '先帮我再查一下相关信息，暂时不要执行' }
     ])
   }
@@ -1505,6 +1505,36 @@ function handleArtifactAction(artifact, action) {
   if (action === 'cancel') {
     sendMessageText(artifact?.cancelMessage || `取消这个草稿：${title}`)
   }
+}
+
+function getLatestConfirmationArtifact(message) {
+  const artifacts = Array.isArray(message?.artifacts) ? message.artifacts : []
+  return [...artifacts].reverse().find(item => item?.type === 'confirmation')
+}
+
+async function openConfirmationEditor(message, focusMissing = false) {
+  const artifact = getLatestConfirmationArtifact(message)
+  if (!artifact) return false
+
+  handleArtifactAction(artifact, 'edit')
+  await nextTick()
+
+  const selector = focusMissing
+    ? '.artifact-edit-field.missing textarea, .artifact-edit-field textarea'
+    : '.artifact-edit-field textarea'
+  const target = document.querySelector(selector)
+  target?.focus?.()
+  target?.scrollIntoView?.({ block: 'center', behavior: 'smooth' })
+  ElMessage.info(focusMissing ? '已打开草稿编辑器，请补充缺失信息' : '已打开草稿编辑器')
+  return true
+}
+
+async function handleFollowupSuggestion(message, suggestion) {
+  if (suggestion?.action === 'edit-confirmation') {
+    const opened = await openConfirmationEditor(message, Boolean(suggestion.focusMissing))
+    if (opened) return
+  }
+  startSuggestedPrompt(suggestion?.prompt)
 }
 
 function handleArtifactPromptAction(action) {
