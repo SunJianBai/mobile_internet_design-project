@@ -610,6 +610,89 @@ const uniqSuggestions = (items) => {
     .slice(0, 4)
 }
 
+const getArtifactActionByLabel = (artifact, patterns = []) => {
+  const actions = Array.isArray(artifact?.actions) ? artifact.actions : []
+  return actions.find(action => {
+    const label = String(action?.label || '')
+    return action?.prompt && patterns.some(pattern => label.includes(pattern))
+  })
+}
+
+const getArtifactPrimaryItem = (artifact) => {
+  const items = Array.isArray(artifact?.items) ? artifact.items : []
+  return items.find(item => item?.title || item?.prompt || item?.route) || null
+}
+
+const getArtifactContextTitle = (artifact, fallback = '刚才的结果') => {
+  const item = getArtifactPrimaryItem(artifact)
+  const field = (artifact?.fields || []).find(entry =>
+    ['地点', '目的地', '终点', '标题', '任务', '活动'].includes(String(entry?.label || '')) &&
+    !isArtifactFieldMissing(entry)
+  )
+  const fieldValue = field ? formatArtifactValue(field.value) : ''
+  return String(item?.title || fieldValue || artifact?.title || fallback).trim()
+}
+
+const pushArtifactActionSuggestion = (suggestions, artifact, labels, fallback) => {
+  const action = getArtifactActionByLabel(artifact, labels)
+  suggestions.push({
+    ...fallback,
+    prompt: action?.prompt || fallback.prompt
+  })
+}
+
+const appendArtifactFollowups = (suggestions, artifacts) => {
+  artifacts.forEach(artifact => {
+    const type = String(artifact?.type || '')
+    const title = getArtifactContextTitle(artifact)
+
+    if (type === 'guide') {
+      pushArtifactActionSuggestion(suggestions, artifact, ['生成草稿', '约伴', '创建'], {
+        icon: '约',
+        label: '基于地点约伴',
+        prompt: `基于${title}，帮我整理一个约伴活动草稿，先不要发布`
+      })
+      suggestions.push(
+        { icon: '路', label: '规划到这里路线', prompt: `帮我规划去${title}的路线，并继续展示地图` },
+        { icon: '换', label: '换一批更近的', prompt: '换一批更近或评分更高的附近推荐，并继续展示地图' }
+      )
+    }
+
+    if (type === 'weather') {
+      suggestions.push(
+        { icon: '备', label: '给我室内备选', prompt: '如果天气不适合，帮我推荐一个室内备选安排' },
+        { icon: '图', label: '结合附近地点', prompt: '结合刚才天气，帮我找附近适合的地点并展示地图' }
+      )
+    }
+
+    if (type === 'order') {
+      pushArtifactActionSuggestion(suggestions, artifact, ['申请加入', '报名', '加入'], {
+        icon: '申',
+        label: '申请第一条',
+        prompt: '我想申请加入刚才第一条约伴活动，先帮我生成确认草稿，不要直接提交'
+      })
+      pushArtifactActionSuggestion(suggestions, artifact, ['动态', '发布'], {
+        icon: '写',
+        label: '整理成动态',
+        prompt: `把${title}整理成一条校园动态草稿，先不要发布`
+      })
+    }
+
+    if (type === 'content') {
+      pushArtifactActionSuggestion(suggestions, artifact, ['评论'], {
+        icon: '评',
+        label: '评论第一条',
+        prompt: '我想评论刚才第一条动态，先帮我生成确认草稿'
+      })
+      suggestions.push({ icon: '找', label: '找相关约伴', prompt: `根据${title}，帮我找相关约伴活动` })
+    }
+
+    if (type === 'memory') {
+      suggestions.push({ icon: '记', label: '查看 AI 记忆', prompt: '打开 AI 记忆并帮我总结当前保存了哪些偏好' })
+    }
+  })
+}
+
 const getFollowupSuggestions = (message) => {
   if (!message || message.role !== 'assistant' || message.loading) return []
 
@@ -625,6 +708,8 @@ const getFollowupSuggestions = (message) => {
   }
 
   const suggestions = []
+  appendArtifactFollowups(suggestions, artifacts)
+
   const hasMap = /地图|附近|路线|店|餐厅|影院|按摩|地点|地址|map-card|高德|restaurant|cafe|cinema|massage/i.test(content)
   const hasWeather = /天气|温度|下雨|风|户外|跑步|出行|weather|rain|wind/i.test(content)
   const hasOrder = /约伴|订单|活动|报名|加入|篮球|羽毛球|自习|order|activity|join/i.test(content)
@@ -663,6 +748,12 @@ let activeStreamController = null
 let activeMapDrag = null
 let streamStateSyncTimer = null
 let hashChangeHandler = null
+let localMessageSeq = 0
+
+const createLocalMessageId = (role) => {
+  localMessageSeq += 1
+  return `local-${role}-${Date.now()}-${localMessageSeq}`
+}
 
 const AGENT_EVENT_TITLES = {
   agent_step: '智能体执行中',
@@ -1310,6 +1401,7 @@ const appendStoredStreamMessage = (cid) => {
 }
 
 const syncStoredStreamMessage = () => {
+  if (activeStreamController) return
   if (!currentCid.value) return
   appendStoredStreamMessage(currentCid.value)
 }
@@ -1920,7 +2012,7 @@ const sendMessage = async () => {
   inputText.value = ''
   clearDraft()
 
-  const assistantLocalId = `local-assistant-${Date.now()}`
+  const assistantLocalId = createLocalMessageId('assistant')
   const assistantMsg = {
     localId: assistantLocalId,
     role: 'assistant',
@@ -1932,7 +2024,7 @@ const sendMessage = async () => {
   }
 
   messages.value.push({
-    localId: `local-user-${Date.now()}`,
+    localId: createLocalMessageId('user'),
     role: 'user',
     content: userMessage
   })
@@ -1943,6 +2035,7 @@ const sendMessage = async () => {
     detail: '正在建立 AI 流式连接并等待智能体调度',
     state: 'running'
   }))
+  activeStreamController = { pending: true }
   saveStreamState(currentCid.value, assistantMsg, userMessage)
   scrollToBottom()
 

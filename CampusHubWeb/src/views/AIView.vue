@@ -93,7 +93,7 @@
               </div>
             </div>
             <div v-else class="messages-inner">
-              <div v-for="message in messages" :key="message.mid" :class="['message-item', message.role]">
+              <div v-for="message in messages" :key="message.localId || message.mid" :class="['message-item', message.role]">
                 <template v-if="message.role !== 'tool'">
                   <!-- 用户消息 -->
                   <div v-if="message.role === 'user'" class="user-message">
@@ -530,6 +530,7 @@ const memoryPanelSubtitle = computed(() => {
 let activeStreamController = null
 let streamStateUnsubscribe = null
 let streamStateReloading = false
+let localMessageSeq = 0
 
 const COMPLETED_UI_STATE_KEY = 'campushub_ai_completed_ui_states'
 const COMPLETED_UI_STATE_TTL = 24 * 60 * 60 * 1000
@@ -563,6 +564,11 @@ const promptStarters = [
   }
 ]
 
+function createLocalMessageId(role) {
+  localMessageSeq += 1
+  return `local-${role}-${Date.now()}-${localMessageSeq}`
+}
+
 function uniqSuggestions(items) {
   const seen = new Set()
   return items.filter(item => {
@@ -570,6 +576,89 @@ function uniqSuggestions(items) {
     seen.add(item.label)
     return true
   }).slice(0, 4)
+}
+
+function getArtifactActionByLabel(artifact, patterns = []) {
+  const actions = Array.isArray(artifact?.actions) ? artifact.actions : []
+  return actions.find(action => {
+    const label = String(action?.label || '')
+    return action?.prompt && patterns.some(pattern => label.includes(pattern))
+  })
+}
+
+function getArtifactPrimaryItem(artifact) {
+  const items = Array.isArray(artifact?.items) ? artifact.items : []
+  return items.find(item => item?.title || item?.prompt || item?.route) || null
+}
+
+function getArtifactContextTitle(artifact, fallback = '刚才的结果') {
+  const item = getArtifactPrimaryItem(artifact)
+  const field = (artifact?.fields || []).find(entry =>
+    ['地点', '目的地', '终点', '标题', '任务', '活动'].includes(String(entry?.label || '')) &&
+    !isArtifactFieldMissing(entry)
+  )
+  const fieldValue = field ? formatArtifactValue(field.value) : ''
+  return String(item?.title || fieldValue || artifact?.title || fallback).trim()
+}
+
+function pushArtifactActionSuggestion(suggestions, artifact, labels, fallback) {
+  const action = getArtifactActionByLabel(artifact, labels)
+  suggestions.push({
+    ...fallback,
+    prompt: action?.prompt || fallback.prompt
+  })
+}
+
+function appendArtifactFollowups(suggestions, artifacts) {
+  artifacts.forEach(artifact => {
+    const type = String(artifact?.type || '')
+    const title = getArtifactContextTitle(artifact)
+
+    if (type === 'guide') {
+      pushArtifactActionSuggestion(suggestions, artifact, ['生成草稿', '约伴', '创建'], {
+        icon: '约',
+        label: '基于地点约伴',
+        prompt: `基于${title}，帮我整理一个约伴活动草稿，先不要发布`
+      })
+      suggestions.push(
+        { icon: '路', label: '规划到这里路线', prompt: `帮我规划去${title}的路线，并继续展示地图` },
+        { icon: '换', label: '换一批更近的', prompt: '换一批更近或评分更高的附近推荐，并继续展示地图' }
+      )
+    }
+
+    if (type === 'weather') {
+      suggestions.push(
+        { icon: '备', label: '给我室内备选', prompt: '如果天气不适合，帮我推荐一个室内备选安排' },
+        { icon: '图', label: '结合附近地点', prompt: '结合刚才天气，帮我找附近适合的地点并展示地图' }
+      )
+    }
+
+    if (type === 'order') {
+      pushArtifactActionSuggestion(suggestions, artifact, ['申请加入', '报名', '加入'], {
+        icon: '申',
+        label: '申请第一条',
+        prompt: '我想申请加入刚才第一条约伴活动，先帮我生成确认草稿，不要直接提交'
+      })
+      pushArtifactActionSuggestion(suggestions, artifact, ['动态', '发布'], {
+        icon: '写',
+        label: '整理成动态',
+        prompt: `把${title}整理成一条校园动态草稿，先不要发布`
+      })
+    }
+
+    if (type === 'content') {
+      pushArtifactActionSuggestion(suggestions, artifact, ['评论'], {
+        icon: '评',
+        label: '评论第一条',
+        prompt: '我想评论刚才第一条动态，先帮我生成确认草稿'
+      })
+      suggestions.push({ icon: '找', label: '找相关约伴', prompt: `根据${title}，帮我找相关约伴活动` })
+    }
+
+    if (type === 'memory') {
+      suggestions.push({ icon: '记', label: '查看 AI 记忆', prompt: '打开 AI 记忆并帮我总结当前保存了哪些偏好' })
+    }
+  })
 }
 
 function getFollowupSuggestions(message) {
@@ -587,6 +676,8 @@ function getFollowupSuggestions(message) {
   }
 
   const suggestions = []
+  appendArtifactFollowups(suggestions, artifacts)
+
   const hasMap = /地图|附近|路线|店|餐厅|影院|按摩|地点|地址|map-card|高德/.test(content)
   const hasWeather = /天气|温度|下雨|风|户外|跑步|出行/.test(content)
   const hasOrder = /约伴|订单|活动|报名|加入|篮球|羽毛球|自习/.test(content)
@@ -970,6 +1061,7 @@ function appendStoredStreamMessage(cid) {
 }
 
 function handleStreamStateChange() {
+  if (activeStreamController) return
   const cid = currentConvId.value
   if (!cid) return
 
@@ -1492,7 +1584,7 @@ async function handleSendMessage() {
     if (!currentConvId.value) return
   }
 
-  const userMsg = { mid: Date.now(), role: 'user', content: inputMessage.value, loading: false }
+  const userMsg = { localId: createLocalMessageId('user'), role: 'user', content: inputMessage.value, loading: false }
   messages.value.push(userMsg)
   const msgText = inputMessage.value
   inputMessage.value = ''
@@ -1500,7 +1592,7 @@ async function handleSendMessage() {
   resetTextareaHeight()
   scrollToBottom()
 
-  const aiMsg = { mid: Date.now() + 1, role: 'assistant', content: '', loading: true, operations: [], artifacts: [] }
+  const aiMsg = { localId: createLocalMessageId('assistant'), role: 'assistant', content: '', loading: true, operations: [], artifacts: [] }
   messages.value.push(aiMsg)
   applyAgentEvent(aiMsg, 'agent_step', JSON.stringify({
     phase: 'client',
@@ -1508,6 +1600,7 @@ async function handleSendMessage() {
     detail: '正在建立 AI 流式连接并等待智能体调度',
     state: 'running'
   }))
+  activeStreamController = { pending: true }
   saveStreamState(currentConvId.value, aiMsg, msgText)
   scrollToBottom()
 
@@ -4816,6 +4909,39 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-field) {
   background: #101a2a !important;
   border-color: rgba(148, 163, 184, 0.24) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-result-item) {
+  background: #101a2a !important;
+  border-color: rgba(148, 163, 184, 0.24) !important;
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-result-item:hover:not(:disabled)) {
+  background: #1f2d44 !important;
+  border-color: rgba(154, 184, 255, 0.38) !important;
+  box-shadow: none !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-result-title) {
+  color: #edf4ff !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-result-subtitle),
+:global(html[data-theme='dark'] .ai-view .artifact-result-meta),
+:global(html[data-theme='dark'] .ai-view .artifact-result-hint) {
+  color: #94a3b8 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-result-badge) {
+  background: #223554 !important;
+  color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-result-cta) {
+  background: rgba(96, 165, 250, 0.16) !important;
+  border-color: rgba(147, 197, 253, 0.3) !important;
+  color: #bfdbfe !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .plan-step) {
