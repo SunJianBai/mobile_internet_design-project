@@ -321,6 +321,38 @@
       }
     },
     {
+      "id": "multi_step_english_weather_places_then_order",
+      "category": "multi_step",
+      "message": "Tomorrow check weather and nearby indoor board game places; if suitable, draft an order but ask me first",
+      "expect": {
+        "primary_intent": "multi_step",
+        "domain": "multi",
+        "operation_type": "mixed",
+        "requires_confirmation": true,
+        "next_action": "execute_read_tools",
+        "confirmation_gate": false,
+        "suggested_agents": ["map_weather", "order_draft"],
+        "read_then_write_target": "order",
+        "max_duration_ms": 1000
+      }
+    },
+    {
+      "id": "multi_step_english_places_then_content",
+      "category": "multi_step",
+      "message": "Find quiet cafes near BIT Liangxiang, compare distance, and if I pick one later help me write a post",
+      "expect": {
+        "primary_intent": "multi_step",
+        "domain": "multi",
+        "operation_type": "mixed",
+        "requires_confirmation": true,
+        "next_action": "execute_read_tools",
+        "confirmation_gate": false,
+        "suggested_agents": ["map_weather", "content_draft"],
+        "read_then_write_target": "content",
+        "max_duration_ms": 1000
+      }
+    },
+    {
       "id": "order_create_from_map_card_missing_slots",
       "category": "order_write",
       "message": "基于地图里的「沁雨轩头疗馆」创建一个约伴订单草稿，地点坐标：116.170492, 39.728167。如果还缺少必要信息，请先让我补充；不要直接发布。",

@@ -852,19 +852,47 @@ def _normalize_intent_analysis(value: dict) -> dict:
     return result
 
 
-def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bool:
-    # This only triggers a senior-model review; it is not the final intent classifier.
+def _read_then_write_target(user_message: str) -> str | None:
     text = " ".join(str(user_message or "").split()).lower()
     if not text:
-        return False
+        return None
     if _has_any(text, ("如果还缺少", "如果缺少", "缺少必要信息", "请先让我补充", "先让我补充")):
-        return False
-    operation_type = (analysis.get("operation_type") or "").lower()
-    if operation_type in {"write", "mixed"}:
-        return False
-    read_cues = ("先", "找", "推荐", "看看", "查询", "附近", "有没有")
-    transition_cues = ("再", "然后", "之后", "如果", "合适", "不错")
-    write_cues = (
+        return None
+    read_cues = (
+        "先",
+        "找",
+        "推荐",
+        "看看",
+        "查询",
+        "附近",
+        "有没有",
+        "check",
+        "find",
+        "search",
+        "recommend",
+        "look up",
+        "nearby",
+        "near ",
+        "compare",
+        "show map",
+    )
+    transition_cues = (
+        "再",
+        "然后",
+        "之后",
+        "如果",
+        "合适",
+        "不错",
+        "later",
+        "after",
+        "then",
+        "if",
+        "if suitable",
+        "if i pick",
+        "once i pick",
+        "when i choose",
+    )
+    order_write_cues = (
         "创建",
         "新建",
         "建一个",
@@ -886,12 +914,50 @@ def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bo
         "约几个人",
         "约同学",
         "拉几个人",
+        "create order",
+        "create an order",
+        "draft an order",
+        "order draft",
+        "create activity",
+        "draft an activity",
+        "organize",
+        "sign up",
+        "apply",
     )
-    return (
-        any(cue in text for cue in read_cues)
-        and any(cue in text for cue in transition_cues)
-        and any(cue in text for cue in write_cues)
+    content_write_cues = (
+        "发布动态",
+        "发个动态",
+        "发一条",
+        "写动态",
+        "写个动态",
+        "动态草稿",
+        "发帖",
+        "写帖子",
+        "post",
+        "write a post",
+        "draft a post",
+        "publish a post",
+        "campus post",
+        "write a dynamic",
+        "draft content",
     )
+    has_read = any(cue in text for cue in read_cues)
+    has_transition = any(cue in text for cue in transition_cues)
+    if not (has_read and has_transition):
+        return None
+    if any(cue in text for cue in content_write_cues):
+        return "content"
+    if any(cue in text for cue in order_write_cues):
+        return "order"
+    return None
+
+
+def _looks_like_read_then_write_request(user_message: str, analysis: dict) -> bool:
+    # This only triggers a senior-model review; it is not the final intent classifier.
+    operation_type = (analysis.get("operation_type") or "").lower()
+    if operation_type in {"write", "mixed"}:
+        return False
+    return _read_then_write_target(user_message) is not None
 
 
 def _map_selection_index(text: str) -> int | None:
@@ -2102,19 +2168,23 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
         return None
     if _contains_blocking_write_negation(text):
         return None
-    if _looks_like_read_then_write_request(text, {}):
+    read_then_write_target = _read_then_write_target(text)
+    if read_then_write_target:
+        followup_agent = "content_draft" if read_then_write_target == "content" else "order_draft"
+        followup_label = "动态草稿" if read_then_write_target == "content" else "订单草稿"
         return {
             "primary_intent": "multi_step",
             "domain": "multi",
             "operation_type": "mixed",
             "requires_confirmation": True,
             "confidence": 0.86,
-            "summary": "用户想先查询推荐信息，再根据结果决定是否创建草稿",
+            "summary": f"用户想先查询推荐信息，再根据结果决定是否创建{followup_label}",
             "missing_slots": [],
-            "suggested_agents": ["map_weather", "order_draft"],
+            "suggested_agents": ["map_weather", followup_agent],
             "next_action": "execute_read_tools",
             "reviewed": False,
             "safety_shortcut": True,
+            "read_then_write_target": read_then_write_target,
             "router_timeout": False,
         }
 

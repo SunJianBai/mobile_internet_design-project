@@ -52,10 +52,16 @@ def expected_values(expect: dict[str, Any], key: str) -> list[Any] | None:
 
 def check_expectation(actual: dict[str, Any], expect: dict[str, Any], duration_ms: int | None = None) -> list[str]:
     failures: list[str] = []
-    for key in ("primary_intent", "domain", "operation_type", "next_action"):
+    for key in ("primary_intent", "domain", "operation_type", "next_action", "read_then_write_target"):
         allowed = expected_values(expect, key)
         if allowed is not None and actual.get(key) not in allowed:
             failures.append(f"{key}: expected one of {allowed}, got {actual.get(key)!r}")
+
+    expected_agents = expect.get("suggested_agents")
+    if expected_agents is not None:
+        actual_agents = actual.get("suggested_agents")
+        if actual_agents != expected_agents:
+            failures.append(f"suggested_agents: expected {expected_agents!r}, got {actual_agents!r}")
 
     if "requires_confirmation" in expect:
         actual_value = bool(actual.get("requires_confirmation"))
