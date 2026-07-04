@@ -171,7 +171,7 @@
                             <div
                               v-for="(digest, digestIndex) in getArtifactDigest(artifact)"
                               :key="`${artifactIndex}-digest-${digestIndex}`"
-                              class="artifact-digest-chip"
+                              :class="['artifact-digest-chip', digest.kind ? `is-${digest.kind}` : '']"
                             >
                               <span class="artifact-digest-label">{{ digest.label }}</span>
                               <span class="artifact-digest-value">{{ digest.value }}</span>
@@ -1044,6 +1044,12 @@ const ARTIFACT_TYPE_LABELS = {
   generic: '结果卡片'
 }
 
+const ARTIFACT_DIGEST_FIELD_GROUPS = [
+  { labels: ['确认门', '确认策略'], label: '确认', kind: 'confirm', maxLength: 18 },
+  { labels: ['调度守卫', '安全策略', '写操作保护'], label: '守卫', kind: 'guard', maxLength: 14 },
+  { labels: ['越界处理', '越界委派拦截'], label: '边界', kind: 'boundary', maxLength: 18 }
+]
+
 function getArtifactTypeLabel(artifact) {
   const type = String(artifact?.type || 'generic')
   return ARTIFACT_TYPE_LABELS[type] || '结果卡片'
@@ -1085,25 +1091,40 @@ function getArtifactPrimaryActionLabel(artifact) {
   return ''
 }
 
+function getArtifactDigestField(artifact, labels) {
+  const wanted = new Set(labels.map(label => String(label)))
+  return (artifact?.fields || []).find(field =>
+    wanted.has(String(field?.label || '')) && !isArtifactFieldMissing(field)
+  )
+}
+
 function getArtifactDigest(artifact) {
   const chips = []
   const countLabel = getArtifactCountLabel(artifact)
-  if (countLabel) chips.push({ label: '内容', value: countLabel })
+  if (countLabel) chips.push({ label: '内容', value: countLabel, kind: 'content' })
 
-  const guardField = (artifact?.fields || []).find(field =>
-    ['调度守卫', '安全策略', '写操作保护'].includes(String(field?.label || ''))
-  )
-  if (guardField && !isArtifactFieldMissing(guardField)) {
-    chips.push({ label: '守卫', value: truncateArtifactValue(formatArtifactValue(guardField.value), 14) })
-  }
+  ARTIFACT_DIGEST_FIELD_GROUPS.forEach(group => {
+    const field = getArtifactDigestField(artifact, group.labels)
+    if (field) {
+      chips.push({
+        label: group.label,
+        value: truncateArtifactValue(formatArtifactValue(field.value), group.maxLength),
+        kind: group.kind
+      })
+    }
+  })
 
   if (artifact?.type === 'confirmation') {
-    chips.push({ label: '状态', value: artifactHasMissingFields(artifact) ? '待补充' : '待确认' })
+    chips.push({
+      label: '状态',
+      value: artifactHasMissingFields(artifact) ? '待补充' : '待确认',
+      kind: 'status'
+    })
   } else if (artifact?.type === 'plan') {
-    chips.push({ label: '状态', value: '已规划' })
+    chips.push({ label: '状态', value: '已规划', kind: 'status' })
   }
 
-  return chips.slice(0, 3)
+  return chips.slice(0, artifact?.type === 'plan' ? 5 : 4)
 }
 
 function getConfirmationReviewKicker(artifact) {
@@ -1155,7 +1176,17 @@ function getRouteGuideSteps(artifact) {
 
 function getArtifactHighlights(artifact) {
   if (!['guide', 'weather', 'order', 'content', 'memory', 'user', 'plan'].includes(artifact?.type)) return []
-  const lowPriorityLabels = new Set(['安全策略', '写操作保护', '摘要', '建议', '下一步', '结果预览'])
+  const lowPriorityLabels = new Set([
+    '安全策略',
+    '写操作保护',
+    '调度守卫',
+    '确认门',
+    '越界处理',
+    '摘要',
+    '建议',
+    '下一步',
+    '结果预览'
+  ])
   const fields = (artifact?.fields || [])
     .filter(field => field && field.label && !isArtifactFieldMissing(field))
   const primaryFields = fields.filter(field => !lowPriorityLabels.has(String(field.label)))
@@ -2739,6 +2770,34 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.artifact-digest-chip.is-confirm {
+  background: rgba(20, 184, 166, 0.12);
+  border-color: rgba(20, 184, 166, 0.24);
+}
+.artifact-digest-chip.is-guard {
+  background: rgba(37, 99, 235, 0.11);
+  border-color: rgba(37, 99, 235, 0.22);
+}
+.artifact-digest-chip.is-boundary {
+  background: rgba(245, 158, 11, 0.12);
+  border-color: rgba(245, 158, 11, 0.24);
+}
+.artifact-digest-chip.is-status {
+  background: rgba(15, 23, 42, 0.05);
+  border-color: rgba(15, 23, 42, 0.1);
+}
+.artifact-digest-chip.is-confirm .artifact-digest-value {
+  color: #0f766e;
+}
+.artifact-digest-chip.is-guard .artifact-digest-value {
+  color: #1d4ed8;
+}
+.artifact-digest-chip.is-boundary .artifact-digest-value {
+  color: #b45309;
+}
+.artifact-digest-chip.is-status .artifact-digest-value {
+  color: #334155;
+}
 .artifact-highlights {
   display: flex;
   flex-wrap: wrap;
@@ -4225,6 +4284,42 @@ onBeforeUnmount(() => {
   color: #bfdbfe;
 }
 
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-confirm {
+  background: rgba(20, 184, 166, 0.14);
+  border-color: rgba(45, 212, 191, 0.28);
+}
+
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-guard {
+  background: rgba(59, 130, 246, 0.15);
+  border-color: rgba(147, 197, 253, 0.3);
+}
+
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-boundary {
+  background: rgba(245, 158, 11, 0.13);
+  border-color: rgba(251, 191, 36, 0.3);
+}
+
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-status {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: rgba(148, 163, 184, 0.2);
+}
+
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-confirm .artifact-digest-value {
+  color: #99f6e4;
+}
+
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-guard .artifact-digest-value {
+  color: #bfdbfe;
+}
+
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-boundary .artifact-digest-value {
+  color: #fde68a;
+}
+
+:global(:root[data-theme='dark']) .artifact-digest-chip.is-status .artifact-digest-value {
+  color: #cbd5e1;
+}
+
 :global(:root[data-theme='dark']) .artifact-progress-mark {
   background: linear-gradient(90deg, #93c5fd 0%, rgba(147, 197, 253, 0.24) 100%);
 }
@@ -4797,6 +4892,42 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-status-pill),
 :global(html[data-theme='dark'] .ai-view .artifact-digest-value) {
   color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-confirm) {
+  background: rgba(20, 184, 166, 0.14) !important;
+  border-color: rgba(45, 212, 191, 0.28) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-guard) {
+  background: rgba(59, 130, 246, 0.15) !important;
+  border-color: rgba(147, 197, 253, 0.3) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-boundary) {
+  background: rgba(245, 158, 11, 0.13) !important;
+  border-color: rgba(251, 191, 36, 0.3) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-status) {
+  background: rgba(148, 163, 184, 0.08) !important;
+  border-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-confirm .artifact-digest-value) {
+  color: #99f6e4 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-guard .artifact-digest-value) {
+  color: #bfdbfe !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-boundary .artifact-digest-value) {
+  color: #fde68a !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-digest-chip.is-status .artifact-digest-value) {
+  color: #cbd5e1 !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-progress-mark) {
