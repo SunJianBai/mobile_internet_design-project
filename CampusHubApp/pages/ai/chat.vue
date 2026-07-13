@@ -5129,6 +5129,92 @@ onUnmounted(detachActiveStream)
   background: #c8d0dc;
 }
 
+.chat-container {
+  background: #101722 !important;
+}
+
+.chat-container .messages-scroll {
+  background: #101722;
+}
+
+.chat-container .empty-state {
+  margin: 8rpx 0 20rpx;
+  padding: 42rpx 28rpx;
+  border: 1rpx solid rgba(96, 165, 250, 0.2) !important;
+  border-radius: 26rpx !important;
+  background:
+    radial-gradient(circle at 18% 10%, rgba(37, 99, 235, 0.18) 0, rgba(37, 99, 235, 0) 30%),
+    linear-gradient(145deg, rgba(17, 28, 44, 0.98) 0%, rgba(16, 23, 34, 0.98) 100%) !important;
+  color: #94a3b8;
+  box-shadow: inset 0 1rpx 0 rgba(255, 255, 255, 0.04), 0 18rpx 42rpx rgba(0, 0, 0, 0.2) !important;
+}
+
+.chat-container .empty-logo {
+  background: linear-gradient(135deg, #1d4ed8 0%, #0f766e 100%) !important;
+  color: #eff6ff !important;
+  box-shadow: 0 14rpx 32rpx rgba(37, 99, 235, 0.28) !important;
+}
+
+.chat-container .empty-title,
+.chat-container .starter-title {
+  color: #edf4ff;
+}
+
+.chat-container .empty-subtitle,
+.chat-container .starter-detail {
+  color: #94a3b8;
+}
+
+.chat-container .assistant-bubble,
+.chat-container .operation-timeline,
+.chat-container .artifact-card,
+.chat-container .starter-card,
+.chat-container .inline-map-card,
+.chat-container .memory-surface {
+  background: #172235 !important;
+  background-color: #172235 !important;
+  color: #edf4ff !important;
+  border-color: rgba(148, 163, 184, 0.22) !important;
+  box-shadow: 0 16rpx 34rpx rgba(0, 0, 0, 0.22) !important;
+}
+
+.chat-container .starter-card {
+  border-color: rgba(96, 165, 250, 0.22) !important;
+}
+
+.chat-container .starter-card-hover,
+.chat-container .starter-card:hover {
+  background: #1f2d44 !important;
+  border-color: rgba(96, 165, 250, 0.38) !important;
+  box-shadow: 0 18rpx 38rpx rgba(0, 0, 0, 0.24) !important;
+}
+
+.chat-container .starter-icon {
+  background: #223554;
+  color: #bfdbfe;
+}
+
+.chat-container .input-bar {
+  background: #0b1320;
+  border-top-color: rgba(148, 163, 184, 0.18);
+  box-shadow: 0 -10rpx 28rpx rgba(0, 0, 0, 0.18);
+}
+
+.chat-container .input {
+  background: #172235;
+  border-color: rgba(148, 163, 184, 0.22);
+  color: #edf4ff;
+}
+
+.chat-container .input::placeholder {
+  color: #64748b;
+}
+
+.chat-container .send-btn[disabled] {
+  background: #24344d;
+  color: #94a3b8;
+}
+
 .memory-mask {
   position: fixed;
   top: 0;
