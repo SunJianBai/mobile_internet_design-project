@@ -1,6 +1,6 @@
 import api from '../utils/axios'
 
-const baseUrl = import.meta.env.VITE_API_BASE_URL || '/api/v1'
+const baseUrl = import.meta.env.VITE_API_BASE_URL || `${import.meta.env.BASE_URL}api/v1`
 const streamBaseUrl =
   import.meta.env.VITE_STREAM_API_BASE_URL ||
   (import.meta.env.DEV && !import.meta.env.VITE_API_BASE_URL ? 'http://localhost:8080/api/v1' : baseUrl)

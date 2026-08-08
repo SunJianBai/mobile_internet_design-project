@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-BASE_URL="${1:-${PUBLIC_BASE_URL:-http://124.220.81.104}}"
+BASE_URL="${1:-${PUBLIC_BASE_URL:-https://sun227454.online/CampusHub}}"
 BASE_URL="${BASE_URL%/}"
 API_URL="$BASE_URL/api/v1/orders?page=1&size=1"
 RETRIES="${SMOKE_RETRIES:-10}"

@@ -13,8 +13,8 @@ function getLocalIP() {
 }
 
 const localIP = getLocalIP()
-// CI demo: production mode uses the public server entry point.
-const prodOrigin = 'http://124.220.81.104'
+// Production mode uses the public server entry point mounted under /CampusHub.
+const prodOrigin = 'https://sun227454.online/CampusHub'
 
 const devConfig = {
   baseURL: `http://${localIP}:8080/api/v1`,

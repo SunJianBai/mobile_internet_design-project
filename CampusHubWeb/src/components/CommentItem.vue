@@ -82,7 +82,7 @@ const emit = defineEmits(['reply', 'delete'])
 const authStore = useAuthStore()
 
 const fileBaseUrl =
-  import.meta.env.VITE_FILE_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:8080')
+  import.meta.env.VITE_FILE_BASE_URL || (import.meta.env.PROD ? import.meta.env.BASE_URL.replace(/\/$/, '') : 'http://localhost:8080')
 
 const resolveAvatarUrl = (url) => {
   if (!url) return url

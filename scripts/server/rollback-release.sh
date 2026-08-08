@@ -3,6 +3,7 @@ set -euo pipefail
 
 TARGET_TAG="${1:-}"
 DEPLOY_DIR="${DEPLOY_DIR:-/home/ubuntu/CampusHub}"
+LOCAL_SMOKE_BASE_URL="${LOCAL_SMOKE_BASE_URL:-http://127.0.0.1/CampusHub}"
 
 cd "$DEPLOY_DIR"
 
@@ -45,7 +46,7 @@ sudo env CAMPUSHUB_IMAGE_TAG="$TARGET_TAG" \
   docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 
 if [ -x scripts/server/smoke-test.sh ]; then
-  scripts/server/smoke-test.sh "http://127.0.0.1"
+  scripts/server/smoke-test.sh "$LOCAL_SMOKE_BASE_URL"
 fi
 
 echo "Rollback to $TARGET_TAG completed."

@@ -1,5 +1,5 @@
 param(
-  [string]$PublicBaseUrl = "http://124.220.81.104",
+  [string]$PublicBaseUrl = "https://sun227454.online/CampusHub",
   [string]$Ref = "main",
   [string]$ReleaseTag = "",
   [switch]$UseExistingBundle,

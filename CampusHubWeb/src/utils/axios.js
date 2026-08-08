@@ -2,9 +2,11 @@ import axios from 'axios'
 import logger from './logger'
 
 // 创建axios实例
+const apiBaseUrl = import.meta.env.VITE_API_BASE_URL || `${import.meta.env.BASE_URL}api/v1`
+
 const instance = axios.create({
   // 默认使用相对路径，配合 Vite 代理或同源部署，避免跨域和协议混用问题
-  baseURL: import.meta.env.VITE_API_BASE_URL || '/api/v1',
+  baseURL: apiBaseUrl,
   timeout: 300000, // 请求超时时间（5 分钟），增加以支撑较长的 AI 返回
   headers: {
     'Content-Type': 'application/json'
@@ -93,7 +95,7 @@ instance.interceptors.response.use(
         case 401:
           // 未授权，清除token并重定向到登录页
           localStorage.removeItem('token')
-          window.location.href = '/login'
+          window.location.href = `${import.meta.env.BASE_URL}login`
           break
         case 403:
           // 禁止访问

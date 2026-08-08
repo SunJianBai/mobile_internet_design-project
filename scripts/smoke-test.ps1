@@ -1,5 +1,5 @@
 param(
-  [string]$BaseUrl = "http://124.220.81.104",
+  [string]$BaseUrl = "https://sun227454.online/CampusHub",
   [int]$Retries = 10,
   [int]$DelaySeconds = 5
 )

@@ -9,7 +9,7 @@ param(
   [string]$PrTitle = "Demo CI/CD branch workflow",
   [string]$PrBody = "Demo PR for CI/CD recording.",
   [switch]$Deploy,
-  [string]$PublicBaseUrl = "http://124.220.81.104"
+  [string]$PublicBaseUrl = "https://sun227454.online/CampusHub"
 )
 
 $ErrorActionPreference = "Stop"

@@ -259,7 +259,7 @@ const userNickname = computed(() => user.value.nickname || '用户')
 const userInitial = computed(() => (user.value.nickname ? user.value.nickname.slice(0, 1) : '用'))
 
 const fileBaseUrl =
-  import.meta.env.VITE_FILE_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:8080')
+  import.meta.env.VITE_FILE_BASE_URL || (import.meta.env.PROD ? import.meta.env.BASE_URL.replace(/\/$/, '') : 'http://localhost:8080')
 const resolveAvatarUrl = (url) => {
   if (!url) return url
   if (/^https?:\/\//.test(url)) return url

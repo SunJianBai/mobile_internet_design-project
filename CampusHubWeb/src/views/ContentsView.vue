@@ -240,7 +240,7 @@ const pagination = reactive({
 })
 
 const fileBaseUrl =
-  import.meta.env.VITE_FILE_BASE_URL || (import.meta.env.PROD ? '' : 'http://localhost:8080')
+  import.meta.env.VITE_FILE_BASE_URL || (import.meta.env.PROD ? import.meta.env.BASE_URL.replace(/\/$/, '') : 'http://localhost:8080')
 
 const resolveMediaUrl = (url) => {
   if (!url) return url

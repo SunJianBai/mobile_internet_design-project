@@ -10,7 +10,7 @@ on:
       public_base_url:
         description: "Public URL used for smoke tests."
         required: false
-        default: "http://124.220.81.104"
+        default: "https://sun227454.online/CampusHub"
       use_existing_bundle:
         description: "Use an image bundle already uploaded to releases/campushub-images-<tag>.tar or .tar.gz."
         required: false
@@ -125,5 +125,4 @@ jobs:
 
       - name: External smoke test
         run: |
-          curl -fsSI --max-time 15 "$PUBLIC_BASE_URL/"
-          curl -fsS --max-time 15 "$PUBLIC_BASE_URL/api/v1/orders?page=1&size=1"
+          bash scripts/server/smoke-test.sh "$PUBLIC_BASE_URL"

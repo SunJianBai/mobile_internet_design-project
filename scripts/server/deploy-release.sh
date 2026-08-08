@@ -3,8 +3,10 @@ set -euo pipefail
 
 RELEASE_TAG="${1:-}"
 BUNDLE_PATH="${2:-}"
-PUBLIC_BASE_URL="${3:-${PUBLIC_BASE_URL:-http://124.220.81.104}}"
+PUBLIC_BASE_URL="${3:-${PUBLIC_BASE_URL:-https://sun227454.online/CampusHub}}"
 DEPLOY_DIR="${DEPLOY_DIR:-/home/ubuntu/CampusHub}"
+PUBLIC_BASE_PATH="$(printf '%s' "$PUBLIC_BASE_URL" | sed -E 's#^[a-zA-Z][a-zA-Z0-9+.-]*://[^/]*##; s#/*$##')"
+LOCAL_SMOKE_BASE_URL="http://127.0.0.1${PUBLIC_BASE_PATH}"
 
 if [ -z "$RELEASE_TAG" ]; then
   echo "Usage: scripts/server/deploy-release.sh <release-tag> <image-bundle> [public-base-url]" >&2
@@ -46,7 +48,7 @@ sudo env CAMPUSHUB_IMAGE_TAG="$RELEASE_TAG" \
   docker compose -f docker-compose.prod.yml --env-file .env.prod ps
 
 if [ -x scripts/server/smoke-test.sh ]; then
-  scripts/server/smoke-test.sh "http://127.0.0.1"
+  scripts/server/smoke-test.sh "$LOCAL_SMOKE_BASE_URL"
 fi
 
 echo "Release $RELEASE_TAG deployed successfully."
