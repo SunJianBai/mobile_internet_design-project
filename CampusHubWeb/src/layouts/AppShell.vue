@@ -62,7 +62,7 @@
       <span>{{ maintenanceNotice }}</span>
     </section>
 
-    <main class="app-main">
+    <main class="app-main" :class="{ 'app-main-ai': route.path.startsWith('/ai') }">
       <slot />
     </main>
   </div>
@@ -70,7 +70,7 @@
 
 <script setup>
 import { computed, onMounted, ref, watch } from 'vue'
-import { useRouter } from 'vue-router'
+import { useRoute, useRouter } from 'vue-router'
 import {
   ArrowDown,
   ChatDotRound,
@@ -87,6 +87,7 @@ import { getPublicSystemInfo } from '../services/system'
 import { useAuthStore } from '../stores/auth'
 
 const router = useRouter()
+const route = useRoute()
 const authStore = useAuthStore()
 
 const navItems = [

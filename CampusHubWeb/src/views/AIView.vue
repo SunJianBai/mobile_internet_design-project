@@ -1881,14 +1881,14 @@ const buildMapTileGrid = (lng, lat, zoom) => {
   const tilePoint = lngLatToTilePoint(lng, lat, zoom)
   const baseX = Math.floor(tilePoint.x)
   const baseY = Math.floor(tilePoint.y)
-  const startX = baseX - 1
-  const startY = baseY - 1
+  const startX = baseX - 2
+  const startY = baseY - 2
   const pointX = Math.round((tilePoint.x - startX) * 256)
   const pointY = Math.round((tilePoint.y - startY) * 256)
   const tiles = []
 
-  for (let row = 0; row < 3; row += 1) {
-    for (let col = 0; col < 3; col += 1) {
+  for (let row = 0; row < 5; row += 1) {
+    for (let col = 0; col < 5; col += 1) {
       const x = startX + col
       const y = startY + row
       tiles.push(`<img class="map-tile" alt="" loading="lazy" draggable="false" src="${getAmapTileUrl(x, y, zoom)}" />`)
@@ -2336,7 +2336,15 @@ onBeforeUnmount(() => {
 </script>
 
 <style scoped>
-.ai-view { width: 100%; height: calc(100vh - 60px); overflow: hidden; background: #fff; }
+.ai-view {
+  --ai-content-max: 1180px;
+  --ai-panel-max: 920px;
+  --ai-workspace-gutter: clamp(20px, 3vw, 56px);
+  width: 100%;
+  height: calc(100vh - 60px);
+  overflow: hidden;
+  background: #fff;
+}
 .ai-layout { display: flex; height: 100%; }
 
 /* ==================== 侧边栏（浅色风格） ==================== */
@@ -2408,7 +2416,7 @@ onBeforeUnmount(() => {
 .empty-title { margin: 0; font-size: 22px; font-weight: 600; color: #111; }
 .empty-subtitle { margin: 0; font-size: 14px; color: #9ca3af; }
 .prompt-gallery {
-  width: min(720px, 100%);
+  width: min(980px, 100%);
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: 10px;
@@ -2474,7 +2482,13 @@ onBeforeUnmount(() => {
 
 /* 消息列表 */
 .messages-container { flex: 1; overflow-y: auto; }
-.messages-inner { max-width: 768px; margin: 0 auto; padding: 24px 16px; }
+.messages-inner {
+  box-sizing: border-box;
+  width: min(var(--ai-content-max), calc(100% - (var(--ai-workspace-gutter) * 2)));
+  max-width: none;
+  margin: 0 auto;
+  padding: 24px 0 28px;
+}
 
 .chat-empty-state {
   min-height: 100%;
@@ -2518,7 +2532,7 @@ onBeforeUnmount(() => {
   flex-wrap: wrap;
   justify-content: center;
   gap: 8px;
-  max-width: 560px;
+  max-width: min(760px, 100%);
   margin-top: 4px;
 }
 .quick-prompt {
@@ -2543,7 +2557,7 @@ onBeforeUnmount(() => {
 /* 用户消息 — 右对齐气泡 */
 .user-message { display: flex; justify-content: flex-end; }
 .user-message-text {
-  max-width: 70%; padding: 12px 16px; border-radius: 18px 18px 4px 18px;
+  max-width: min(76%, 820px); padding: 12px 16px; border-radius: 18px 18px 4px 18px;
   background: #2563eb; color: #fff; font-size: 15px; line-height: 1.6;
   white-space: pre-wrap; word-break: break-word;
 }
@@ -2746,13 +2760,16 @@ onBeforeUnmount(() => {
 }
 
 .artifact-list {
+  width: 100%;
   display: flex;
   flex-direction: column;
   gap: 10px;
   margin: 0 0 12px;
 }
 .artifact-card {
-  max-width: 520px;
+  box-sizing: border-box;
+  width: min(100%, var(--ai-panel-max));
+  max-width: none;
   padding: 14px;
   border: 1px solid #dbe5f3;
   border-radius: 10px;
@@ -3628,7 +3645,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  max-width: 440px;
+  box-sizing: border-box;
+  width: min(100%, var(--ai-panel-max));
+  max-width: none;
   margin: 10px 0;
   padding: 12px;
   border: 1px solid #e5e7eb;
@@ -3690,7 +3709,9 @@ onBeforeUnmount(() => {
   display: flex;
   align-items: center;
   gap: 12px;
-  max-width: 560px;
+  box-sizing: border-box;
+  width: min(100%, var(--ai-panel-max));
+  max-width: none;
   margin: 12px 0;
   padding: 13px 14px;
   border: 1px solid #bbf7d0;
@@ -3839,8 +3860,10 @@ onBeforeUnmount(() => {
 
 /* 地图卡片 */
 .markdown-body :deep(.map-card) {
+  box-sizing: border-box;
+  width: min(100%, var(--ai-panel-max));
+  max-width: none;
   margin: 14px 0;
-  max-width: 560px;
   overflow: hidden;
   border: 1px solid #dbeafe;
   border-radius: 14px;
@@ -3849,17 +3872,17 @@ onBeforeUnmount(() => {
 }
 .markdown-body :deep(.map-tile-stage) {
   position: relative;
-  height: 220px;
+  height: clamp(260px, 28vw, 360px);
   overflow: hidden;
   background: #e0ecf8;
 }
 .markdown-body :deep(.map-tile-grid) {
   position: absolute;
   display: grid;
-  grid-template-columns: repeat(3, 256px);
-  grid-template-rows: repeat(3, 256px);
-  width: 768px;
-  height: 768px;
+  grid-template-columns: repeat(5, 256px);
+  grid-template-rows: repeat(5, 256px);
+  width: 1280px;
+  height: 1280px;
 }
 .markdown-body :deep(.map-tile) {
   display: block;
@@ -3983,8 +4006,11 @@ onBeforeUnmount(() => {
 
 /* ==================== 输入区域 ==================== */
 .input-area {
-  padding: 12px 16px 16px;
-  max-width: 768px; width: 100%; margin: 0 auto;
+  box-sizing: border-box;
+  width: min(var(--ai-content-max), calc(100% - (var(--ai-workspace-gutter) * 2)));
+  max-width: none;
+  margin: 0 auto;
+  padding: 12px 0 16px;
 }
 .input-wrapper {
   display: flex; align-items: flex-end; gap: 8px;
@@ -5485,12 +5511,25 @@ onBeforeUnmount(() => {
   .chat-main { width: 100%; }
   .btn-expand { position: absolute; top: 12px; left: 12px; }
   .user-message-text { max-width: 85%; }
-  .messages-inner { padding: 16px 12px; }
-  .input-area { padding: 12px; }
+  .messages-inner,
+  .input-area {
+    width: calc(100% - 24px);
+  }
+  .messages-inner { padding: 16px 0; }
+  .input-area { padding: 12px 0; }
   .empty-state { justify-content: flex-start; padding-top: 44px; }
   .prompt-gallery { grid-template-columns: 1fr; }
   .prompt-card { min-height: 74px; }
   .quick-prompts { max-width: 100%; }
+  .artifact-card,
+  .markdown-body :deep(.entity-link-card),
+  .markdown-body :deep(.execution-result-card),
+  .markdown-body :deep(.map-card) {
+    width: 100%;
+  }
+  .markdown-body :deep(.map-tile-stage) {
+    height: 240px;
+  }
   .operation-overview {
     align-items: stretch;
     flex-direction: column;
