@@ -8,8 +8,8 @@
 
 ## 在线体验
 
-- Web 体验入口：http://124.220.81.104/
-- API 基础地址：http://124.220.81.104/api/v1
+- Web 体验入口：https://sun227454.online/CampusHub
+- API 基础地址：https://sun227454.online/CampusHub/api/v1
 - Android APK：请在 GitHub Releases 下载 `CampusHubApp.apk`
 
 CampusHub 是一个面向校园用户的活动预约、动态分享与 AI 助手系统。项目采用前后端分离架构，包含 Vue Web 端、uni-app 移动端、Spring Boot 后端和 Python AI Agent，并提供 Docker 镜像包部署脚本，适合课程展示、局域网演示和服务器生产部署。
@@ -193,6 +193,7 @@ artifacts/campushub-images-<release-tag>.tar
 ## 文档
 
 - [CI/CD 文档](docs/CI-CD.md)
+- [AI Agent 架构与优化演进](docs/AI-Agent架构与优化演进.md)
 - [接口文档](docs/SystemAnalysis/接口文档.md)
 - [Controller-Service 对接文档](docs/SystemAnalysis/controller-service对接文档.md)
 - [数据库模型设计](docs/SystemAnalysis/数据库模型设计.md)
