@@ -752,6 +752,8 @@ const AGENT_EVENT_TITLES = {
   status: '处理中'
 }
 
+const LIVE_PLAN_ARTIFACT_ID = 'execution-plan'
+
 const OPERATION_PHASE_LABELS = {
   intent: '意图',
   intent_review: '意图复核',
@@ -918,7 +920,7 @@ function normalizeArtifact(eventName, data) {
   const fields = Array.isArray(payload.fields) ? payload.fields : []
   const actions = Array.isArray(payload.actions) ? payload.actions : []
   const steps = Array.isArray(payload.steps) ? payload.steps : []
-  return {
+  const artifact = {
     ...payload,
     type,
     fields: fields.map(field => {
@@ -937,6 +939,13 @@ function normalizeArtifact(eventName, data) {
       .filter(step => step.title || step.detail),
     editing: false
   }
+  if (type === 'plan') {
+    artifact.id = artifact.id || LIVE_PLAN_ARTIFACT_ID
+    artifact.live = artifact.live !== false
+    artifact.intermediate = artifact.intermediate !== false
+    artifact.collapsed = Boolean(artifact.collapsed)
+  }
+  return artifact
 }
 
 function readStreamStates() {
@@ -1155,6 +1164,12 @@ function mergeArtifactInto(target, nextArtifact) {
     target.collapsed = userCollapsed
   }
   if (userCollapsed !== undefined) target.userCollapsed = userCollapsed
+  if (target.type === 'plan') {
+    target.id = target.id || LIVE_PLAN_ARTIFACT_ID
+    target.live = target.live !== false
+    target.intermediate = target.intermediate !== false
+    target.collapsed = Boolean(target.collapsed)
+  }
 }
 
 function mergeArtifactOnMessage(message, artifact) {
@@ -1194,6 +1209,15 @@ function buildOperationPlanSteps(message) {
 function mergePlanSteps(existingSteps = [], liveSteps = [], finalState = '') {
   const result = existingSteps.map(step => ({ ...step }))
   liveSteps.forEach(step => {
+    if (['completed', 'failed'].includes(step.state) && (step.phase || step.event)) {
+      result.forEach(item => {
+        const samePhase = String(item?.phase || '') === String(step.phase || '')
+        const sameEvent = String(item?.event || '') === String(step.event || '')
+        if (samePhase && sameEvent && ['running', 'pending'].includes(item.state)) {
+          item.state = step.state === 'failed' ? 'failed' : 'completed'
+        }
+      })
+    }
     const index = result.findIndex((item, itemIndex) =>
       getPlanStepIdentity(item, itemIndex) === step.id ||
       (!String(item?.id || '').startsWith('operation:') && String(item?.title || '') === step.title)
@@ -1233,10 +1257,47 @@ function refreshPlanArtifactProgress(artifact) {
   }
 }
 
+function createLivePlanArtifact(liveSteps = []) {
+  return {
+    id: LIVE_PLAN_ARTIFACT_ID,
+    type: 'plan',
+    title: '本轮执行进度',
+    description: '实时跟随 Agent 事件更新，完成后自动折叠。',
+    fields: [
+      { label: '来源', value: 'SSE 实时事件', editValue: 'SSE 实时事件' },
+      { label: '状态', value: '执行中', editValue: '执行中' }
+    ],
+    steps: liveSteps,
+    state: 'running',
+    live: true,
+    intermediate: true,
+    collapsed: false,
+    editing: false
+  }
+}
+
+function ensureLivePlanArtifact(message, liveSteps = []) {
+  if (!message) return null
+  if (!Array.isArray(message.artifacts)) message.artifacts = []
+  let artifact = message.artifacts.find(item => item?.type === 'plan')
+  if (!artifact && liveSteps.length) {
+    artifact = createLivePlanArtifact(liveSteps)
+    message.artifacts.unshift(artifact)
+  }
+  if (!artifact) return null
+  artifact.id = artifact.id || LIVE_PLAN_ARTIFACT_ID
+  artifact.live = artifact.live !== false
+  artifact.intermediate = artifact.intermediate !== false
+  if (artifact.collapsed === undefined) artifact.collapsed = false
+  return artifact
+}
+
 function syncLivePlanArtifacts(message, options = {}) {
-  if (!message?.artifacts?.length) return
+  if (!message) return
   const finalState = options.finalState || ''
   const liveSteps = buildOperationPlanSteps(message)
+  ensureLivePlanArtifact(message, liveSteps)
+  if (!message.artifacts?.length) return
   message.artifacts.forEach(artifact => {
     if (!isLivePlanArtifact(artifact)) return
     artifact.steps = mergePlanSteps(artifact.steps || [], liveSteps, finalState)
@@ -1374,16 +1435,13 @@ function getArtifactTypeLabel(artifact) {
 
 function getArtifactIdentity(artifact) {
   if (!artifact) return ''
+  if (artifact.type === 'plan') return LIVE_PLAN_ARTIFACT_ID
   if (artifact.id) return String(artifact.id)
   return `${artifact.type || 'generic'}:${artifact.title || ''}:${artifact.actionKind || artifact.action_kind || ''}`
 }
 
 function isLivePlanArtifact(artifact) {
-  return artifact?.type === 'plan' && (
-    artifact.id === 'execution-plan' ||
-    artifact.live ||
-    artifact.intermediate
-  )
+  return artifact?.type === 'plan'
 }
 
 function isArtifactCollapsed(artifact) {
@@ -1894,8 +1952,9 @@ async function handleSendMessage() {
   resetTextareaHeight()
   scrollToBottom()
 
-  const aiMsg = { localId: createLocalMessageId('assistant'), role: 'assistant', content: '', loading: true, operations: [], artifacts: [] }
-  messages.value.push(aiMsg)
+  const assistantDraft = { localId: createLocalMessageId('assistant'), role: 'assistant', content: '', loading: true, operations: [], artifacts: [] }
+  messages.value.push(assistantDraft)
+  const aiMsg = messages.value[messages.value.length - 1]
   applyAgentEvent(aiMsg, 'agent_step', JSON.stringify({
     phase: 'client',
     title: '已发送消息',
