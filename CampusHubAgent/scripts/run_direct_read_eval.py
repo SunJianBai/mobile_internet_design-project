@@ -839,7 +839,9 @@ async def scenario_map_weather_combo_returns_two_artifacts() -> DirectReadResult
     event_artifact_types = [
         item.get("data", {}).get("type")
         for item in actual.get("events", [])
-        if item.get("event") == "artifact" and isinstance(item.get("data"), dict)
+        if item.get("event") == "artifact"
+        and isinstance(item.get("data"), dict)
+        and item.get("data", {}).get("type") != "plan"
     ]
     if "北京今日天气" not in actual.get("reply", ""):
         failures.append("combined map/weather reply should include weather guidance")
@@ -889,7 +891,9 @@ async def scenario_route_request_returns_route_artifact() -> DirectReadResult:
     artifact_events = [
         item.get("data", {})
         for item in actual.get("events", [])
-        if item.get("event") == "artifact" and isinstance(item.get("data"), dict)
+        if item.get("event") == "artifact"
+        and isinstance(item.get("data"), dict)
+        and item.get("data", {}).get("type") != "plan"
     ]
     if actual.get("reply", "").count(":::map") < 2:
         failures.append("route reply should render both origin and destination maps")
@@ -1221,6 +1225,86 @@ async def scenario_execution_plan_surfaces_missing_slots() -> DirectReadResult:
     return DirectReadResult("execution_plan_surfaces_missing_slots", not failures, failures, {"plan": plan})
 
 
+async def scenario_execution_plan_streams_live_updates() -> DirectReadResult:
+    from app import agent as agent_module
+
+    events: list[dict[str, Any]] = []
+
+    async def emit(event: dict[str, Any]) -> None:
+        item = dict(event)
+        data = item.get("data")
+        if isinstance(data, str):
+            try:
+                item["data"] = json.loads(data)
+            except json.JSONDecodeError:
+                pass
+        events.append(item)
+
+    sink_token = agent_module._event_sink.set(emit)
+    plan_token = agent_module._active_plan_artifact.set(None)
+    try:
+        plan = await agent_module._emit_execution_plan({
+            "primary_intent": "order.search",
+            "domain": "order",
+            "operation_type": "read",
+            "requires_confirmation": False,
+            "suggested_agents": ["order_query"],
+            "next_action": "execute_read_tools",
+        })
+        await agent_module._emit_event("agent_step", {
+            "phase": "order",
+            "title": "Call order search tool",
+            "detail": "Fetching matching orders",
+            "state": "running",
+        })
+        await agent_module._emit_event("tool_result", {
+            "phase": "order",
+            "title": "Order search completed",
+            "detail": "Found 2 candidate orders",
+            "state": "completed",
+        })
+        await agent_module._emit_final_execution_plan(plan, "completed")
+    finally:
+        agent_module._active_plan_artifact.reset(plan_token)
+        agent_module._event_sink.reset(sink_token)
+
+    plan_events = [
+        item.get("data") for item in events
+        if item.get("event") == "artifact"
+        and isinstance(item.get("data"), dict)
+        and item["data"].get("type") == "plan"
+    ]
+    final_plan = plan_events[-1] if plan_events else {}
+    titles = [
+        step.get("title") for step in final_plan.get("steps", [])
+        if isinstance(step, dict)
+    ]
+    progress = final_plan.get("progress") if isinstance(final_plan.get("progress"), dict) else {}
+
+    failures: list[str] = []
+    if len(plan_events) < 4:
+        failures.append(f"expected repeated live plan artifact events, got {len(plan_events)}")
+    if plan_events and plan_events[0].get("collapsed"):
+        failures.append("initial plan event should be expanded while executing")
+    if "Call order search tool" not in titles:
+        failures.append("live plan should include the running tool step")
+    if "Order search completed" not in titles:
+        failures.append("live plan should include the completed tool-result step")
+    if final_plan.get("collapsed") is not True:
+        failures.append(f"final plan should be collapsed, got {final_plan.get('collapsed')!r}")
+    if final_plan.get("state") != "completed":
+        failures.append(f"final plan should be completed, got {final_plan.get('state')!r}")
+    if progress.get("completed") != progress.get("total"):
+        failures.append(f"final plan progress should be complete, got {progress!r}")
+
+    return DirectReadResult(
+        "execution_plan_streams_live_updates",
+        not failures,
+        failures,
+        {"plan_events": plan_events, "events": events},
+    )
+
+
 async def run_all() -> list[DirectReadResult]:
     scenarios = [
         scenario_map_search_returns_followup_artifact,
@@ -1245,6 +1329,7 @@ async def run_all() -> list[DirectReadResult]:
         scenario_user_search_returns_result_artifact,
         scenario_execution_plan_describes_tool_path,
         scenario_execution_plan_surfaces_missing_slots,
+        scenario_execution_plan_streams_live_updates,
     ]
     return [await scenario() for scenario in scenarios]
 

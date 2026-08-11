@@ -8,6 +8,7 @@ import json
 import logging
 import asyncio
 import contextvars
+import copy
 import hashlib
 import re
 import time
@@ -57,9 +58,11 @@ from app.prompts import (
 logger = logging.getLogger(__name__)
 
 _event_sink: contextvars.ContextVar = contextvars.ContextVar("agent_event_sink", default=None)
+_active_plan_artifact: contextvars.ContextVar = contextvars.ContextVar("agent_active_plan_artifact", default=None)
 _delegation_state: contextvars.ContextVar = contextvars.ContextVar("agent_delegation_state", default=None)
 _allowed_delegation_agents: contextvars.ContextVar = contextvars.ContextVar("agent_allowed_delegation_agents", default=None)
 
+EXECUTION_PLAN_ARTIFACT_ID = "execution-plan"
 MAIN_AGENT_RECURSION_LIMIT = 12
 SUB_AGENT_RECURSION_LIMIT = 8
 MAX_MAIN_DELEGATIONS = 4
@@ -540,8 +543,159 @@ def _json_data(payload: dict) -> str:
 
 async def _emit_event(event: str, payload: dict):
     sink = _event_sink.get()
+    plan_update = _update_active_execution_plan_from_event(event, payload)
     if sink:
         await sink({"event": event, "data": _json_data(payload)})
+        if plan_update:
+            await sink({"event": "artifact", "data": _json_data(plan_update)})
+
+
+def _compact_plan_key(value: object) -> str:
+    return re.sub(r"\s+", " ", str(value or "").strip()).lower()[:120]
+
+
+def _plan_step_state(value: object, fallback: str = "running") -> str:
+    state = str(value or "").strip().lower()
+    return state if state in {"running", "completed", "pending", "failed"} else fallback
+
+
+def _event_step_title(event: str, payload: dict) -> str:
+    title = str(payload.get("title") or "").strip()
+    if title:
+        return title
+    if event == "intent":
+        return "意图分析完成"
+    if event == "confirm_required":
+        return "等待用户确认"
+    if event == "artifact":
+        return "生成结果卡片"
+    if event == "tool_start":
+        return "调用工具"
+    if event == "tool_result":
+        return "工具返回结果"
+    return str(event or "执行步骤")
+
+
+def _event_step_detail(event: str, payload: dict) -> str:
+    for key in ("detail", "description", "summary", "message"):
+        value = str(payload.get(key) or "").strip()
+        if value:
+            return value
+    if event == "intent":
+        parts = [
+            str(payload.get("primary_intent") or "").strip(),
+            str(payload.get("operation_type") or "").strip(),
+        ]
+        return " · ".join(part for part in parts if part)
+    return ""
+
+
+def _event_step_state(event: str, payload: dict) -> str:
+    if event == "intent":
+        return "completed"
+    if event == "confirm_required":
+        return "pending"
+    if event == "artifact":
+        return _plan_step_state(payload.get("state"), "completed")
+    if event == "tool_result":
+        return _plan_step_state(payload.get("state"), "completed")
+    return _plan_step_state(payload.get("state"), "running")
+
+
+def _plan_artifact_public_copy(plan: dict) -> dict:
+    public = copy.deepcopy(plan)
+    for key in list(public.keys()):
+        if str(key).startswith("_"):
+            public.pop(key, None)
+    return public
+
+
+def _sync_execution_plan_progress(plan: dict) -> None:
+    steps = [step for step in plan.get("steps") or [] if isinstance(step, dict)]
+    completed = sum(1 for step in steps if step.get("state") == "completed")
+    active = next(
+        (step for step in reversed(steps) if step.get("state") in {"running", "pending"}),
+        steps[-1] if steps else {},
+    )
+    plan["progress"] = {
+        "completed": completed,
+        "total": len(steps),
+        "current": active.get("title") or "",
+        "current_state": active.get("state") or plan.get("state") or "running",
+    }
+
+
+def _update_active_execution_plan_from_event(event: str, payload: dict | None) -> dict | None:
+    plan = _active_plan_artifact.get()
+    if not isinstance(plan, dict) or not isinstance(payload, dict):
+        return None
+    if event == "artifact" and payload.get("type") == "plan":
+        return None
+
+    title = _event_step_title(event, payload)
+    detail = _event_step_detail(event, payload)
+    state = _event_step_state(event, payload)
+    phase = str(payload.get("phase") or payload.get("domain") or payload.get("type") or event)
+    step_id = f"live:{event}:{_compact_plan_key(phase)}:{_compact_plan_key(title)}"
+    step = {
+        "id": step_id,
+        "title": title,
+        "detail": detail,
+        "state": state,
+        "phase": phase,
+        "event": event,
+    }
+
+    steps = plan.setdefault("steps", [])
+    if state in {"running", "pending"}:
+        for item in steps:
+            if isinstance(item, dict) and item.get("state") == "running":
+                item["state"] = "completed"
+
+    target = next(
+        (
+            item for item in steps
+            if isinstance(item, dict)
+            and (
+                item.get("id") == step_id
+                or (
+                    not str(item.get("id") or "").startswith("live:")
+                    and _compact_plan_key(item.get("title")) == _compact_plan_key(title)
+                )
+            )
+        ),
+        None,
+    )
+    if isinstance(target, dict):
+        target.update({key: value for key, value in step.items() if value or key in {"state", "id"}})
+    else:
+        steps.append(step)
+
+    plan["state"] = "pending" if state == "pending" else "running"
+    plan["collapsed"] = False
+    _sync_execution_plan_progress(plan)
+    return _plan_artifact_public_copy(plan)
+
+
+async def _emit_final_execution_plan(plan: dict | None, final_state: str = "completed") -> None:
+    if not isinstance(plan, dict):
+        return
+    normalized_state = _plan_step_state(final_state, "completed")
+    for step in plan.get("steps") or []:
+        if not isinstance(step, dict):
+            continue
+        if normalized_state == "completed" and step.get("state") in {"running", "pending"}:
+            step["state"] = "completed"
+        elif normalized_state == "pending" and step.get("state") == "running":
+            step["state"] = "completed"
+    plan["state"] = normalized_state
+    plan["collapsed"] = True
+    plan["autoCollapsed"] = True
+    _sync_execution_plan_progress(plan)
+
+    sink = _event_sink.get()
+    if sink:
+        await sink({"event": "artifact", "data": _json_data(_plan_artifact_public_copy(plan))})
 
 
 def _consume_background_task_result(task: asyncio.Task) -> None:
@@ -5856,13 +6010,18 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
         {"label": "越界处理", "value": _delegation_boundary_display(intent_analysis)},
     ])
 
-    return {
+    steps = _build_execution_plan_steps(intent_analysis)
+    plan = {
+        "id": EXECUTION_PLAN_ARTIFACT_ID,
         "type": "plan",
         "title": "本轮执行计划",
         "description": "根据意图分析生成的可视化调度计划；写操作仍会先等待你确认。",
         "fields": fields,
-        "steps": _build_execution_plan_steps(intent_analysis),
+        "steps": steps,
         "state": "running",
+        "live": True,
+        "intermediate": True,
+        "collapsed": False,
         "intent": {
             "primary_intent": primary_intent,
             "next_action": intent_analysis.get("next_action"),
@@ -5871,6 +6030,8 @@ def _build_execution_plan_artifact(intent_analysis: dict) -> dict:
             "allowed_delegation_agents": _ordered_delegation_agents(_build_allowed_delegation_agents(intent_analysis)),
         },
     }
+    _sync_execution_plan_progress(plan)
+    return plan
 
 
 def _should_emit_execution_plan(intent_analysis: dict) -> bool:
@@ -5883,6 +6044,7 @@ async def _emit_execution_plan(intent_analysis: dict) -> dict | None:
     if not _should_emit_execution_plan(intent_analysis):
         return None
     artifact = _build_execution_plan_artifact(intent_analysis)
+    _active_plan_artifact.set(artifact)
     await _emit_event("artifact", artifact)
     return artifact
 
@@ -7215,6 +7377,7 @@ async def chat(
     user_message: str,
 ) -> dict:
     """非流式多 Agent 调用。"""
+    _active_plan_artifact.set(None)
     confirmed_execution = await build_confirmed_execution_response(user_info, history, user_message)
     if confirmed_execution:
         return confirmed_execution
@@ -7224,6 +7387,7 @@ async def chat(
     plan_artifact = await _emit_execution_plan(intent_analysis)
     if _requires_confirmation_gate(intent_analysis):
         artifact = await build_confirmation_artifact(user_info, history, user_message, intent_analysis)
+        await _emit_final_execution_plan(plan_artifact, "pending")
         return {
             "reply": artifact.get("reply", ""),
             "tool_calls": [],
@@ -7239,6 +7403,7 @@ async def chat(
 
     direct_read_result = await build_direct_read_response(user_info, user_message, intent_analysis)
     if direct_read_result:
+        await _emit_final_execution_plan(plan_artifact, "completed")
         if plan_artifact:
             direct_read_result["artifacts"] = [plan_artifact] + list(direct_read_result.get("artifacts") or [])
         return direct_read_result
@@ -7290,6 +7455,8 @@ async def chat(
         "detail": "正在把工具结果整理为可阅读的回答",
         "state": "completed",
     })
+
+    await _emit_final_execution_plan(plan_artifact, "completed")
 
     return {
         "reply": final_reply,

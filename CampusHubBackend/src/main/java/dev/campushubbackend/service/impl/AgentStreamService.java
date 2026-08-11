@@ -147,8 +147,12 @@ public class AgentStreamService {
             List<Object> artifacts
     ) {
         Map<String, Object> payload = parseEventPayload(data);
-        Map<String, Object> operation = agentService.normalizeUiOperation(eventName, payload, false);
-        mergeOperation(operations, operation);
+        boolean isPlanArtifact = "artifact".equals(eventName)
+                && "plan".equals(String.valueOf(payload.getOrDefault("type", "")));
+        if (!isPlanArtifact) {
+            Map<String, Object> operation = agentService.normalizeUiOperation(eventName, payload, false);
+            mergeOperation(operations, operation);
+        }
 
         if ("artifact".equals(eventName) || "confirm_required".equals(eventName)) {
             Map<String, Object> artifact = new LinkedHashMap<>(payload);
@@ -207,6 +211,9 @@ public class AgentStreamService {
         String key = artifactKey(artifact);
         for (Object item : artifacts) {
             if (item instanceof Map<?, ?> existing && key.equals(artifactKey(existing))) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> existingMap = (Map<String, Object>) existing;
+                existingMap.putAll(artifact);
                 return;
             }
         }

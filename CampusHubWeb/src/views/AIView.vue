@@ -149,7 +149,14 @@
                         <div
                           v-for="(artifact, artifactIndex) in message.artifacts"
                           :key="`${message.mid || message.localId || 'msg'}-artifact-${artifactIndex}`"
-                          :class="['artifact-card', `artifact-${artifact.type || 'generic'}`]"
+                          :class="[
+                            'artifact-card',
+                            `artifact-${artifact.type || 'generic'}`,
+                            {
+                              collapsed: isArtifactCollapsed(artifact),
+                              'is-live-plan': isLivePlanArtifact(artifact)
+                            }
+                          ]"
                         >
                           <div class="artifact-header">
                             <div class="artifact-icon">{{ getArtifactIcon(artifact) }}</div>
@@ -161,13 +168,25 @@
                               <span class="artifact-status-pill">{{ getArtifactTypeLabel(artifact) }}</span>
                               <span v-if="getArtifactCountLabel(artifact)" class="artifact-status-count">{{ getArtifactCountLabel(artifact) }}</span>
                             </div>
+                            <button
+                              v-if="isLivePlanArtifact(artifact)"
+                              class="artifact-collapse-toggle"
+                              type="button"
+                              @click.stop="toggleArtifactCollapsed(artifact)"
+                            >
+                              {{ isArtifactCollapsed(artifact) ? '展开' : '折叠' }}
+                            </button>
                           </div>
                           <div v-if="getArtifactPrimaryActionLabel(artifact)" class="artifact-progress-strip">
                             <span class="artifact-progress-mark"></span>
                             <span class="artifact-progress-label">下一步</span>
                             <span class="artifact-progress-value">{{ getArtifactPrimaryActionLabel(artifact) }}</span>
                           </div>
-                          <div v-if="getArtifactDigest(artifact).length" class="artifact-digest">
+                          <div v-if="isArtifactCollapsed(artifact)" class="plan-collapsed-summary">
+                            <span>{{ getPlanProgressLabel(artifact) }}</span>
+                            <strong>{{ getPlanCurrentTitle(artifact) }}</strong>
+                          </div>
+                          <div v-if="getArtifactDigest(artifact).length && !shouldHideArtifactBody(artifact)" class="artifact-digest">
                             <div
                               v-for="(digest, digestIndex) in getArtifactDigest(artifact)"
                               :key="`${artifactIndex}-digest-${digestIndex}`"
@@ -177,7 +196,7 @@
                               <span class="artifact-digest-value">{{ digest.value }}</span>
                             </div>
                           </div>
-                          <div v-if="getArtifactHighlights(artifact).length" class="artifact-highlights">
+                          <div v-if="getArtifactHighlights(artifact).length && !shouldHideArtifactBody(artifact)" class="artifact-highlights">
                             <div
                               v-for="(highlight, highlightIndex) in getArtifactHighlights(artifact)"
                               :key="`${artifactIndex}-highlight-${highlightIndex}`"
@@ -268,7 +287,7 @@
                               </span>
                             </button>
                           </div>
-                          <div v-if="artifact.type === 'plan' && artifact.steps?.length" class="plan-step-list">
+                          <div v-if="artifact.type === 'plan' && artifact.steps?.length && !shouldHideArtifactBody(artifact)" class="plan-step-list">
                             <div
                               v-for="(step, stepIndex) in artifact.steps"
                               :key="`plan-${artifactIndex}-${stepIndex}`"
@@ -296,7 +315,7 @@
                               <span class="content-draft-media">{{ getContentDraftMediaType(artifact) }}</span>
                             </div>
                           </div>
-                          <div v-if="artifact.fields?.length && !artifact.editing" class="artifact-fields">
+                          <div v-if="artifact.fields?.length && !artifact.editing && !shouldHideArtifactBody(artifact)" class="artifact-fields">
                             <div
                               v-for="(field, fieldIndex) in artifact.fields"
                               :key="fieldIndex"
@@ -1009,6 +1028,7 @@ function writeCompletedUiStates(states) {
 
 function saveCompletedUiState(cid, assistantMsg, userText) {
   if (!cid || !assistantMsg) return
+  finalizeLivePlanArtifacts(assistantMsg)
   const operations = finalizeOperationSummary(assistantMsg.operations || [])
   const artifacts = toPlainStreamValue(assistantMsg.artifacts, [])
   if (!operations.length && !artifacts.length) return
@@ -1084,8 +1104,14 @@ function mergeCompletedUiState(cid) {
     if (assistant.operations?.length && !target.operations?.length) {
       target.operations = toPlainStreamValue(assistant.operations, [])
     }
-    if (assistant.artifacts?.length && !target.artifacts?.length) {
-      target.artifacts = toPlainStreamValue(assistant.artifacts, [])
+    if (assistant.artifacts?.length) {
+      const restoredArtifacts = toPlainStreamValue(assistant.artifacts, [])
+      if (!target.artifacts?.length) {
+        target.artifacts = restoredArtifacts
+      } else {
+        restoredArtifacts.forEach(artifact => mergeArtifactOnMessage(target, artifact))
+      }
+      syncLivePlanArtifacts(target, { finalState: target.loading ? '' : undefined })
     }
     target.uiRestored = true
     applied += 1
@@ -1098,6 +1124,142 @@ function clearStreamState(cid) {
   const states = readStreamStates()
   delete states[String(cid)]
   writeStreamStates(states)
+}
+
+function mergeArtifactFields(existingFields = [], nextFields = []) {
+  const existingEditValues = new Map(
+    existingFields.map(field => [
+      String(field?.name || field?.key || field?.label || ''),
+      field?.editValue
+    ])
+  )
+  return nextFields.map(field => {
+    const key = String(field?.name || field?.key || field?.label || '')
+    if (!existingEditValues.has(key)) return field
+    return { ...field, editValue: existingEditValues.get(key) }
+  })
+}
+
+function mergeArtifactInto(target, nextArtifact) {
+  const wasEditing = target.editing
+  const wasEdited = target.edited
+  const userCollapsed = target.userCollapsed
+  const existingFields = Array.isArray(target.fields) ? target.fields : []
+  Object.assign(target, nextArtifact)
+  if (Array.isArray(nextArtifact.fields)) {
+    target.fields = mergeArtifactFields(existingFields, nextArtifact.fields)
+  }
+  if (wasEditing) target.editing = true
+  if (wasEdited) target.edited = true
+  if (userCollapsed !== undefined && isLivePlanArtifact(target) && !nextArtifact.autoCollapsed) {
+    target.collapsed = userCollapsed
+  }
+  if (userCollapsed !== undefined) target.userCollapsed = userCollapsed
+}
+
+function mergeArtifactOnMessage(message, artifact) {
+  if (!message.artifacts) message.artifacts = []
+  const key = getArtifactIdentity(artifact)
+  const index = message.artifacts.findIndex(item => getArtifactIdentity(item) === key)
+  if (index >= 0) {
+    mergeArtifactInto(message.artifacts[index], artifact)
+  } else {
+    message.artifacts.push(artifact)
+  }
+}
+
+function getPlanStepIdentity(step, index = 0) {
+  if (step?.id) return String(step.id)
+  return `base:${index}:${String(step?.title || '')}:${String(step?.phase || '')}`
+}
+
+function normalizePlanState(state, fallback = 'pending') {
+  return ['running', 'completed', 'pending', 'failed'].includes(state) ? state : fallback
+}
+
+function buildOperationPlanSteps(message) {
+  return (message.operations || [])
+    .filter(operation => operation?.phase !== 'client')
+    .map((operation, index) => ({
+      id: `operation:${operation.eventName || 'event'}:${operation.phase || 'phase'}:${String(operation.title || '').slice(0, 40)}`,
+      title: operation.title || '执行步骤',
+      detail: operation.detail || '',
+      state: normalizePlanState(operation.state || 'running', 'running'),
+      phase: operation.phase,
+      event: operation.eventName,
+      _order: index
+    }))
+}
+
+function mergePlanSteps(existingSteps = [], liveSteps = [], finalState = '') {
+  const result = existingSteps.map(step => ({ ...step }))
+  liveSteps.forEach(step => {
+    const index = result.findIndex((item, itemIndex) =>
+      getPlanStepIdentity(item, itemIndex) === step.id ||
+      (!String(item?.id || '').startsWith('operation:') && String(item?.title || '') === step.title)
+    )
+    if (index >= 0) {
+      result[index] = { ...result[index], ...step }
+    } else {
+      result.push(step)
+    }
+  })
+
+  if (finalState === 'completed') {
+    result.forEach(step => {
+      if (['running', 'pending'].includes(step.state)) step.state = 'completed'
+    })
+  } else if (finalState === 'pending') {
+    result.forEach(step => {
+      if (step.state === 'running') step.state = 'completed'
+    })
+  } else if (finalState === 'failed') {
+    const active = [...result].reverse().find(step => ['running', 'pending'].includes(step.state))
+    if (active) active.state = 'failed'
+  }
+
+  return result
+}
+
+function refreshPlanArtifactProgress(artifact) {
+  const steps = Array.isArray(artifact.steps) ? artifact.steps : []
+  const completed = steps.filter(step => step?.state === 'completed').length
+  const active = [...steps].reverse().find(step => ['running', 'pending', 'failed'].includes(step?.state)) || steps[steps.length - 1]
+  artifact.progress = {
+    completed,
+    total: steps.length,
+    current: active?.title || '',
+    currentState: active?.state || artifact.state || 'running'
+  }
+}
+
+function syncLivePlanArtifacts(message, options = {}) {
+  if (!message?.artifacts?.length) return
+  const finalState = options.finalState || ''
+  const liveSteps = buildOperationPlanSteps(message)
+  message.artifacts.forEach(artifact => {
+    if (!isLivePlanArtifact(artifact)) return
+    artifact.steps = mergePlanSteps(artifact.steps || [], liveSteps, finalState)
+    if (finalState) {
+      artifact.state = finalState
+      artifact.collapsed = true
+      artifact.autoCollapsed = true
+    } else if (
+      !artifact.userCollapsed &&
+      !artifact.autoCollapsed &&
+      !['completed', 'pending', 'failed'].includes(artifact.state)
+    ) {
+      artifact.collapsed = false
+    }
+    refreshPlanArtifactProgress(artifact)
+  })
+}
+
+function finalizeLivePlanArtifacts(message, finalState = '') {
+  const hasConfirmation = (message?.artifacts || []).some(artifact => artifact?.type === 'confirmation')
+  syncLivePlanArtifacts(message, {
+    finalState: finalState || (hasConfirmation ? 'pending' : 'completed')
+  })
 }
 
 function appendStoredStreamMessage(cid) {
@@ -1140,32 +1302,32 @@ function handleStreamStateChange() {
 }
 
 function applyAgentArtifact(message, eventName, data) {
-  if (!message.artifacts) message.artifacts = []
   const artifact = normalizeArtifact(eventName, data)
-  const key = artifact.id || `${artifact.type}:${artifact.title || ''}:${artifact.actionKind || ''}`
-  const exists = message.artifacts.some(item => (item.id || `${item.type}:${item.title || ''}:${item.actionKind || ''}`) === key)
-  if (!exists) {
-    message.artifacts.push(artifact)
-  }
+  mergeArtifactOnMessage(message, artifact)
 }
 
 function applyAgentEvent(message, eventName, data) {
   if (!message.operations) message.operations = []
-  const operation = normalizeAgentOperation(eventName, data)
-  const previous = [...message.operations].reverse().find(item => item.phase === operation.phase && item.eventName === operation.eventName)
-  if (previous && operation.state !== 'running') {
-    previous.title = operation.title
-    previous.detail = operation.detail
-    previous.state = operation.state
-  } else {
-    message.operations.push(operation)
-  }
-  if (operation.state === 'running' || operation.state === 'pending') {
-    message.status = operation.title
+  const payload = parseAgentEventData(data)
+  const isPlanArtifactEvent = eventName === 'artifact' && payload?.type === 'plan'
+  if (!isPlanArtifactEvent) {
+    const operation = normalizeAgentOperation(eventName, payload)
+    const previous = [...message.operations].reverse().find(item => item.phase === operation.phase && item.eventName === operation.eventName)
+    if (previous && operation.state !== 'running') {
+      previous.title = operation.title
+      previous.detail = operation.detail
+      previous.state = operation.state
+    } else {
+      message.operations.push(operation)
+    }
+    if (operation.state === 'running' || operation.state === 'pending') {
+      message.status = operation.title
+    }
   }
   if (eventName === 'confirm_required' || eventName === 'artifact') {
-    applyAgentArtifact(message, eventName, data)
+    applyAgentArtifact(message, eventName, payload)
   }
+  syncLivePlanArtifacts(message)
 }
 
 function formatArtifactValue(value) {
@@ -1210,6 +1372,50 @@ function getArtifactTypeLabel(artifact) {
   return ARTIFACT_TYPE_LABELS[type] || '结果卡片'
 }
 
+function getArtifactIdentity(artifact) {
+  if (!artifact) return ''
+  if (artifact.id) return String(artifact.id)
+  return `${artifact.type || 'generic'}:${artifact.title || ''}:${artifact.actionKind || artifact.action_kind || ''}`
+}
+
+function isLivePlanArtifact(artifact) {
+  return artifact?.type === 'plan' && (
+    artifact.id === 'execution-plan' ||
+    artifact.live ||
+    artifact.intermediate
+  )
+}
+
+function isArtifactCollapsed(artifact) {
+  return isLivePlanArtifact(artifact) && artifact.collapsed
+}
+
+function shouldHideArtifactBody(artifact) {
+  return isArtifactCollapsed(artifact)
+}
+
+function toggleArtifactCollapsed(artifact) {
+  if (!isLivePlanArtifact(artifact)) return
+  artifact.collapsed = !artifact.collapsed
+  artifact.userCollapsed = artifact.collapsed
+}
+
+function getPlanProgressLabel(artifact) {
+  const progress = artifact?.progress || {}
+  const total = Number(progress.total || (Array.isArray(artifact?.steps) ? artifact.steps.length : 0))
+  const completed = Number(progress.completed || 0)
+  if (!total) return '执行计划'
+  return `${Math.min(completed, total)}/${total} 步`
+}
+
+function getPlanCurrentTitle(artifact) {
+  const progressTitle = String(artifact?.progress?.current || '').trim()
+  if (progressTitle) return progressTitle
+  const steps = Array.isArray(artifact?.steps) ? artifact.steps : []
+  const active = [...steps].reverse().find(step => ['running', 'pending'].includes(step?.state)) || steps[steps.length - 1]
+  return active?.title || '计划已收起'
+}
+
 function getArtifactCountLabel(artifact) {
   const itemCount = Array.isArray(artifact?.items) ? artifact.items.length : 0
   if (itemCount) return `${itemCount} 项结果`
@@ -1242,7 +1448,7 @@ function getArtifactPrimaryActionLabel(artifact) {
   if (artifact?.type === 'weather') return '查看建议'
   if (['order', 'content', 'user'].includes(artifact?.type)) return '查看详情'
   if (artifact?.type === 'memory') return '可管理'
-  if (artifact?.type === 'plan') return '按计划执行'
+  if (artifact?.type === 'plan') return getPlanCurrentTitle(artifact) || '按计划执行'
   return ''
 }
 
@@ -1276,7 +1482,10 @@ function getArtifactDigest(artifact) {
       kind: 'status'
     })
   } else if (artifact?.type === 'plan') {
-    chips.push({ label: '状态', value: '已规划', kind: 'status' })
+    const stateLabel = artifact.state === 'completed'
+      ? '已完成'
+      : (artifact.state === 'pending' ? '待确认' : '执行中')
+    chips.push({ label: '状态', value: stateLabel, kind: 'status' })
   }
 
   return chips.slice(0, artifact?.type === 'plan' ? 5 : 4)
@@ -1726,6 +1935,7 @@ async function handleSendMessage() {
       doneReceived = true
       aiMsg.loading = false
       if (!aiMsg.content) aiMsg.content = '抱歉，AI 未返回有效内容。'
+      finalizeLivePlanArtifacts(aiMsg)
       sending.value = false
       activeStreamController = null
       saveCompletedUiState(streamCid, aiMsg, msgText)
@@ -1739,6 +1949,7 @@ async function handleSendMessage() {
     onError(errMsg) {
       aiMsg.loading = false
       aiMsg.content = `错误：${errMsg}`
+      finalizeLivePlanArtifacts(aiMsg, 'failed')
       sending.value = false
       activeStreamController = null
       saveStreamState(streamCid, aiMsg, msgText, 'error')
@@ -2907,6 +3118,24 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.artifact-collapse-toggle {
+  height: 28px;
+  padding: 0 10px;
+  border: 1px solid rgba(79, 70, 229, 0.18);
+  border-radius: 999px;
+  background: rgba(79, 70, 229, 0.08);
+  color: #4338ca;
+  font-size: 12px;
+  font-weight: 900;
+  line-height: 1;
+  cursor: pointer;
+  transition: background 0.18s ease, border-color 0.18s ease, color 0.18s ease;
+}
+.artifact-collapse-toggle:hover {
+  background: rgba(79, 70, 229, 0.14);
+  border-color: rgba(79, 70, 229, 0.28);
+  color: #3730a3;
+}
 .artifact-progress-strip {
   display: flex;
   align-items: center;
@@ -2938,6 +3167,32 @@ onBeforeUnmount(() => {
   font-size: 12px;
   font-weight: 900;
   line-height: 1.25;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.plan-collapsed-summary {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 10px;
+  padding: 8px 10px;
+  border: 1px solid rgba(79, 70, 229, 0.14);
+  border-radius: 8px;
+  background: rgba(79, 70, 229, 0.07);
+}
+.plan-collapsed-summary span {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-size: 11px;
+  font-weight: 900;
+}
+.plan-collapsed-summary strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #312e81;
+  font-size: 13px;
+  font-weight: 900;
+  line-height: 1.3;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -5005,6 +5260,36 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .artifact-plan) {
   background: linear-gradient(180deg, #172235 0%, #191f3a 100%) !important;
   border-color: rgba(129, 140, 248, 0.32) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-collapse-toggle),
+:global(:root[data-theme='dark']) .artifact-collapse-toggle {
+  background: #1f2d44 !important;
+  color: #dbeafe !important;
+  border-color: rgba(129, 140, 248, 0.3) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .artifact-collapse-toggle:hover),
+:global(:root[data-theme='dark']) .artifact-collapse-toggle:hover {
+  background: #2d4470 !important;
+  color: #f8fbff !important;
+  border-color: rgba(154, 184, 255, 0.42) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-collapsed-summary),
+:global(:root[data-theme='dark']) .plan-collapsed-summary {
+  background: rgba(79, 70, 229, 0.14) !important;
+  border-color: rgba(129, 140, 248, 0.26) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-collapsed-summary span),
+:global(:root[data-theme='dark']) .plan-collapsed-summary span {
+  color: #9aa9be !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .plan-collapsed-summary strong),
+:global(:root[data-theme='dark']) .plan-collapsed-summary strong {
+  color: #edf4ff !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .artifact-weather) {
