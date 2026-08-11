@@ -102,6 +102,21 @@ class DirectReadHarness:
                     }],
                 }, ensure_ascii=False)
             if "location" in args:
+                if args.get("keywords") == "桌游店":
+                    return json.dumps({
+                        "pois": [
+                            {
+                                "name": "星骰桌游吧",
+                                "address": "北京市房山区良乡大学城龙湖天街",
+                                "location": "116.181000,39.730800",
+                            },
+                            {
+                                "name": "卡坦岛桌游馆",
+                                "address": "北京市房山区良乡南关地铁站附近",
+                                "location": "116.172800,39.728100",
+                            },
+                        ],
+                    }, ensure_ascii=False)
                 if args.get("keywords") == "电影院":
                     return json.dumps({
                         "pois": [{
@@ -141,6 +156,33 @@ class DirectReadHarness:
         except Exception:
             parsed = data
         self.events.append({"event": event.get("event"), "data": parsed})
+
+
+class FakeMessage:
+    def __init__(self, content: str) -> None:
+        self.content = content
+
+
+class FakeReadSlotRouter:
+    def __init__(self, payload: dict[str, Any] | None = None) -> None:
+        self.payload = payload or {
+            "read_slots": {
+                "map": {
+                    "keywords": "桌游店",
+                    "campus": "LIANGXIANG",
+                    "center_name": "北京理工大学良乡校区",
+                    "radius": "3000",
+                }
+            }
+        }
+
+    async def ainvoke(self, _messages) -> FakeMessage:
+        return FakeMessage(json.dumps(self.payload, ensure_ascii=False))
+
+
+class FailingReadSlotRouter:
+    async def ainvoke(self, _messages) -> FakeMessage:
+        raise AssertionError("read slot router should not be called for this scenario")
 
 
 async def run_with_events(check: Callable[[DirectReadHarness], Awaitable[dict[str, Any]]]) -> dict[str, Any]:
@@ -206,6 +248,387 @@ async def scenario_map_search_returns_followup_artifact() -> DirectReadResult:
     if not any("不要直接发布" in prompt and "沐春足道" in prompt for prompt in prompts):
         failures.append("draft action prompt should include the selected POI and no-direct-publish guard")
     return DirectReadResult("map_search_returns_followup_artifact", not failures, failures, actual)
+
+
+async def scenario_model_read_slots_drive_map_keyword() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        result = await harness.agent.build_direct_read_response(
+            user_info={"uid": 4, "campus": "LIANGXIANG"},
+            user_message="帮我找学校附近的桌游店，只看地点和地图，别发布活动",
+            intent_analysis={
+                "primary_intent": "map.search",
+                "domain": "map",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "next_action": "execute_read_tools",
+                "read_slots": {
+                    "map": {
+                        "keywords": "桌游店",
+                        "campus": "LIANGXIANG",
+                        "center_name": "北京理工大学良乡校区",
+                        "radius": "3000",
+                    }
+                },
+            },
+        )
+        return {
+            "reply": result.get("reply") if result else "",
+            "artifacts": result.get("artifacts") if result else [],
+            "tool_calls": result.get("tool_calls") if result else [],
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    map_calls = [
+        call for call in actual.get("tool_calls", [])
+        if call.get("name") == "maps_around_search"
+    ]
+    first_args = map_calls[0].get("args", {}) if map_calls else {}
+    if first_args.get("keywords") != "桌游店":
+        failures.append(f"expected model slot keyword 桌游店, got {first_args.get('keywords')!r}")
+    if "桌游店" not in actual.get("reply", ""):
+        failures.append("map reply should preserve the model-extracted 桌游店 keyword")
+    if "校园周边" in actual.get("reply", "") or "休闲娱乐" in actual.get("reply", ""):
+        failures.append("map reply should not fall back to broad rule keywords when model slots exist")
+    artifact = (actual.get("artifacts") or [{}])[0]
+    fields = {field.get("label"): field.get("value") for field in artifact.get("fields", []) if isinstance(field, dict)}
+    if "桌游店" not in fields.get("当前搜索", ""):
+        failures.append(f"expected follow-up artifact to preserve 桌游店, got {fields.get('当前搜索')!r}")
+    return DirectReadResult("model_read_slots_drive_map_keyword", not failures, failures, actual)
+
+
+async def scenario_read_shortcut_still_gets_model_slots() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        original_router = harness.agent._get_router_llm
+        harness.agent._intent_cache.clear()
+        harness.agent._get_router_llm = lambda: FakeReadSlotRouter({
+            "read_slots": {
+                "map": {
+                    "keywords": "陶艺店",
+                    "campus": "LIANGXIANG",
+                    "center_name": "北京理工大学良乡校区",
+                    "radius": "3000",
+                }
+            }
+        })
+        try:
+            result = await harness.agent.chat(
+                user_info={"uid": 4, "campus": "LIANGXIANG"},
+                memories=[],
+                history=[],
+                user_message="帮我找学校附近的陶艺店，只看地点和地图，别发布活动",
+            )
+        finally:
+            harness.agent._get_router_llm = original_router
+            harness.agent._intent_cache.clear()
+        return {
+            "intent": result.get("intent") if result else {},
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    intent = actual.get("intent") if isinstance(actual.get("intent"), dict) else {}
+    slots = intent.get("read_slots") if isinstance(intent.get("read_slots"), dict) else {}
+    map_slots = slots.get("map") if isinstance(slots.get("map"), dict) else {}
+    if map_slots.get("keywords") != "陶艺店":
+        failures.append(f"expected read shortcut to be enriched with model slots, got {map_slots!r}")
+    if not intent.get("read_slot_model"):
+        failures.append("expected intent analysis to record read_slot_model=True after model slot extraction")
+    if intent.get("primary_intent") != "map.search":
+        failures.append(f"expected map.search intent, got {intent.get('primary_intent')!r}")
+    map_calls = [
+        call for call in actual.get("tool_calls", [])
+        if call.get("name") == "maps_around_search"
+    ]
+    first_args = map_calls[0].get("args", {}) if map_calls else {}
+    if first_args.get("keywords") != "陶艺店":
+        failures.append(f"expected chat tool call to use 陶艺店, got {first_args.get('keywords')!r}")
+    event_phases = [
+        item.get("data", {}).get("phase")
+        for item in actual.get("events", [])
+        if item.get("event") == "agent_step" and isinstance(item.get("data"), dict)
+    ]
+    if "read_slot_extraction" not in event_phases:
+        failures.append("expected streaming agent_step event for model read slot extraction")
+    return DirectReadResult("read_shortcut_still_gets_model_slots", not failures, failures, actual)
+
+
+async def scenario_requery_after_bad_map_results_uses_model_slots() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        original_router = harness.agent._get_router_llm
+        harness.agent._intent_cache.clear()
+        harness.agent._get_router_llm = lambda: FakeReadSlotRouter()
+        history = [
+            {
+                "role": "user",
+                "content": "帮我找学校附近的桌游店",
+            },
+            {
+                "role": "assistant",
+                "content": (
+                    "我先按“校园周边”找到了沐春足道和云庭SPA。\n"
+                    ":::map{\"name\":\"沐春足道\",\"lng\":116.1801,\"lat\":39.7312}:::"
+                ),
+            },
+        ]
+        try:
+            result = await harness.agent.chat(
+                user_info={"uid": 4, "campus": "LIANGXIANG"},
+                memories=[],
+                history=history,
+                user_message="这些和桌游没关系，重新找学校附近的桌游店，只看地图",
+            )
+        finally:
+            harness.agent._get_router_llm = original_router
+            harness.agent._intent_cache.clear()
+        return {
+            "intent": result.get("intent") if result else {},
+            "reply": result.get("reply") if result else "",
+            "tool_calls": result.get("tool_calls") if result else [],
+            "artifacts": result.get("artifacts") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    intent = actual.get("intent") if isinstance(actual.get("intent"), dict) else {}
+    map_calls = [
+        call for call in actual.get("tool_calls", [])
+        if call.get("name") == "maps_around_search"
+    ]
+    first_args = map_calls[0].get("args", {}) if map_calls else {}
+    if intent.get("primary_intent") != "map.search":
+        failures.append(f"expected requery to stay map.search, got {intent.get('primary_intent')!r}")
+    if not intent.get("read_slot_model"):
+        failures.append("expected requery repair to use model read-slot extraction")
+    if first_args.get("keywords") != "桌游店":
+        failures.append(f"expected corrected map keyword 桌游店, got {first_args.get('keywords')!r}")
+    if "星骰桌游吧" not in actual.get("reply", ""):
+        failures.append("expected corrected reply to show board-game POIs")
+    event_phases = [
+        item.get("data", {}).get("phase")
+        for item in actual.get("events", [])
+        if item.get("event") == "agent_step" and isinstance(item.get("data"), dict)
+    ]
+    if "read_slot_extraction" not in event_phases:
+        failures.append("expected repair turn to stream read_slot_extraction status")
+    return DirectReadResult("requery_after_bad_map_results_uses_model_slots", not failures, failures, actual)
+
+
+async def scenario_known_map_keyword_skips_slot_model() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        original_router = harness.agent._get_router_llm
+        harness.agent._intent_cache.clear()
+        harness.agent._get_router_llm = lambda: FailingReadSlotRouter()
+        try:
+            result = await harness.agent.chat(
+                user_info={"uid": 4, "campus": "LIANGXIANG"},
+                memories=[],
+                history=[],
+                user_message="我想要找3个人一起去洗脚按摩，有什么推荐的店吗",
+            )
+        finally:
+            harness.agent._get_router_llm = original_router
+            harness.agent._intent_cache.clear()
+        return {
+            "intent": result.get("intent") if result else {},
+            "reply": result.get("reply") if result else "",
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    intent = actual.get("intent") if isinstance(actual.get("intent"), dict) else {}
+    map_calls = [
+        call for call in actual.get("tool_calls", [])
+        if call.get("name") == "maps_around_search"
+    ]
+    first_args = map_calls[0].get("args", {}) if map_calls else {}
+    event_phases = [
+        item.get("data", {}).get("phase")
+        for item in actual.get("events", [])
+        if item.get("event") == "agent_step" and isinstance(item.get("data"), dict)
+    ]
+    if intent.get("primary_intent") != "map.search":
+        failures.append(f"expected massage recommendation to route as map.search, got {intent.get('primary_intent')!r}")
+    if intent.get("requires_confirmation"):
+        failures.append("read-only massage recommendation should not require confirmation")
+    if first_args.get("keywords") != "按摩":
+        failures.append(f"expected precise massage keyword, got {first_args.get('keywords')!r}")
+    if "read_slot_extraction" in event_phases:
+        failures.append("known massage keyword should stay on the fast path without model slot extraction")
+    return DirectReadResult("known_map_keyword_skips_slot_model", not failures, failures, actual)
+
+
+async def scenario_weather_and_board_game_search_use_model_slots() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        original_router = harness.agent._get_router_llm
+        harness.agent._intent_cache.clear()
+        harness.agent._get_router_llm = lambda: FakeReadSlotRouter({
+            "weather_context": True,
+            "read_slots": {
+                "weather": {"city": "北京"},
+                "map": {
+                    "keywords": "桌游店",
+                    "campus": "LIANGXIANG",
+                    "center_name": "北京理工大学良乡校区",
+                    "radius": "3000",
+                },
+            },
+        })
+        try:
+            result = await harness.agent.chat(
+                user_info={"uid": 4, "campus": "LIANGXIANG"},
+                memories=[],
+                history=[],
+                user_message="今天下雨的话就找学校附近室内桌游店，先只看地点和天气，别发布活动",
+            )
+        finally:
+            harness.agent._get_router_llm = original_router
+            harness.agent._intent_cache.clear()
+        return {
+            "intent": result.get("intent") if result else {},
+            "reply": result.get("reply") if result else "",
+            "tool_calls": result.get("tool_calls") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    intent = actual.get("intent") if isinstance(actual.get("intent"), dict) else {}
+    tool_calls = actual.get("tool_calls", [])
+    tool_names = [call.get("name") for call in tool_calls if isinstance(call, dict)]
+    map_calls = [call for call in tool_calls if call.get("name") == "maps_around_search"]
+    weather_calls = [call for call in tool_calls if call.get("name") == "maps_weather"]
+    if not intent.get("weather_context"):
+        failures.append("expected weather_context to stay true after model slot extraction")
+    if tool_names[:2] != ["maps_weather", "maps_around_search"]:
+        failures.append(f"expected weather before map search, got {tool_names!r}")
+    if not weather_calls or weather_calls[0].get("args", {}).get("city") != "北京":
+        failures.append(f"expected Beijing weather call, got {weather_calls!r}")
+    first_map_args = map_calls[0].get("args", {}) if map_calls else {}
+    if first_map_args.get("keywords") != "桌游店":
+        failures.append(f"expected board-game map keyword, got {first_map_args.get('keywords')!r}")
+    if "北京今日天气" not in actual.get("reply", "") or "星骰桌游吧" not in actual.get("reply", ""):
+        failures.append("expected combined reply to include weather summary and board-game POIs")
+    return DirectReadResult("weather_and_board_game_search_use_model_slots", not failures, failures, actual)
+
+
+async def scenario_route_to_nearest_board_game_uses_model_slots() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        original_router = harness.agent._get_router_llm
+        harness.agent._intent_cache.clear()
+        harness.agent._get_router_llm = lambda: FakeReadSlotRouter({
+            "read_slots": {
+                "map": {
+                    "keywords": "桌游店",
+                    "destination_keyword": "桌游店",
+                    "route_destination": "最近的桌游店",
+                    "campus": "LIANGXIANG",
+                    "center_name": "北京理工大学良乡校区",
+                    "radius": "3000",
+                }
+            }
+        })
+        try:
+            result = await harness.agent.chat(
+                user_info={"uid": 4, "campus": "LIANGXIANG"},
+                memories=[],
+                history=[],
+                user_message="从良乡校区到最近的桌游店怎么走，给我地图",
+            )
+        finally:
+            harness.agent._get_router_llm = original_router
+            harness.agent._intent_cache.clear()
+        return {
+            "intent": result.get("intent") if result else {},
+            "reply": result.get("reply") if result else "",
+            "tool_calls": result.get("tool_calls") if result else [],
+            "artifacts": result.get("artifacts") if result else [],
+            "events": harness.events,
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    tool_calls = actual.get("tool_calls", [])
+    tool_names = [call.get("name") for call in tool_calls if isinstance(call, dict)]
+    map_calls = [call for call in tool_calls if call.get("name") == "maps_around_search"]
+    route_artifacts = [
+        artifact for artifact in actual.get("artifacts", [])
+        if isinstance(artifact, dict) and artifact.get("title") == "路线规划结果"
+    ]
+    route_fields = {
+        field.get("label"): field.get("value")
+        for field in (route_artifacts[0].get("fields", []) if route_artifacts else [])
+        if isinstance(field, dict)
+    }
+    if tool_names[:2] != ["maps_around_search", "maps_direction_walking"]:
+        failures.append(f"expected nearby search before walking route, got {tool_names!r}")
+    first_map_args = map_calls[0].get("args", {}) if map_calls else {}
+    if first_map_args.get("keywords") != "桌游店":
+        failures.append(f"expected route destination keyword 桌游店, got {first_map_args.get('keywords')!r}")
+    if route_fields.get("终点") != "星骰桌游吧":
+        failures.append(f"expected route destination to resolve to 星骰桌游吧, got {route_fields.get('终点')!r}")
+    if actual.get("reply", "").count(":::map") < 2:
+        failures.append("expected route reply to include origin and destination maps")
+    return DirectReadResult("route_to_nearest_board_game_uses_model_slots", not failures, failures, actual)
+
+
+async def scenario_read_then_order_creation_stays_read_first() -> DirectReadResult:
+    async def check(harness: DirectReadHarness) -> dict[str, Any]:
+        original_router = harness.agent._get_router_llm
+        harness.agent._intent_cache.clear()
+        harness.agent._get_router_llm = lambda: FakeReadSlotRouter()
+        try:
+            result = await harness.agent.chat(
+                user_info={"uid": 4, "campus": "LIANGXIANG"},
+                memories=[],
+                history=[],
+                user_message="先帮我找学校附近的桌游店，合适的话之后帮我创建约伴订单，但现在先只看推荐",
+            )
+        finally:
+            harness.agent._get_router_llm = original_router
+            harness.agent._intent_cache.clear()
+        return {
+            "intent": result.get("intent") if result else {},
+            "reply": result.get("reply") if result else "",
+            "tool_calls": result.get("tool_calls") if result else [],
+            "artifacts": result.get("artifacts") if result else [],
+        }
+
+    actual = await run_with_events(check)
+    failures: list[str] = []
+    intent = actual.get("intent") if isinstance(actual.get("intent"), dict) else {}
+    tool_names = [call.get("name") for call in actual.get("tool_calls", []) if isinstance(call, dict)]
+    map_calls = [
+        call for call in actual.get("tool_calls", [])
+        if call.get("name") == "maps_around_search"
+    ]
+    guide_artifacts = [
+        artifact for artifact in actual.get("artifacts", [])
+        if isinstance(artifact, dict) and artifact.get("type") == "guide"
+    ]
+    action_labels = [
+        action.get("label")
+        for artifact in guide_artifacts
+        for action in artifact.get("actions", [])
+        if isinstance(action, dict)
+    ]
+    if intent.get("primary_intent") != "multi_step" or intent.get("operation_type") != "mixed":
+        failures.append(f"expected read-then-write request to be multi_step/mixed, got {intent!r}")
+    if intent.get("next_action") != "execute_read_tools":
+        failures.append(f"expected read-first next action, got {intent.get('next_action')!r}")
+    if any(name in {"create_order", "apply_order", "create_content"} for name in tool_names):
+        failures.append(f"read-first flow should not call write tools, got {tool_names!r}")
+    first_map_args = map_calls[0].get("args", {}) if map_calls else {}
+    if first_map_args.get("keywords") != "桌游店":
+        failures.append(f"expected read-first map keyword 桌游店, got {first_map_args.get('keywords')!r}")
+    if "用第一家创建约伴草稿" not in action_labels:
+        failures.append("expected map result card to expose a confirmation-gated order draft action")
+    return DirectReadResult("read_then_order_creation_stays_read_first", not failures, failures, actual)
 
 
 async def scenario_english_map_restaurant_uses_precise_keyword() -> DirectReadResult:
@@ -338,7 +761,7 @@ async def scenario_multi_step_content_draft_prefers_dynamic_action() -> DirectRe
         failures.append(f"expected the first action to write a dynamic draft, got {first_action.get('label')!r}")
     if first_action.get("primary") is not True:
         failures.append("multi-step content draft action should be primary")
-    if "沐春足道" not in first_action.get("prompt", "") or "不要直接发布" not in first_action.get("prompt", ""):
+    if "星骰桌游吧" not in first_action.get("prompt", "") or "不要直接发布" not in first_action.get("prompt", ""):
         failures.append("dynamic draft action should keep the selected POI and no-direct-publish guard")
     if not any(action.get("label") == "改为创建约伴草稿" for action in actions):
         failures.append("content-first map card should still offer an order draft alternative")
@@ -801,6 +1224,13 @@ async def scenario_execution_plan_surfaces_missing_slots() -> DirectReadResult:
 async def run_all() -> list[DirectReadResult]:
     scenarios = [
         scenario_map_search_returns_followup_artifact,
+        scenario_model_read_slots_drive_map_keyword,
+        scenario_read_shortcut_still_gets_model_slots,
+        scenario_requery_after_bad_map_results_uses_model_slots,
+        scenario_known_map_keyword_skips_slot_model,
+        scenario_weather_and_board_game_search_use_model_slots,
+        scenario_route_to_nearest_board_game_uses_model_slots,
+        scenario_read_then_order_creation_stays_read_first,
         scenario_english_map_restaurant_uses_precise_keyword,
         scenario_noisy_english_map_restaurant_uses_precise_keyword,
         scenario_multi_step_marks_primary_draft_action,

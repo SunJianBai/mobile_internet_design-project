@@ -67,6 +67,7 @@ MAX_DELEGATIONS_PER_AGENT = 2
 ROUTER_TIMEOUT_SECONDS = 14
 INTENT_REVIEW_TIMEOUT_SECONDS = 15
 INTENT_TOTAL_BUDGET_SECONDS = 29
+READ_SLOT_TIMEOUT_SECONDS = 8
 SUB_AGENT_TIMEOUT_SECONDS = 75
 INTENT_CACHE_TTL_SECONDS = 10 * 60
 INTENT_CACHE_MAX_SIZE = 128
@@ -176,6 +177,7 @@ DEFAULT_INTENT_ANALYSIS = {
     "missing_slots": [],
     "suggested_agents": ["general"],
     "next_action": "ask_clarification",
+    "read_slots": {},
 }
 
 INTENT_SEMANTIC_ROUTING_GUIDE = """
@@ -212,7 +214,14 @@ Return JSON only. Do not use Markdown. The JSON schema is:
   "summary": "one short Chinese sentence",
   "missing_slots": [],
   "suggested_agents": ["order_query|order_draft|content_query|content_draft|map_weather|user_profile|memory|general"],
-  "next_action": "direct_answer|ask_clarification|prepare_draft|execute_read_tools|wait_confirmation"
+  "next_action": "direct_answer|ask_clarification|prepare_draft|execute_read_tools|wait_confirmation",
+  "read_slots": {
+    "map": {"keywords": "exact POI category, e.g. 桌游店", "campus": "LIANGXIANG|ZHONGGUANCUN", "center_name": "search center name", "radius": "3000", "route_destination": "", "destination_keyword": ""},
+    "weather": {"city": "北京"},
+    "order": {"activity_type": "BASKETBALL|BADMINTON|MEAL|STUDY|MOVIE|RUNNING|GAME|OTHER", "campus": "LIANGXIANG|ZHONGGUANCUN"},
+    "content": {"keyword": "search keyword"},
+    "user": {"user_id": 12, "keyword": "nickname or student identifier"}
+  }
 }
 
 Decision principles:
@@ -350,6 +359,60 @@ JSON fields:
 
 Fast router first pass:
 {previous_analysis}
+
+User info:
+{user_info}
+
+Long-term memories:
+{memories}
+
+Recent conversation:
+{history}
+
+Current user message:
+{user_message}
+"""
+
+READ_SLOT_EXTRACTION_PROMPT = """You are CampusHub's read-tool slot extraction agent. The route/intent may already be decided; your job is to extract precise tool arguments from meaning and recent context.
+
+Return JSON only. No Markdown. No explanation.
+
+Important:
+- Do not classify the intent again unless it is necessary for slots.
+- Preserve the user's exact target category. Do not replace concrete categories with broad generic words.
+- For map searches, output the POI category that should be sent to AMap. Examples:
+  - "学校附近的桌游店" -> "桌游店"
+  - "良乡附近适合三个人去的足疗按摩店" -> "足疗按摩"
+  - "附近适合三个人吃饭的店" -> "餐厅"
+  - "安静咖啡馆" -> "咖啡馆"
+- If the user says "换一批" or "重新选择地点", use the latest concrete map target from the recent conversation, not a generic fallback.
+- If the user only wants people/classmates/partners instead of places, leave map keywords empty.
+- For order searches, use enum activity_type when obvious; otherwise leave it empty rather than guessing.
+- For content/user searches, extract concise search text or explicit IDs.
+- Keep write safety out of this response; writes are handled by the confirmation gate.
+
+Return this JSON shape:
+{{
+  "read_slots": {{
+    "map": {{
+      "keywords": "",
+      "campus": "",
+      "center_name": "",
+      "center_location": "",
+      "radius": "3000",
+      "route_destination": "",
+      "destination_keyword": ""
+    }},
+    "weather": {{"city": "北京"}},
+    "order": {{"activity_type": "", "campus": ""}},
+    "content": {{"keyword": ""}},
+    "user": {{"user_id": null, "keyword": ""}}
+  }},
+  "weather_context": false
+}}
+
+Intent analysis:
+{intent_analysis}
 
 User info:
 {user_info}
@@ -800,6 +863,7 @@ def _normalize_intent_analysis(value: dict) -> dict:
         result["missing_slots"] = []
     if not isinstance(result.get("suggested_agents"), list):
         result["suggested_agents"] = ["general"]
+    result["read_slots"] = _normalize_read_slots(result.get("read_slots"))
     try:
         result["confidence"] = float(result.get("confidence", 0))
     except (TypeError, ValueError):
@@ -850,6 +914,200 @@ def _normalize_intent_analysis(value: dict) -> dict:
     ):
         result["next_action"] = "prepare_draft"
     return result
+
+
+def _clean_slot_text(value, max_length: int = 80) -> str:
+    text = " ".join(str(value or "").strip().strip("`\"'“”‘’").split())
+    if text.lower() in {"none", "null", "undefined", "unknown", "n/a"}:
+        return ""
+    return text[:max_length]
+
+
+def _normalize_slot_campus(value: str) -> str:
+    text = str(value or "").strip().upper()
+    if not text:
+        return ""
+    if "中关村" in text or text == "ZHONGGUANCUN":
+        return "ZHONGGUANCUN"
+    if "良乡" in text or text == "LIANGXIANG":
+        return "LIANGXIANG"
+    if "珠海" in text or text == "ZHUHAI":
+        return "ZHUHAI"
+    if "西山" in text or text == "XISHAN":
+        return "XISHAN"
+    if text in {"OTHER_CAMPUS", "OTHER"}:
+        return "OTHER_CAMPUS"
+    return ""
+
+
+def _normalize_slot_radius(value) -> str:
+    text = _clean_slot_text(value, max_length=8)
+    if not text:
+        return ""
+    match = re.search(r"\d{3,5}", text)
+    if not match:
+        return ""
+    radius = int(match.group(0))
+    radius = max(500, min(radius, 10000))
+    return str(radius)
+
+
+def _normalize_slot_user_id(value) -> int | None:
+    if value in (None, ""):
+        return None
+    try:
+        parsed = int(value)
+        return parsed if parsed > 0 else None
+    except (TypeError, ValueError):
+        match = re.search(r"\d+", str(value))
+        return int(match.group(0)) if match else None
+
+
+def _normalize_read_slots(value) -> dict:
+    if not isinstance(value, dict):
+        return {}
+
+    normalized: dict[str, dict] = {}
+    map_value = value.get("map") if isinstance(value.get("map"), dict) else {}
+    if map_value:
+        map_slots = {
+            "keywords": _clean_slot_text(map_value.get("keywords") or map_value.get("keyword") or map_value.get("query"), 40),
+            "campus": _normalize_slot_campus(map_value.get("campus")),
+            "center_name": _clean_slot_text(map_value.get("center_name") or map_value.get("center"), 60),
+            "center_location": _clean_slot_text(map_value.get("center_location") or map_value.get("location"), 40),
+            "radius": _normalize_slot_radius(map_value.get("radius")),
+            "route_destination": _clean_slot_text(map_value.get("route_destination") or map_value.get("destination"), 60),
+            "destination_keyword": _clean_slot_text(map_value.get("destination_keyword") or map_value.get("destination_query"), 40),
+        }
+        normalized["map"] = {key: val for key, val in map_slots.items() if val}
+
+    weather_value = value.get("weather") if isinstance(value.get("weather"), dict) else {}
+    if weather_value:
+        weather_slots = {"city": _clean_slot_text(weather_value.get("city"), 24)}
+        normalized["weather"] = {key: val for key, val in weather_slots.items() if val}
+
+    order_value = value.get("order") if isinstance(value.get("order"), dict) else {}
+    if order_value:
+        activity_type = _clean_slot_text(order_value.get("activity_type") or order_value.get("activityType"), 24).upper()
+        if activity_type not in {"BASKETBALL", "BADMINTON", "MEAL", "STUDY", "MOVIE", "RUNNING", "GAME", "OTHER"}:
+            activity_type = ""
+        order_slots = {
+            "activity_type": activity_type,
+            "campus": _normalize_slot_campus(order_value.get("campus")),
+        }
+        normalized["order"] = {key: val for key, val in order_slots.items() if val}
+
+    content_value = value.get("content") if isinstance(value.get("content"), dict) else {}
+    if content_value:
+        content_slots = {"keyword": _clean_slot_text(content_value.get("keyword") or content_value.get("query"), 40)}
+        normalized["content"] = {key: val for key, val in content_slots.items() if val}
+
+    user_value = value.get("user") if isinstance(value.get("user"), dict) else {}
+    if user_value:
+        user_slots = {
+            "user_id": _normalize_slot_user_id(user_value.get("user_id") or user_value.get("userId") or user_value.get("id")),
+            "keyword": _clean_slot_text(user_value.get("keyword") or user_value.get("nickname") or user_value.get("query"), 40),
+        }
+        normalized["user"] = {key: val for key, val in user_slots.items() if val}
+
+    return normalized
+
+
+def _read_slots_for(intent_analysis: dict, domain: str) -> dict:
+    slots = intent_analysis.get("read_slots") if isinstance(intent_analysis, dict) else {}
+    if not isinstance(slots, dict):
+        return {}
+    domain_slots = slots.get(domain)
+    return domain_slots if isinstance(domain_slots, dict) else {}
+
+
+def _read_slot_text(intent_analysis: dict, domain: str, key: str) -> str:
+    return _clean_slot_text(_read_slots_for(intent_analysis, domain).get(key))
+
+
+def _read_slot_domain_for_intent(intent_analysis: dict) -> str:
+    primary_intent = str((intent_analysis or {}).get("primary_intent") or "").lower()
+    domain = str((intent_analysis or {}).get("domain") or "").lower()
+    if primary_intent == "multi_step":
+        suggested = {str(item or "").lower() for item in (intent_analysis or {}).get("suggested_agents") or []}
+        if "map_weather" in suggested or domain in {"multi", "map"}:
+            return "map"
+    if primary_intent.startswith("map."):
+        return "map"
+    if primary_intent.startswith("weather."):
+        return "weather"
+    if primary_intent.startswith("order."):
+        return "order"
+    if primary_intent.startswith("content."):
+        return "content"
+    if primary_intent.startswith("user."):
+        return "user"
+    return ""
+
+
+def _read_slot_model_needed(intent_analysis: dict, user_message: str = "", history: list | None = None) -> bool:
+    primary_intent = str((intent_analysis or {}).get("primary_intent") or "").lower()
+    operation_type = str((intent_analysis or {}).get("operation_type") or "").lower()
+    next_action = str((intent_analysis or {}).get("next_action") or "").lower()
+    if operation_type == "write":
+        return False
+    if _has_read_slots_for_intent(intent_analysis):
+        return False
+
+    text = " ".join(str(user_message or "").split())
+    recent = "\n".join(str(item.get("content", "")) for item in (history or [])[-4:] if isinstance(item, dict))
+    repair_cues = ("不相关", "没关联", "不是这个", "不对")
+    requery_cues = ("换一批", "重新", "再找")
+
+    def map_slots_need_model() -> bool:
+        keyword = _extract_map_keyword(text)
+        if keyword == "校园周边":
+            return True
+        if _has_any(text, repair_cues):
+            return True
+        if _is_route_request(text):
+            destination = _extract_route_destination_text(text)
+            return not destination or _extract_map_keyword(destination) == "校园周边"
+        return bool(recent and _has_any(text, requery_cues) and _has_any(recent, (":::map", "经纬度")))
+
+    if primary_intent == "multi_step":
+        return next_action == "execute_read_tools" and map_slots_need_model()
+    if primary_intent == "map.search":
+        return map_slots_need_model()
+    if primary_intent in {"order.search", "order.manage", "content.search", "user.profile", "weather.query"}:
+        return False
+    return primary_intent in {
+        "map.search",
+    }
+
+
+def _has_read_slots_for_intent(intent_analysis: dict) -> bool:
+    domain = _read_slot_domain_for_intent(intent_analysis)
+    slots = _read_slots_for(intent_analysis, domain)
+    if not slots:
+        return False
+    if domain == "map":
+        return bool(slots.get("keywords") or slots.get("route_destination") or slots.get("destination_keyword"))
+    if domain == "weather":
+        return bool(slots.get("city"))
+    if domain == "order":
+        return bool(slots.get("activity_type") or slots.get("campus"))
+    if domain in {"content", "user"}:
+        return bool(slots.get("keyword") or slots.get("user_id"))
+    return False
+
+
+def _merge_read_slots(base_slots: dict, model_slots: dict) -> dict:
+    merged = _normalize_read_slots(base_slots)
+    incoming = _normalize_read_slots(model_slots)
+    for domain, slots in incoming.items():
+        merged_domain = dict(merged.get(domain) or {})
+        for key, value in slots.items():
+            if value not in ("", None):
+                merged_domain[key] = value
+        if merged_domain:
+            merged[domain] = merged_domain
+    return merged
 
 
 def _read_then_write_target(user_message: str) -> str | None:
@@ -928,6 +1186,11 @@ def _read_then_write_target(user_message: str) -> str | None:
         "发布动态",
         "发个动态",
         "发一条",
+        "起草动态",
+        "起草一个动态",
+        "起草一条动态",
+        "草拟动态",
+        "草拟一条动态",
         "写动态",
         "写个动态",
         "动态草稿",
@@ -1482,6 +1745,119 @@ def _contains_blocking_write_negation(text: str) -> bool:
     )
 
 
+def _looks_like_read_only_lookup_with_negated_write(text: str) -> bool:
+    """Let explicit read-only lookup requests bypass the fast write shortcut."""
+    normalized = " ".join(str(text or "").split())
+    lowered = normalized.lower()
+    if not normalized:
+        return False
+
+    read_only_cues = (
+        "只看",
+        "只要",
+        "先只",
+        "先看",
+        "先查",
+        "先看看",
+        "先推荐",
+        "只推荐",
+        "只查询",
+        "只查",
+        "不要发布",
+        "别发布",
+        "不用发布",
+        "不要发",
+        "别发",
+        "不要创建",
+        "别创建",
+        "不用创建",
+        "不要帮我创建",
+        "别帮我创建",
+        "不创建",
+        "不发布",
+        "不要报名",
+        "别报名",
+        "不用报名",
+        "别评论",
+        "不要评论",
+        "别点赞",
+        "不要点赞",
+        "no post",
+        "no posting",
+        "no publish",
+        "do not publish",
+        "don't publish",
+        "dont publish",
+        "without posting",
+        "no order",
+        "do not create",
+        "don't create",
+        "dont create",
+        "no signup",
+        "do not apply",
+        "don't apply",
+    )
+    lookup_cues = (
+        "找",
+        "推荐",
+        "查询",
+        "查一下",
+        "看看",
+        "附近",
+        "地图",
+        "路线",
+        "地址",
+        "导航",
+        "店",
+        "地点",
+        "商家",
+        "餐厅",
+        "按摩",
+        "洗脚",
+        "足疗",
+        "桌游",
+        "电影",
+        "天气",
+        "动态",
+        "评论区",
+        "订单",
+        "活动",
+        "find",
+        "recommend",
+        "search",
+        "look up",
+        "nearby",
+        "map",
+        "route",
+        "weather",
+        "post",
+        "order",
+    )
+    write_words = (
+        "发布",
+        "发动态",
+        "创建",
+        "建订单",
+        "建活动",
+        "报名",
+        "申请加入",
+        "评论",
+        "点赞",
+        "publish",
+        "post",
+        "create",
+        "order",
+        "apply",
+        "comment",
+        "like",
+    )
+    return (
+        _has_any(lowered, read_only_cues)
+        and _has_any(lowered, lookup_cues)
+        and (_has_any(lowered, write_words) or _has_negated_write_action(normalized))
+    )
+
+
 def _looks_like_time_text(text: str) -> bool:
     return bool(
         re.search(
@@ -1834,6 +2210,13 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         }
 
     negated_order_write = _has_any(text, ("不要创建订单", "别创建订单", "不用创建订单", "不要发订单", "别发订单"))
+    negated_order_write = negated_order_write or bool(
+        re.search(
+            r"(?:不要|别|不用|不需要|无需|先不要|先别)[^，。,.?？!！\n]{0,18}"
+            r"(?:创建|新建|建|发|发布|生成|起草)[^，。,.?？!！\n]{0,8}订单",
+            text,
+        )
+    )
     has_positive_order_context = (
         ("订单" in text and not negated_order_write)
         or _has_any(text, ("约伴", "我发布过", "我参加过", "报名记录", "申请记录", "篮球局", "羽毛球局", "自习局"))
@@ -2166,8 +2549,6 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
     text = " ".join(str(user_message or "").split())
     if not text:
         return None
-    if _contains_blocking_write_negation(text):
-        return None
     read_then_write_target = _read_then_write_target(text)
     if read_then_write_target:
         followup_agent = "content_draft" if read_then_write_target == "content" else "order_draft"
@@ -2187,6 +2568,10 @@ def _detect_safety_intent_shortcut(user_message: str) -> dict | None:
             "read_then_write_target": read_then_write_target,
             "router_timeout": False,
         }
+    if _looks_like_read_only_lookup_with_negated_write(text):
+        return None
+    if _contains_blocking_write_negation(text):
+        return None
 
     base = {
         "operation_type": "write",
@@ -2582,6 +2967,76 @@ async def review_intent(
         logger.warning("Intent review failed: %s", e)
         previous_analysis["review_failed"] = True
         return previous_analysis
+
+
+def _render_read_slots_prompt(
+    user_info: dict,
+    memories: list,
+    history: list,
+    user_message: str,
+    intent_analysis: dict,
+) -> str:
+    replacements = {
+        "{intent_analysis}": json.dumps(intent_analysis or {}, ensure_ascii=False),
+        "{user_info}": json.dumps(user_info or {}, ensure_ascii=False),
+        "{memories}": json.dumps(memories or [], ensure_ascii=False),
+        "{history}": json.dumps((history or [])[-8:], ensure_ascii=False),
+        "{user_message}": user_message,
+    }
+    prompt = READ_SLOT_EXTRACTION_PROMPT
+    for placeholder, value in replacements.items():
+        prompt = prompt.replace(placeholder, value)
+    return prompt
+
+
+async def _enrich_read_slots_with_llm(
+    user_info: dict,
+    memories: list,
+    history: list,
+    user_message: str,
+    intent_analysis: dict,
+) -> dict:
+    if not _read_slot_model_needed(intent_analysis, user_message, history):
+        return intent_analysis
+
+    await _emit_event("agent_step", {
+        "phase": "read_slot_extraction",
+        "title": "提取工具参数",
+        "detail": "正在用轻量模型从语义中提取地图/订单/动态等只读工具参数",
+        "state": "running",
+    })
+    prompt = _render_read_slots_prompt(user_info, memories, history, user_message, intent_analysis)
+    try:
+        result = await _await_with_soft_timeout(
+            _get_router_llm().ainvoke([HumanMessage(content=prompt)]),
+            READ_SLOT_TIMEOUT_SECONDS,
+        )
+        parsed = _safe_json_loads(result.content)
+        model_slots = parsed.get("read_slots") if isinstance(parsed.get("read_slots"), dict) else parsed.get("slots")
+        merged = dict(intent_analysis)
+        merged["read_slots"] = _merge_read_slots(intent_analysis.get("read_slots"), model_slots or {})
+        if "weather_context" in parsed:
+            merged["weather_context"] = bool(parsed.get("weather_context"))
+        if _has_read_slots_for_intent(merged):
+            merged["read_slot_model"] = True
+        await _emit_event("agent_step", {
+            "phase": "read_slot_extraction",
+            "title": "工具参数已提取",
+            "detail": "后续直读工具会优先使用模型抽取的结构化参数",
+            "state": "completed",
+        })
+        return merged
+    except Exception as e:
+        logger.warning("Read slot extraction failed: %s", e)
+        fallback = dict(intent_analysis)
+        fallback["read_slot_error"] = e.__class__.__name__
+        await _emit_event("agent_step", {
+            "phase": "read_slot_extraction",
+            "title": "工具参数提取降级",
+            "detail": "轻量模型暂时不可用，已降级为本地兜底参数提取",
+            "state": "failed",
+        })
+        return fallback
 
 
 async def analyze_intent(user_info: dict, memories: list, history: list, user_message: str) -> dict:
@@ -5032,6 +5487,39 @@ def _select_campus_center(user_info: dict, user_message: str) -> tuple[str, str]
     return LIANGXIANG_CENTER, "北京理工大学良乡校区"
 
 
+def _is_lng_lat(value: str) -> bool:
+    return bool(re.match(r"^\s*\d{2,3}\.\d+\s*,\s*\d{1,2}\.\d+\s*$", str(value or "")))
+
+
+def _select_map_center(user_info: dict, user_message: str, intent_analysis: dict) -> tuple[str, str]:
+    map_slots = _read_slots_for(intent_analysis, "map")
+    center_location = _clean_slot_text(map_slots.get("center_location"), 40)
+    center_name = _clean_slot_text(map_slots.get("center_name"), 60)
+    if _is_lng_lat(center_location):
+        return center_location, center_name or "当前指定位置"
+
+    campus = _normalize_slot_campus(map_slots.get("campus"))
+    if campus == "ZHONGGUANCUN":
+        return ZHONGGUANCUN_CENTER, center_name or "北京理工大学中关村校区"
+    if campus == "LIANGXIANG":
+        return LIANGXIANG_CENTER, center_name or "北京理工大学良乡校区"
+
+    return _select_campus_center(user_info, user_message)
+
+
+def _map_keyword_from_slots(intent_analysis: dict, user_message: str) -> str:
+    keyword = _read_slot_text(intent_analysis, "map", "keywords")
+    return keyword or _extract_map_keyword(user_message)
+
+
+def _map_radius_from_slots(intent_analysis: dict) -> str:
+    return _read_slot_text(intent_analysis, "map", "radius") or "3000"
+
+
+def _weather_city_from_slots(intent_analysis: dict) -> str:
+    return _read_slot_text(intent_analysis, "weather", "city") or "北京"
+
+
 def _extract_map_keyword(user_message: str) -> str:
     text = str(user_message or "").lower()
     keyword_groups = [
@@ -5071,6 +5559,7 @@ def _extract_map_keyword(user_message: str) -> str:
         (("医院", "诊所", "hospital", "clinic"), "医院"),
         (("ktv", "karaoke"), "KTV"),
         (("酒吧", "bar", "pub"), "酒吧"),
+        (("桌游", "桌游店", "桌游馆", "剧本杀", "血染钟楼", "狼人杀", "board game"), "桌游店"),
         (("玩", "放松", "休闲", "娱乐", "fun", "hang out", "hangout", "board game", "escape room"), "休闲娱乐"),
     ]
     for cues, keyword in keyword_groups:
@@ -5404,13 +5893,18 @@ async def _invoke_tool_text(tool_obj, args: dict) -> str:
     return await asyncio.to_thread(tool_obj.invoke, args)
 
 
-def _extract_order_search_args(user_info: dict, user_message: str) -> dict:
-    activity_label = _infer_activity_label(user_message)
-    activity_type = ""
-    if activity_label:
-        activity_type = activity_label.split("（", 1)[0]
+def _extract_order_search_args(user_info: dict, user_message: str, intent_analysis: dict | None = None) -> dict:
+    order_slots = _read_slots_for(intent_analysis or {}, "order")
+    activity_type = _clean_slot_text(order_slots.get("activity_type"), 24).upper()
+    if not activity_type:
+        activity_label = _infer_activity_label(user_message)
+        activity_type = ""
+        if activity_label:
+            activity_type = activity_label.split("（", 1)[0]
 
-    campus = _normalize_campus("", user_message)
+    campus = _normalize_slot_campus(order_slots.get("campus"))
+    if not campus:
+        campus = _normalize_campus("", user_message)
     if not campus:
         campus = str((user_info or {}).get("campus") or "").upper()
 
@@ -5594,7 +6088,11 @@ def _build_order_result_artifact(order_text: str, args: dict, user_message: str,
     }
 
 
-def _extract_content_keyword(user_message: str) -> str:
+def _extract_content_keyword(user_message: str, intent_analysis: dict | None = None) -> str:
+    slot_keyword = _read_slot_text(intent_analysis or {}, "content", "keyword")
+    if slot_keyword:
+        return slot_keyword
+
     text = str(user_message or "").strip()
     patterns = [
         r"关于(.+?)的(?:校园)?(?:动态|帖子)",
@@ -6268,13 +6766,14 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
         return None
 
     if primary_intent == "weather.query":
+        weather_city = _weather_city_from_slots(intent_analysis)
         await _emit_event("agent_step", {
             "phase": "weather_direct",
             "title": "查询天气",
-            "detail": "正在直接调用天气工具，避免普通天气问题进入多轮智能体循环",
+            "detail": f"正在直接调用天气工具查询：{weather_city}",
             "state": "running",
         })
-        weather_text = await _invoke_tool_text(maps_weather, {"city": "北京"})
+        weather_text = await _invoke_tool_text(maps_weather, {"city": weather_city})
         reply = _format_weather_direct_reply(weather_text)
         if not reply:
             return None
@@ -6289,7 +6788,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
         })
         return {
             "reply": reply,
-            "tool_calls": [{"name": "maps_weather", "args": {"city": "北京"}}],
+            "tool_calls": [{"name": "maps_weather", "args": {"city": weather_city}}],
             "intent": intent_analysis,
             "artifacts": [weather_artifact] if weather_artifact else [],
         }
@@ -6307,7 +6806,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
             order_text = await _invoke_tool_text(get_my_orders, order_args)
             tool_name = "get_my_orders"
         else:
-            order_args = _extract_order_search_args(user_info, user_message)
+            order_args = _extract_order_search_args(user_info, user_message, intent_analysis)
             order_text = await _invoke_tool_text(search_orders, order_args)
             tool_name = "search_orders"
 
@@ -6341,7 +6840,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
             "detail": "正在直接调用动态搜索工具，优先返回可操作结果卡片",
             "state": "running",
         })
-        keyword = _extract_content_keyword(user_message)
+        keyword = _extract_content_keyword(user_message, intent_analysis)
         content_args = {"keyword": keyword} if keyword else {}
         content_text = await _invoke_tool_text(search_contents, content_args)
         content_has_results = bool(_parse_content_result_lines(content_text))
@@ -6374,7 +6873,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
             "detail": "正在直接调用用户资料工具，整理成可继续操作的资料卡片",
             "state": "running",
         })
-        profile_user_id = _extract_user_profile_id(user_message)
+        profile_user_id = _read_slots_for(intent_analysis, "user").get("user_id") or _extract_user_profile_id(user_message)
         if profile_user_id:
             profile_text = await _invoke_tool_text(get_user_profile, {"user_id": profile_user_id})
             profile_artifact = _build_user_profile_artifact(profile_text, profile_user_id, intent_analysis)
@@ -6394,7 +6893,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
                 "artifacts": [profile_artifact],
             }
 
-        keyword = _extract_user_search_keyword(user_message)
+        keyword = _read_slot_text(intent_analysis, "user", "keyword") or _extract_user_search_keyword(user_message)
         if not keyword:
             return {
                 "reply": "我需要一个用户 ID 或昵称才能查看主页资料。你可以直接说“查看用户 12 的主页”或“搜索小白的用户资料”。",
@@ -6424,8 +6923,9 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
     if primary_intent not in {"map.search", "multi_step"}:
         return None
 
-    keyword = _extract_map_keyword(user_message)
-    center, center_name = _select_campus_center(user_info, user_message)
+    keyword = _map_keyword_from_slots(intent_analysis, user_message)
+    radius = _map_radius_from_slots(intent_analysis)
+    center, center_name = _select_map_center(user_info, user_message, intent_analysis)
     if _is_route_request(user_message):
         await _emit_event("agent_step", {
             "phase": "route_direct",
@@ -6433,8 +6933,11 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
             "detail": "正在确定起点、终点和路线方式",
             "state": "running",
         })
-        destination_query = _extract_route_destination_text(user_message)
-        destination_keyword = _extract_map_keyword(destination_query or user_message)
+        destination_query = _read_slot_text(intent_analysis, "map", "route_destination") or _extract_route_destination_text(user_message)
+        destination_keyword = (
+            _read_slot_text(intent_analysis, "map", "destination_keyword")
+            or _extract_map_keyword(destination_query or user_message)
+        )
         destination_name = destination_query or destination_keyword
         destination_location = ""
         tool_calls = []
@@ -6448,9 +6951,9 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
         if use_nearby_destination and destination_keyword != "校园周边":
             search_text = await _invoke_tool_text(
                 maps_around_search,
-                {"location": center, "keywords": destination_keyword, "radius": "3000"},
+                {"location": center, "keywords": destination_keyword, "radius": radius},
             )
-            tool_calls.append({"name": "maps_around_search", "args": {"location": center, "keywords": destination_keyword, "radius": "3000"}})
+            tool_calls.append({"name": "maps_around_search", "args": {"location": center, "keywords": destination_keyword, "radius": radius}})
             data = _safe_json_object(search_text)
             pois = data.get("pois") if isinstance(data.get("pois"), list) else []
             resolved = await _resolve_poi_locations(pois, limit=1)
@@ -6511,16 +7014,17 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
     weather_artifact = None
     weather_tool_calls = []
     if include_weather_context:
+        weather_city = _weather_city_from_slots(intent_analysis)
         await _emit_event("agent_step", {
             "phase": "weather_direct",
             "title": "查询天气参考",
             "detail": "这轮请求同时提到天气和地点，先直接查询天气数据",
             "state": "running",
         })
-        weather_text = await _invoke_tool_text(maps_weather, {"city": "北京"})
+        weather_text = await _invoke_tool_text(maps_weather, {"city": weather_city})
         weather_reply = _format_weather_direct_reply(weather_text)
         weather_artifact = _build_weather_artifact(weather_text, weather_reply, intent_analysis) if weather_reply else None
-        weather_tool_calls.append({"name": "maps_weather", "args": {"city": "北京"}})
+        weather_tool_calls.append({"name": "maps_weather", "args": {"city": weather_city}})
         if weather_artifact:
             await _emit_event("artifact", weather_artifact)
         await _emit_event("agent_step", {
@@ -6537,7 +7041,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
     })
     search_text = await _invoke_tool_text(
         maps_around_search,
-        {"location": center, "keywords": keyword, "radius": "3000"},
+        {"location": center, "keywords": keyword, "radius": radius},
     )
     data = _safe_json_object(search_text)
     pois = data.get("pois") if isinstance(data.get("pois"), list) else []
@@ -6580,7 +7084,7 @@ async def build_direct_read_response(user_info: dict, user_message: str, intent_
     return {
         "reply": reply,
         "tool_calls": weather_tool_calls + [
-            {"name": "maps_around_search", "args": {"location": center, "keywords": keyword, "radius": "3000"}},
+            {"name": "maps_around_search", "args": {"location": center, "keywords": keyword, "radius": radius}},
             {"name": "maps_geo", "args": {"limit": 3}},
         ],
         "intent": intent_analysis,
@@ -6716,6 +7220,7 @@ async def chat(
         return confirmed_execution
 
     intent_analysis = await analyze_intent(user_info, memories, history, user_message)
+    intent_analysis = await _enrich_read_slots_with_llm(user_info, memories, history, user_message, intent_analysis)
     plan_artifact = await _emit_execution_plan(intent_analysis)
     if _requires_confirmation_gate(intent_analysis):
         artifact = await build_confirmation_artifact(user_info, history, user_message, intent_analysis)

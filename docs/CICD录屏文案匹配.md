@@ -31,7 +31,7 @@ CampusHubApp/utils/config.js
 
 ```js
 // CI demo: production mode uses the public server entry point.
-const prodOrigin = 'http://124.220.81.104'
+const prodOrigin = 'https://sun227454.online/CampusHub'
 ```
 
 这个改动用于展示正常 feature 分支变更。
@@ -290,7 +290,7 @@ git rev-parse --short HEAD
 .\scripts\run-deploy-workflow.ps1 `
   -ReleaseTag f5ba305-cd-demo `
   -UseExistingBundle `
-  -PublicBaseUrl http://124.220.81.104
+  -PublicBaseUrl https://sun227454.online/CampusHub
 ```
 
 查看服务器发布结果：
@@ -350,13 +350,13 @@ campushub_frontend   campushub-web:f5ba305-cd-demo
 公网访问：
 
 ```text
-http://124.220.81.104/
+https://sun227454.online/CampusHub/
 ```
 
 核心 API：
 
 ```text
-http://124.220.81.104/api/v1/orders?page=1&size=1
+https://sun227454.online/CampusHub/api/v1/orders?page=1&size=1
 ```
 
 ### 镜头内容
@@ -365,7 +365,7 @@ http://124.220.81.104/api/v1/orders?page=1&size=1
 - `scripts/run-deploy-workflow.ps1`：展示脚本触发 GitHub Actions Deploy workflow。
 - GitHub Actions 页面：展示 Deploy workflow 执行并成功。
 - 终端 SSH 输出：展示服务器 release tag 和容器镜像 tag。
-- 浏览器：展示 `http://124.220.81.104/` 可以访问。
+- 浏览器：展示 `https://sun227454.online/CampusHub/` 可以访问。
 
 ### 配音稿
 

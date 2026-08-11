@@ -22,7 +22,7 @@ CampusHub 是一个面向校园用户的活动预约、动态分享与 AI 助手
 - 用户体系：邮箱验证码注册、登录、退出、忘记密码、资料编辑、头像上传、公开用户主页。
 - AI 助手：多 Agent 校园助手，支持活动检索/创建/申请、动态互动、用户查询、地图天气查询和 SSE 流式回复。
 - 管理后台：用户管理、订单管理、内容/评论审核、文件资源管理、AI 会话审计、系统设置、操作日志和仪表盘。
-- 工程化：Web/App 本地开发、Docker 多阶段构建、Nginx 反向代理、生产 Compose、镜像包上传部署和 smoke test。
+- 工程化：Web/App 本地开发、Docker 多阶段构建、Nginx 反向代理、生产 Compose、GitHub Actions 自动 CD、快速产物部署和 smoke test。
 
 ## 演示截图
 
@@ -108,7 +108,7 @@ $env:UNI_INPUT_DIR='.'
 npm.cmd run dev:h5 -- --host 127.0.0.1 --port 5173
 ```
 
-`CampusHubApp/utils/config.js` 中 H5 和 App 默认使用生产地址 `http://124.220.81.104/api/v1`。如需调试本地后端，可在运行环境中设置 `uni.setStorageSync('env', 'dev')`。
+`CampusHubApp/utils/config.js` 中 H5 和 App 默认使用生产地址 `https://sun227454.online/CampusHub/api/v1`。如需调试本地后端，可在运行环境中设置 `uni.setStorageSync('env', 'dev')`。
 
 ### 4. AI Agent
 
@@ -139,7 +139,7 @@ Agent 需要配置 `SILICONFLOW_API_KEY`、`SILICONFLOW_MODEL`、`JAVA_BACKEND_U
 
 ## 生产部署
 
-项目提供“本地构建镜像包，再复制到服务器加载部署”的流程，适合服务器公网拉镜像不稳定的情况。
+项目保留“本地构建镜像包，再复制到服务器加载部署”的完整发布流程，也提供 GitHub Actions 自动 CD。推送到 `main` 且 CI 通过后，普通源码改动会优先走快速部署，只上传变更模块的运行产物；依赖、Dockerfile、Nginx 配置或生产 compose 变化时才走完整镜像部署。
 
 ### 构建镜像
 
@@ -157,7 +157,7 @@ artifacts/campushub-images-<release-tag>.tar
 ### 上传并部署
 
 ```powershell
-.\scripts\deploy-images.ps1 -Tag <release-tag> -HostAlias TX4H4G -PublicBaseUrl http://124.220.81.104
+.\scripts\deploy-images.ps1 -Tag <release-tag> -HostAlias TX4H4G -PublicBaseUrl https://sun227454.online/CampusHub
 ```
 
 脚本会完成：
@@ -170,12 +170,16 @@ artifacts/campushub-images-<release-tag>.tar
 - 保留服务器原有 MySQL 容器和 `db_data` 数据卷
 - 运行服务器内部 smoke test 和本地公网 smoke test
 
+### 自动 CD 与快速部署
+
+自动 CD 配置在 `.github/workflows/cd.yml`。快速部署时服务器仍使用 Docker 容器隔离，但通过 `docker-compose.fast.yml` 将当前 release 的 `web/dist`、`backend/app.jar`、`agent/app` 只读挂载进容器，从而避免每次都重新构建和上传完整镜像包。
+
 生产服务器私有配置保存在服务器 `/home/ubuntu/CampusHub/.env.prod`，不要提交 `.env`、密钥、镜像包、APK、keystore 或运行日志。
 
 ## 验证方式
 
 ```powershell
-.\scripts\smoke-test.ps1 -BaseUrl http://124.220.81.104
+.\scripts\smoke-test.ps1 -BaseUrl https://sun227454.online/CampusHub
 ```
 
 该脚本验证：
@@ -185,9 +189,9 @@ artifacts/campushub-images-<release-tag>.tar
 
 移动端验证重点：
 
-- App/H5 能连接 `http://124.220.81.104/api/v1`
+- App/H5 能连接 `https://sun227454.online/CampusHub/api/v1`
 - 登录后请求会携带 `Authorization` 和 `X-User-Id`
-- 图片、视频、头像通过 `http://124.220.81.104/uploads/**` 访问
+- 图片、视频、头像通过 `https://sun227454.online/CampusHub/uploads/**` 访问
 - AI SSE、动态列表、订单列表和详情页能正常加载
 
 ## 文档

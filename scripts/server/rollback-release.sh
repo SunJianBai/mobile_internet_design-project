@@ -3,9 +3,46 @@ set -euo pipefail
 
 TARGET_TAG="${1:-}"
 DEPLOY_DIR="${DEPLOY_DIR:-/home/ubuntu/CampusHub}"
-LOCAL_SMOKE_BASE_URL="${LOCAL_SMOKE_BASE_URL:-http://127.0.0.1/CampusHub}"
+PUBLIC_BASE_PATH="${PUBLIC_BASE_PATH:-/CampusHub}"
+LOCAL_SMOKE_BASE_URL="${LOCAL_SMOKE_BASE_URL:-}"
 
 cd "$DEPLOY_DIR"
+
+resolve_local_smoke_base_url() {
+  if [ -n "$LOCAL_SMOKE_BASE_URL" ]; then
+    printf '%s\n' "$LOCAL_SMOKE_BASE_URL"
+    return
+  fi
+
+  local bind host port origin
+  bind="${FRONTEND_HTTP_PORT:-}"
+  if [ -z "$bind" ] && [ -f .env.prod ]; then
+    bind="$(sed -n 's/^FRONTEND_HTTP_PORT=//p' .env.prod | tail -n 1 | tr -d '\r')"
+  fi
+  bind="${bind:-127.0.0.1:18080}"
+  bind="${bind%\"}"
+  bind="${bind#\"}"
+  bind="${bind%\'}"
+  bind="${bind#\'}"
+
+  case "$bind" in
+    *:*)
+      host="${bind%:*}"
+      port="${bind##*:}"
+      if [ -z "$host" ] || [ "$host" = "0.0.0.0" ]; then
+        host="127.0.0.1"
+      fi
+      origin="http://$host:$port"
+      ;;
+    *)
+      origin="http://127.0.0.1:$bind"
+      ;;
+  esac
+
+  printf '%s%s\n' "$origin" "$PUBLIC_BASE_PATH"
+}
+
+LOCAL_SMOKE_BASE_URL="$(resolve_local_smoke_base_url)"
 
 if [ -z "$TARGET_TAG" ]; then
   if [ ! -f .env.release.previous ]; then

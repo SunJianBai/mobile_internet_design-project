@@ -1,0 +1,353 @@
+name: CD
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+    branches:
+      - main
+  workflow_dispatch:
+    inputs:
+      deploy_mode:
+        description: "auto chooses fast deploy unless image-affecting files changed."
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - fast
+          - full
+      modules:
+        description: "Fast deploy module selection."
+        required: false
+        default: auto
+        type: choice
+        options:
+          - auto
+          - all
+          - agent
+          - backend
+          - web
+          - agent,backend
+          - agent,web
+          - backend,web
+      public_base_url:
+        description: "Public URL used for smoke tests."
+        required: false
+        default: "https://sun227454.online/CampusHub"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: production-campushub
+  cancel-in-progress: false
+
+jobs:
+  prepare:
+    name: Prepare deployment
+    runs-on: ubuntu-latest
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' && github.event.workflow_run.conclusion == 'success' && github.event.workflow_run.head_branch == 'main')
+    outputs:
+      deploy_sha: ${{ steps.plan.outputs.deploy_sha }}
+      release_tag: ${{ steps.plan.outputs.release_tag }}
+      modules: ${{ steps.plan.outputs.modules }}
+      needs_full: ${{ steps.plan.outputs.needs_full }}
+      should_deploy: ${{ steps.plan.outputs.should_deploy }}
+      public_base_url: ${{ steps.plan.outputs.public_base_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha || github.sha }}
+          fetch-depth: 2
+
+      - name: Resolve deployment plan
+        id: plan
+        env:
+          DEPLOY_MODE_INPUT: ${{ github.event.inputs.deploy_mode || 'auto' }}
+          MODULES_INPUT: ${{ github.event.inputs.modules || 'auto' }}
+          PUBLIC_BASE_URL_INPUT: ${{ github.event.inputs.public_base_url || 'https://sun227454.online/CampusHub' }}
+        run: |
+          set -euo pipefail
+
+          deploy_sha="$(git rev-parse HEAD)"
+          short_sha="${deploy_sha::7}"
+          release_tag="$short_sha-$(date -u +%Y%m%d%H%M%S)"
+          deploy_mode="$DEPLOY_MODE_INPUT"
+          modules_input="$MODULES_INPUT"
+          public_base_url="${PUBLIC_BASE_URL_INPUT%/}"
+
+          if git rev-parse HEAD^ >/dev/null 2>&1; then
+            git diff --name-only HEAD^ HEAD > changed-files.txt
+          else
+            git ls-files > changed-files.txt
+          fi
+
+          needs_full=false
+          if grep -E '^(CampusHubAgent/(Dockerfile|requirements\.txt)|CampusHubBackend/(Dockerfile|pom\.xml|mvnw|mvnw\.cmd|\.mvn/)|CampusHubWeb/(Dockerfile|package\.json|package-lock\.json|nginx\.conf)|docker-compose\.prod\.yml)$' changed-files.txt >/dev/null; then
+            needs_full=true
+          fi
+          if [ "$deploy_mode" = "full" ]; then
+            needs_full=true
+          fi
+          if [ "$deploy_mode" = "fast" ]; then
+            needs_full=false
+          fi
+
+          modules=""
+          if [ "$modules_input" != "auto" ]; then
+            modules="$modules_input"
+          else
+            if grep -E '^CampusHubAgent/app/' changed-files.txt >/dev/null; then
+              modules="${modules:+$modules,}agent"
+            fi
+            if grep -E '^CampusHubBackend/src/' changed-files.txt >/dev/null; then
+              modules="${modules:+$modules,}backend"
+            fi
+            if grep -E '^CampusHubWeb/src/|^CampusHubWeb/public/|^CampusHubWeb/index\.html|^CampusHubWeb/vite\.config\.' changed-files.txt >/dev/null; then
+              modules="${modules:+$modules,}web"
+            fi
+          fi
+
+          if [ "$modules" = "all" ] || [ "$needs_full" = "true" ]; then
+            modules="agent,backend,web"
+          fi
+
+          should_deploy=true
+          if [ -z "$modules" ] && [ "$needs_full" != "true" ]; then
+            should_deploy=false
+          fi
+
+          {
+            echo "deploy_sha=$deploy_sha"
+            echo "release_tag=$release_tag"
+            echo "modules=$modules"
+            echo "needs_full=$needs_full"
+            echo "should_deploy=$should_deploy"
+            echo "public_base_url=$public_base_url"
+          } >> "$GITHUB_OUTPUT"
+
+          echo "Changed files:"
+          cat changed-files.txt
+          echo "Deployment plan: mode=$deploy_mode modules=${modules:-none} needs_full=$needs_full should_deploy=$should_deploy tag=$release_tag"
+
+  fast-deploy:
+    name: Fast deploy changed artifacts
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.should_deploy == 'true' && needs.prepare.outputs.needs_full != 'true'
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_PATH: /home/ubuntu/CampusHub
+      MODULES: ${{ needs.prepare.outputs.modules }}
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      PUBLIC_BASE_URL: ${{ needs.prepare.outputs.public_base_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.deploy_sha }}
+
+      - name: Set up Node
+        if: contains(needs.prepare.outputs.modules, 'web')
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: CampusHubWeb/package-lock.json
+
+      - name: Build web artifact
+        if: contains(needs.prepare.outputs.modules, 'web')
+        run: |
+          set -euo pipefail
+          cd CampusHubWeb
+          npm ci
+          npm run build
+          cd ..
+          mkdir -p fast-release/web
+          cp -a CampusHubWeb/dist fast-release/web/dist
+
+      - name: Set up JDK
+        if: contains(needs.prepare.outputs.modules, 'backend')
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "21"
+          cache: maven
+
+      - name: Build backend artifact
+        if: contains(needs.prepare.outputs.modules, 'backend')
+        run: |
+          set -euo pipefail
+          cd CampusHubBackend
+          chmod +x mvnw
+          ./mvnw -DskipTests package
+          jar="$(find target -maxdepth 1 -type f -name '*.jar' ! -name '*sources.jar' ! -name '*javadoc.jar' | head -n 1)"
+          test -n "$jar"
+          cd ..
+          mkdir -p fast-release/backend
+          cp "CampusHubBackend/$jar" fast-release/backend/app.jar
+
+      - name: Package agent source
+        if: contains(needs.prepare.outputs.modules, 'agent')
+        run: |
+          set -euo pipefail
+          mkdir -p fast-release/agent
+          rsync -a --delete --exclude='__pycache__/' --exclude='*.pyc' CampusHubAgent/app/ fast-release/agent/app/
+
+      - name: Create fast release bundle
+        run: |
+          set -euo pipefail
+          test -n "$MODULES"
+          mkdir -p artifacts
+          MODULES="$MODULES" RELEASE_TAG="$RELEASE_TAG" DEPLOY_SHA="${{ needs.prepare.outputs.deploy_sha }}" python3 - <<'PY'
+          import json
+          import os
+          from datetime import datetime, timezone
+          from pathlib import Path
+
+          modules = [item for item in os.environ["MODULES"].split(",") if item]
+          Path("fast-release").mkdir(exist_ok=True)
+          Path("fast-release/manifest.json").write_text(
+              json.dumps(
+                  {
+                      "release_tag": os.environ["RELEASE_TAG"],
+                      "deploy_sha": os.environ["DEPLOY_SHA"],
+                      "modules": modules,
+                      "source": "github-actions-fast-cd",
+                      "created_at": datetime.now(timezone.utc).isoformat(),
+                  },
+                  ensure_ascii=False,
+                  indent=2,
+              ),
+              encoding="utf-8",
+          )
+          PY
+          tar -czf "artifacts/campushub-fast-$RELEASE_TAG.tar.gz" -C fast-release .
+          ls -lh "artifacts/campushub-fast-$RELEASE_TAG.tar.gz"
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust deploy host
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload fast release files
+        run: |
+          set -euo pipefail
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/fast-artifacts' '$DEPLOY_PATH/scripts/server'"
+          scp -P "$DEPLOY_PORT" "artifacts/campushub-fast-$RELEASE_TAG.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/fast-artifacts/"
+          scp -P "$DEPLOY_PORT" docker-compose.fast.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/docker-compose.fast.yml"
+          scp -P "$DEPLOY_PORT" scripts/server/deploy-fast-release.sh scripts/server/rollback-fast-release.sh scripts/server/smoke-test.sh "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/scripts/server/"
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && sed -i 's/\r$//' docker-compose.fast.yml scripts/server/*.sh && chmod +x scripts/server/*.sh"
+
+      - name: Deploy fast release
+        run: |
+          set -euo pipefail
+          remote_bundle="fast-artifacts/campushub-fast-$RELEASE_TAG.tar.gz"
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && scripts/server/deploy-fast-release.sh '$RELEASE_TAG' '$remote_bundle' '$PUBLIC_BASE_URL'"
+
+      - name: External smoke test
+        run: |
+          bash scripts/server/smoke-test.sh "$PUBLIC_BASE_URL"
+
+  full-deploy:
+    name: Full deploy image bundle
+    runs-on: ubuntu-latest
+    needs: prepare
+    if: needs.prepare.outputs.should_deploy == 'true' && needs.prepare.outputs.needs_full == 'true'
+    env:
+      DEPLOY_HOST: ${{ secrets.DEPLOY_HOST }}
+      DEPLOY_USER: ${{ secrets.DEPLOY_USER }}
+      DEPLOY_PORT: ${{ secrets.DEPLOY_PORT || '22' }}
+      DEPLOY_PATH: /home/ubuntu/CampusHub
+      RELEASE_TAG: ${{ needs.prepare.outputs.release_tag }}
+      PUBLIC_BASE_URL: ${{ needs.prepare.outputs.public_base_url }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare.outputs.deploy_sha }}
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build agent image
+        uses: docker/build-push-action@v6
+        with:
+          context: CampusHubAgent
+          load: true
+          tags: campushub-agent:${{ env.RELEASE_TAG }}
+          cache-from: type=gha,scope=campushub-agent
+          cache-to: type=gha,mode=max,scope=campushub-agent
+
+      - name: Build backend image
+        uses: docker/build-push-action@v6
+        with:
+          context: CampusHubBackend
+          load: true
+          tags: campushub-backend:${{ env.RELEASE_TAG }}
+          cache-from: type=gha,scope=campushub-backend
+          cache-to: type=gha,mode=max,scope=campushub-backend
+
+      - name: Build web image
+        uses: docker/build-push-action@v6
+        with:
+          context: CampusHubWeb
+          load: true
+          tags: campushub-web:${{ env.RELEASE_TAG }}
+          cache-from: type=gha,scope=campushub-web
+          cache-to: type=gha,mode=max,scope=campushub-web
+
+      - name: Bundle Docker images
+        run: |
+          set -euo pipefail
+          mkdir -p artifacts
+          docker save \
+            "campushub-agent:$RELEASE_TAG" \
+            "campushub-backend:$RELEASE_TAG" \
+            "campushub-web:$RELEASE_TAG" \
+            | gzip > "artifacts/campushub-images-$RELEASE_TAG.tar.gz"
+          ls -lh "artifacts/campushub-images-$RELEASE_TAG.tar.gz"
+
+      - name: Start SSH agent
+        uses: webfactory/ssh-agent@v0.9.0
+        with:
+          ssh-private-key: ${{ secrets.DEPLOY_SSH_KEY }}
+
+      - name: Trust deploy host
+        run: |
+          set -euo pipefail
+          mkdir -p ~/.ssh
+          ssh-keyscan -p "$DEPLOY_PORT" "$DEPLOY_HOST" >> ~/.ssh/known_hosts
+
+      - name: Upload full release files
+        run: |
+          set -euo pipefail
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "mkdir -p '$DEPLOY_PATH/releases' '$DEPLOY_PATH/backups' '$DEPLOY_PATH/scripts/server'"
+          scp -P "$DEPLOY_PORT" "artifacts/campushub-images-$RELEASE_TAG.tar.gz" "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/releases/"
+          scp -P "$DEPLOY_PORT" docker-compose.prod.yml docker-compose.fast.yml "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/"
+          scp -P "$DEPLOY_PORT" scripts/server/deploy-release.sh scripts/server/rollback-release.sh scripts/server/deploy-fast-release.sh scripts/server/rollback-fast-release.sh scripts/server/smoke-test.sh "$DEPLOY_USER@$DEPLOY_HOST:$DEPLOY_PATH/scripts/server/"
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && sed -i 's/\r$//' docker-compose*.yml scripts/server/*.sh && chmod +x scripts/server/*.sh"
+
+      - name: Deploy full release
+        run: |
+          set -euo pipefail
+          remote_bundle="releases/campushub-images-$RELEASE_TAG.tar.gz"
+          ssh -p "$DEPLOY_PORT" "$DEPLOY_USER@$DEPLOY_HOST" "cd '$DEPLOY_PATH' && scripts/server/deploy-release.sh '$RELEASE_TAG' '$remote_bundle' '$PUBLIC_BASE_URL'"
+
+      - name: External smoke test
+        run: |
+          bash scripts/server/smoke-test.sh "$PUBLIC_BASE_URL"

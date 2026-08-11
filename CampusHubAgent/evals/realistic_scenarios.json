@@ -21,6 +21,19 @@
       }
     },
     {
+      "id": "realistic_map_massage_no_dynamic_or_order",
+      "category": "realistic_guardrail",
+      "persona": "明确只看推荐和地图并否定发布创建的人",
+      "message": "我想要找3个人一起去洗脚按摩，有什么推荐的店吗？只看推荐和地图，先不要发布动态或创建订单。",
+      "expect": {
+        "primary_intent": "map.search",
+        "domain": "map",
+        "operation_type": "read",
+        "requires_confirmation": false,
+        "next_action": "execute_read_tools"
+      }
+    },
+    {
       "id": "realistic_order_foot_massage_people_not_store",
       "category": "realistic_order_read",
       "persona": "想找现成约伴而不是查店的人",
