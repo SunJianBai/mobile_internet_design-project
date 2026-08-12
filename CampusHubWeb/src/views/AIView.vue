@@ -107,42 +107,68 @@
                     <div class="assistant-content">
                       <div
                         v-if="message.operations?.length"
-                        :class="['operation-timeline', { completed: !message.loading && message.content }]"
+                        :class="['operation-timeline', { completed: !isMessageStreaming(message) && message.content }]"
                       >
                         <div
                           v-for="overview in [getOperationOverview(message)]"
                           :key="`${message.mid || message.localId || 'msg'}-overview`"
                           :class="['operation-overview', overview.state]"
                         >
-                          <div class="operation-overview-main">
-                            <span :class="['overview-status-dot', overview.state]"></span>
-                            <div class="overview-copy">
-                              <div class="overview-kicker">{{ overview.kicker }}</div>
-                              <div class="overview-title">{{ overview.title }}</div>
-                              <div v-if="overview.detail" class="overview-detail">{{ overview.detail }}</div>
+                          <button
+                            class="operation-overview-button"
+                            type="button"
+                            :aria-expanded="isOperationWorkOpen(message)"
+                            @click.stop="toggleOperationWork(message)"
+                          >
+                            <div class="operation-overview-main">
+                              <span :class="['overview-status-dot', overview.state]"></span>
+                              <div class="overview-copy">
+                                <div class="overview-kicker">{{ overview.kicker }}</div>
+                                <div class="overview-title">{{ overview.title }}</div>
+                                <div v-if="overview.detail" class="overview-detail">{{ overview.detail }}</div>
+                              </div>
+                            </div>
+                            <div class="overview-metrics" aria-label="执行概览">
+                              <span v-for="metric in overview.metrics" :key="metric.label" class="overview-metric">
+                                <small>{{ metric.label }}</small>
+                                <strong>{{ metric.value }}</strong>
+                              </span>
+                              <span class="operation-work-toggle">{{ isOperationWorkOpen(message) ? '收起' : '展开' }}</span>
+                            </div>
+                          </button>
+                        </div>
+                        <div v-if="!isOperationWorkOpen(message)" class="operation-live-tail">
+                          <span>{{ getOperationCollapsedLabel(message) }}</span>
+                          <strong>{{ getOperationOverview(message).title }}</strong>
+                        </div>
+                        <template v-else>
+                          <div class="operation-summary-head">
+                            <span>{{ isMessageStreaming(message) ? '实时执行轨迹' : '执行摘要' }}</span>
+                            <span>{{ getOperationVisibleSteps(message).length }}/{{ message.operations.length }} 步</span>
+                          </div>
+                          <div
+                            v-for="(operation, opIndex) in getOperationVisibleSteps(message)"
+                            :key="`${message.mid || message.localId || 'msg'}-${opIndex}-${operation.title}`"
+                            :class="['operation-step', operation.state || 'running']"
+                          >
+                            <span class="operation-dot"></span>
+                            <div class="operation-main">
+                              <div class="operation-title">{{ operation.title }}</div>
+                              <div v-if="operation.detail" class="operation-detail">{{ operation.detail }}</div>
                             </div>
                           </div>
-                          <div class="overview-metrics" aria-label="执行概览">
-                            <span v-for="metric in overview.metrics" :key="metric.label" class="overview-metric">
-                              <small>{{ metric.label }}</small>
-                              <strong>{{ metric.value }}</strong>
-                            </span>
-                          </div>
-                        </div>
-                        <div v-if="!message.loading && message.content" class="operation-summary-head">
-                          <span>执行摘要</span>
+                          <button
+                            v-if="shouldShowOperationHistoryHint(message)"
+                            class="operation-history-toggle"
+                            type="button"
+                            @click.stop="toggleOperationWorkAll(message)"
+                          >
+                            {{ message.operationWorkShowAll ? '只看最近步骤' : `展开全部 ${message.operations.length} 步` }}
+                          </button>
+                        </template>
+                        <div v-if="!isMessageStreaming(message) && message.content && !isOperationWorkOpen(message)" class="operation-summary-head compact">
+                          <span>执行过程已归档</span>
                           <span>{{ message.operations.length }} 步</span>
-                        </div>
-                        <div
-                          v-for="(operation, opIndex) in message.operations"
-                          :key="`${message.mid || message.localId || 'msg'}-${opIndex}`"
-                          :class="['operation-step', operation.state || 'running']"
-                        >
-                          <span class="operation-dot"></span>
-                          <div class="operation-main">
-                            <div class="operation-title">{{ operation.title }}</div>
-                            <div v-if="operation.detail" class="operation-detail">{{ operation.detail }}</div>
-                          </div>
                         </div>
                       </div>
                       <div v-if="message.artifacts?.length" class="artifact-list">
@@ -767,6 +793,7 @@ const OPERATION_PHASE_LABELS = {
   intent_general_help: '能力说明',
   intent_read: '读取识别',
   intent_fallback: '兜底路由',
+  read_slot_extraction: '工具参数',
   router: '路由',
   planning: '规划',
   order: '订单',
@@ -785,6 +812,7 @@ const OPERATION_PHASE_LABELS = {
   route_direct: '路线直读',
   map_direct: '地图直读',
   map_geocode: '地图定位',
+  time_normalization: '时间解析',
   delegation_guard: '防循环',
   tool_call: '工具',
   tool_start: '工具',
@@ -891,7 +919,7 @@ function getOperationOverview(message) {
   const needsConfirmation = pendingCount > 0 || (message?.artifacts || []).some(item => item.type === 'confirmation')
   const state = failedCount
     ? 'failed'
-    : (needsConfirmation ? 'pending' : (message?.loading ? 'running' : 'completed'))
+    : (needsConfirmation ? 'pending' : (isMessageStreaming(message) ? 'running' : 'completed'))
   const intentLabel = getIntentLabel(intentOperation?.meta?.primaryIntent) ||
     getOperationPhaseLabel(intentOperation?.phase) ||
     '识别中'
@@ -908,10 +936,76 @@ function getOperationOverview(message) {
   return {
     state,
     kicker: OPERATION_STATE_LABELS[state] || '执行中',
-    title: latest.title || (message?.loading ? '正在处理你的请求' : '执行已完成'),
+    title: latest.title || (isMessageStreaming(message) ? '正在处理你的请求' : '执行已完成'),
     detail: latest.detail || (needsConfirmation ? '请检查确认卡片后再决定是否执行。' : ''),
     metrics: metrics.slice(0, 5)
   }
+}
+
+function isMessageStreaming(message) {
+  return Boolean(message?.streaming || (message?.loading && !message?.content))
+}
+
+function normalizeDeltaText(payload) {
+  if (payload == null) return ''
+  if (typeof payload !== 'string') {
+    return String(payload?.text ?? payload?.delta ?? payload?.content ?? '')
+  }
+  const trimmed = payload.trim()
+  if (!trimmed || (!trimmed.startsWith('{') && !trimmed.startsWith('['))) return payload
+  try {
+    const parsed = JSON.parse(trimmed)
+    if (typeof parsed === 'string') return parsed
+    return String(parsed?.text ?? parsed?.delta ?? parsed?.content ?? payload)
+  } catch {
+    return payload
+  }
+}
+
+function isOperationWorkOpen(message) {
+  if (!message?.operations?.length) return false
+  if (message.operationWorkExpanded !== undefined) return Boolean(message.operationWorkExpanded)
+  return isMessageStreaming(message)
+}
+
+function toggleOperationWork(message) {
+  if (!message) return
+  message.operationWorkExpanded = !isOperationWorkOpen(message)
+}
+
+function getOperationVisibleSteps(message) {
+  const operations = Array.isArray(message?.operations) ? message.operations : []
+  if (!operations.length) return []
+  if (message?.operationWorkShowAll || !isMessageStreaming(message)) return operations
+  let activeIndex = -1
+  for (let index = operations.length - 1; index >= 0; index -= 1) {
+    if (['running', 'pending'].includes(operations[index]?.state || 'running')) {
+      activeIndex = index
+      break
+    }
+  }
+  const endIndex = activeIndex >= 0 ? activeIndex + 1 : operations.length
+  return operations.slice(Math.max(0, endIndex - 3), endIndex)
+}
+
+function shouldShowOperationHistoryHint(message) {
+  const operations = Array.isArray(message?.operations) ? message.operations : []
+  return isOperationWorkOpen(message) && operations.length > getOperationVisibleSteps(message).length
+}
+
+function toggleOperationWorkAll(message) {
+  if (!message) return
+  message.operationWorkShowAll = !message.operationWorkShowAll
+  message.operationWorkExpanded = true
+}
+
+function getOperationCollapsedLabel(message) {
+  const overview = getOperationOverview(message)
+  const count = Array.isArray(message?.operations) ? message.operations.length : 0
+  if (overview.state === 'pending') return `等待确认 · ${count} 步`
+  if (overview.state === 'failed') return `执行异常 · ${count} 步`
+  if (isMessageStreaming(message)) return `执行中 · ${count} 步`
+  return `已完成 · ${count} 步`
 }
 
 function normalizeArtifact(eventName, data) {
@@ -943,7 +1037,7 @@ function normalizeArtifact(eventName, data) {
     artifact.id = artifact.id || LIVE_PLAN_ARTIFACT_ID
     artifact.live = artifact.live !== false
     artifact.intermediate = artifact.intermediate !== false
-    artifact.collapsed = Boolean(artifact.collapsed)
+    artifact.collapsed = true
   }
   return artifact
 }
@@ -977,6 +1071,7 @@ function snapshotAssistantMessage(message, state = 'running') {
     content: message.content || '',
     status: message.status || '',
     loading: state === 'running',
+    streaming: state === 'running',
     operations: toPlainStreamValue(message.operations, []),
     artifacts: toPlainStreamValue(message.artifacts, [])
   }
@@ -1271,7 +1366,7 @@ function createLivePlanArtifact(liveSteps = []) {
     state: 'running',
     live: true,
     intermediate: true,
-    collapsed: false,
+    collapsed: true,
     editing: false
   }
 }
@@ -1288,7 +1383,7 @@ function ensureLivePlanArtifact(message, liveSteps = []) {
   artifact.id = artifact.id || LIVE_PLAN_ARTIFACT_ID
   artifact.live = artifact.live !== false
   artifact.intermediate = artifact.intermediate !== false
-  if (artifact.collapsed === undefined) artifact.collapsed = false
+  if (artifact.collapsed === undefined) artifact.collapsed = true
   return artifact
 }
 
@@ -1305,12 +1400,6 @@ function syncLivePlanArtifacts(message, options = {}) {
       artifact.state = finalState
       artifact.collapsed = true
       artifact.autoCollapsed = true
-    } else if (
-      !artifact.userCollapsed &&
-      !artifact.autoCollapsed &&
-      !['completed', 'pending', 'failed'].includes(artifact.state)
-    ) {
-      artifact.collapsed = false
     }
     refreshPlanArtifactProgress(artifact)
   })
@@ -1568,8 +1657,10 @@ function isActionCardArtifact(artifact) {
 function isRouteGuideArtifact(artifact) {
   if (artifact?.type !== 'guide') return false
   const title = String(artifact?.title || '')
-  const labels = (artifact?.fields || []).map(field => String(field?.label || ''))
-  return title.includes('路线') || (labels.includes('起点') && labels.includes('终点'))
+  const labels = new Set((artifact?.fields || []).map(field => String(field?.label || '')))
+  const hasRouteEndpoints = labels.has('起点') && labels.has('终点')
+  const hasRouteMetrics = labels.has('方式') || labels.has('距离') || labels.has('耗时')
+  return hasRouteEndpoints && (hasRouteMetrics || title.includes('路线'))
 }
 
 function getArtifactFieldValue(artifact, label, fallback = '待确认') {
@@ -1952,7 +2043,7 @@ async function handleSendMessage() {
   resetTextareaHeight()
   scrollToBottom()
 
-  const assistantDraft = { localId: createLocalMessageId('assistant'), role: 'assistant', content: '', loading: true, operations: [], artifacts: [] }
+  const assistantDraft = { localId: createLocalMessageId('assistant'), role: 'assistant', content: '', loading: true, streaming: true, operations: [], artifacts: [] }
   messages.value.push(assistantDraft)
   const aiMsg = messages.value[messages.value.length - 1]
   applyAgentEvent(aiMsg, 'agent_step', JSON.stringify({
@@ -1971,9 +2062,11 @@ async function handleSendMessage() {
   const streamCid = currentConvId.value
   activeStreamController = agentService.streamMessage(streamCid, msgText, {
     onDelta(text) {
+      const deltaText = normalizeDeltaText(text)
+      if (!deltaText) return
       if (aiMsg.loading) aiMsg.loading = false
       if (aiMsg.status) aiMsg.status = ''  // 收到实际内容后清除 status
-      aiMsg.content += text
+      aiMsg.content += deltaText
       saveStreamState(streamCid, aiMsg, msgText)
       scrollToBottom()
     },
@@ -1993,6 +2086,8 @@ async function handleSendMessage() {
       if (doneReceived) return
       doneReceived = true
       aiMsg.loading = false
+      aiMsg.streaming = false
+      aiMsg.operationWorkExpanded = false
       if (!aiMsg.content) aiMsg.content = '抱歉，AI 未返回有效内容。'
       finalizeLivePlanArtifacts(aiMsg)
       sending.value = false
@@ -2007,6 +2102,8 @@ async function handleSendMessage() {
     },
     onError(errMsg) {
       aiMsg.loading = false
+      aiMsg.streaming = false
+      aiMsg.operationWorkExpanded = true
       aiMsg.content = `错误：${errMsg}`
       finalizeLivePlanArtifacts(aiMsg, 'failed')
       sending.value = false
@@ -2872,11 +2969,12 @@ onBeforeUnmount(() => {
   align-items: center;
   justify-content: space-between;
   gap: 14px;
-  padding: 10px 12px;
+  padding: 0;
   margin-bottom: 8px;
   border: 1px solid #dbeafe;
   border-radius: 9px;
   background: linear-gradient(135deg, #eff6ff 0%, #f8fbff 100%);
+  overflow: hidden;
 }
 .operation-overview.completed {
   border-color: #bbf7d0;
@@ -2889,6 +2987,23 @@ onBeforeUnmount(() => {
 .operation-overview.failed {
   border-color: #fecaca;
   background: linear-gradient(135deg, #fef2f2 0%, #fffafa 100%);
+}
+.operation-overview-button {
+  width: 100%;
+  border: 0;
+  padding: 10px 12px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 14px;
+  background: transparent;
+  color: inherit;
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.16s ease, color 0.16s ease;
+}
+.operation-overview-button:hover {
+  background: rgba(37, 99, 235, 0.06);
 }
 .operation-overview-main {
   display: flex;
@@ -2976,6 +3091,41 @@ onBeforeUnmount(() => {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
+.operation-work-toggle {
+  min-width: 42px;
+  padding: 5px 8px;
+  border: 1px solid rgba(148, 163, 184, 0.28);
+  border-radius: 7px;
+  background: rgba(255, 255, 255, 0.72);
+  color: #2563eb;
+  font-size: 11px;
+  font-weight: 800;
+  text-align: center;
+  line-height: 1.2;
+}
+.operation-live-tail {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  padding: 7px 2px 2px;
+  color: #64748b;
+  font-size: 12px;
+}
+.operation-live-tail span {
+  flex: 0 0 auto;
+  color: #64748b;
+  font-weight: 750;
+}
+.operation-live-tail strong {
+  min-width: 0;
+  overflow: hidden;
+  color: #334155;
+  font-size: 12px;
+  font-weight: 800;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
 .operation-summary-head {
   display: flex;
   align-items: center;
@@ -2987,6 +3137,13 @@ onBeforeUnmount(() => {
   color: #475569;
   font-size: 12px;
   font-weight: 800;
+}
+.operation-summary-head.compact {
+  margin: 7px 0 0;
+  padding: 7px 0 0;
+  border-bottom: 0;
+  border-top: 1px solid #edf2f7;
+  color: #94a3b8;
 }
 .operation-step {
   display: flex;
@@ -3027,6 +3184,22 @@ onBeforeUnmount(() => {
   font-size: 12px;
   line-height: 1.45;
   word-break: break-word;
+}
+.operation-history-toggle {
+  margin-top: 7px;
+  border: 1px solid rgba(148, 163, 184, 0.26);
+  border-radius: 8px;
+  padding: 6px 10px;
+  background: #eef4ff;
+  color: #1d4ed8;
+  font-size: 12px;
+  font-weight: 800;
+  cursor: pointer;
+  transition: background 0.16s ease, border-color 0.16s ease, color 0.16s ease;
+}
+.operation-history-toggle:hover {
+  background: #dbeafe;
+  border-color: rgba(37, 99, 235, 0.26);
 }
 
 .artifact-list {
@@ -4655,6 +4828,10 @@ onBeforeUnmount(() => {
   border-color: rgba(96, 165, 250, 0.28);
 }
 
+:global(:root[data-theme='dark']) .operation-overview-button:hover {
+  background: rgba(96, 165, 250, 0.1);
+}
+
 :global(:root[data-theme='dark']) .operation-overview.completed {
   background: linear-gradient(135deg, rgba(22, 163, 74, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%);
   border-color: rgba(74, 222, 128, 0.24);
@@ -4701,9 +4878,36 @@ onBeforeUnmount(() => {
   border-color: rgba(148, 163, 184, 0.2);
 }
 
+:global(:root[data-theme='dark']) .operation-work-toggle,
+:global(:root[data-theme='dark']) .operation-history-toggle {
+  background: #1f2d44;
+  color: #bfdbfe;
+  border-color: rgba(154, 184, 255, 0.28);
+}
+
+:global(:root[data-theme='dark']) .operation-history-toggle:hover {
+  background: #2d4470;
+  color: #f8fbff;
+  border-color: rgba(154, 184, 255, 0.42);
+}
+
+:global(:root[data-theme='dark']) .operation-live-tail span,
+:global(:root[data-theme='dark']) .operation-summary-head.compact {
+  color: #8aa3c2;
+}
+
+:global(:root[data-theme='dark']) .operation-live-tail strong {
+  color: #edf4ff;
+}
+
 :global(:root[data-theme='dark']) .operation-summary-head {
   color: #c7d8f4;
   border-bottom-color: rgba(148, 163, 184, 0.16);
+}
+
+:global(:root[data-theme='dark']) .operation-summary-head.compact {
+  border-top-color: rgba(148, 163, 184, 0.16);
+  border-bottom: 0;
 }
 
 :global(:root[data-theme='dark']) .artifact-confirmation {
@@ -5252,6 +5456,10 @@ onBeforeUnmount(() => {
   border-color: rgba(96, 165, 250, 0.28) !important;
 }
 
+:global(html[data-theme='dark'] .ai-view .operation-overview-button:hover) {
+  background: rgba(96, 165, 250, 0.1) !important;
+}
+
 :global(html[data-theme='dark'] .ai-view .operation-overview.completed) {
   background: linear-gradient(135deg, rgba(22, 163, 74, 0.16) 0%, rgba(23, 34, 53, 0.96) 100%) !important;
   border-color: rgba(74, 222, 128, 0.24) !important;
@@ -5280,6 +5488,28 @@ onBeforeUnmount(() => {
 :global(html[data-theme='dark'] .ai-view .overview-metric) {
   background: rgba(15, 23, 42, 0.48) !important;
   border-color: rgba(148, 163, 184, 0.2) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-work-toggle),
+:global(html[data-theme='dark'] .ai-view .operation-history-toggle) {
+  background: #1f2d44 !important;
+  color: #bfdbfe !important;
+  border-color: rgba(154, 184, 255, 0.28) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-history-toggle:hover) {
+  background: #2d4470 !important;
+  color: #f8fbff !important;
+  border-color: rgba(154, 184, 255, 0.42) !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-live-tail span),
+:global(html[data-theme='dark'] .ai-view .operation-summary-head.compact) {
+  color: #8aa3c2 !important;
+}
+
+:global(html[data-theme='dark'] .ai-view .operation-live-tail strong) {
+  color: #edf4ff !important;
 }
 
 :global(html[data-theme='dark'] .ai-view .btn-new-chat),

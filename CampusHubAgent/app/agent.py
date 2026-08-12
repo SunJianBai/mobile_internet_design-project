@@ -15,6 +15,7 @@ import time
 from collections import OrderedDict
 from datetime import datetime, timedelta
 from typing import AsyncIterator
+from zoneinfo import ZoneInfo
 
 from langchain_openai import ChatOpenAI
 from langchain_core.messages import HumanMessage, AIMessage, SystemMessage
@@ -430,6 +431,36 @@ Current user message:
 {user_message}
 """
 
+TIME_NORMALIZATION_PROMPT = """You are CampusHub's time-normalization expert. Resolve the user's natural-language time into one concrete local Asia/Shanghai start time.
+
+Return JSON only. No Markdown. No explanation.
+
+Current local time:
+{current_time}
+
+Rules:
+- Output "start_time" in "YYYY-MM-DD HH:mm:ss".
+- Use the current local date/time as the reference for relative expressions.
+- If the user says a broad period and an order needs one concrete start time, choose a reasonable default: 上午/早上=09:00:00, 中午=12:00:00, 下午=15:00:00, 晚上/今晚/明晚=19:00:00.
+- "明天下午" should become tomorrow at 15:00:00. "明天晚上" should become tomorrow at 19:00:00.
+- If the message has no usable date or time, return an empty start_time and needs_clarification=true.
+- Do not create or publish anything; only normalize the time slot.
+
+Return shape:
+{{
+  "start_time": "",
+  "needs_clarification": false,
+  "confidence": 0.0,
+  "reason": "short Chinese reason"
+}}
+
+Field value:
+{field_value}
+
+Full confirmed draft:
+{context}
+"""
+
 DRAFT_CONFIRMATION_PROMPT = """你是 CampusHub 的写操作安全确认智能体。用户想执行写操作时，请把本轮请求整理成确认草稿。
 
 要求：
@@ -506,7 +537,7 @@ Current user message:
 {user_message}
 """
 
-ORDER_TOOLS = [search_orders, create_order, get_my_orders, get_order_detail, *ORDER_EXTRA_TOOLS]
+ORDER_TOOLS = [search_orders, create_order, get_my_orders, get_order_detail, *ORDER_EXTRA_TOOLS, *UTIL_TOOLS]
 SOCIAL_TOOLS = [*CONTENT_TOOLS, *USER_TOOLS]
 MAP_TOOLS = [*MCP_TOOLS, *UTIL_TOOLS]
 
@@ -2485,21 +2516,25 @@ def _detect_read_intent_shortcut(user_message: str) -> dict | None:
         "park",
     )
     if _has_any(lowered, map_read_cues) and _has_any(lowered, place_cues):
-        return {
-            "primary_intent": "map.search",
-            "domain": "map",
-            "operation_type": "read",
-            "requires_confirmation": False,
-            "confidence": 0.86,
-            "summary": "用户想查询、推荐或比较附近地点",
-            "missing_slots": [],
-            "suggested_agents": ["map_weather"],
-            "next_action": "execute_read_tools",
-            "reviewed": False,
-            "read_shortcut": True,
-            "router_timeout": False,
-            "weather_context": _has_weather_context(text),
-        }
+        if _has_weather_context(text):
+            return {
+                "primary_intent": "map.search",
+                "domain": "map",
+                "operation_type": "read",
+                "requires_confirmation": False,
+                "confidence": 0.86,
+                "summary": "用户想结合天气查询、推荐或比较附近地点",
+                "missing_slots": [],
+                "suggested_agents": ["map_weather"],
+                "next_action": "execute_read_tools",
+                "reviewed": False,
+                "read_shortcut": True,
+                "router_timeout": False,
+                "weather_context": True,
+            }
+        # Place recommendation requests need semantic slot extraction (e.g. 桌游店 vs 校园周边).
+        # Let the lightweight router decide first; router-error fallback still covers outages.
+        return None
 
     return None
 
@@ -4653,9 +4688,142 @@ def _normalize_start_time(value: str) -> str:
             if any(cue in text for cue in ("下午", "晚上", "今晚", "明晚")) and hour < 12:
                 hour += 12
             minute = int(match.group(2) or 0)
-            dt = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=day_offset)
+            dt = _local_now().replace(hour=hour, minute=minute, second=0, microsecond=0) + timedelta(days=day_offset)
             return dt.strftime("%Y-%m-%d %H:%M:%S")
 
+    return ""
+
+
+def _local_now() -> datetime:
+    return datetime.now(ZoneInfo("Asia/Shanghai")).replace(tzinfo=None)
+
+
+def _format_local_time(dt: datetime) -> str:
+    return dt.replace(microsecond=0).strftime("%Y-%m-%d %H:%M:%S")
+
+
+def _period_default_hour(text: str) -> int | None:
+    if any(cue in text for cue in ("上午", "早上", "早晨", "明早", "今早")):
+        return 9
+    if "中午" in text:
+        return 12
+    if "下午" in text:
+        return 15
+    if any(cue in text for cue in ("晚上", "今晚", "明晚", "夜里")):
+        return 19
+    return None
+
+
+def _weekday_offset(text: str, now: datetime) -> int | None:
+    weekday_map = {
+        "一": 0, "二": 1, "三": 2, "四": 3, "五": 4, "六": 5, "日": 6, "天": 6,
+        "1": 0, "2": 1, "3": 2, "4": 3, "5": 4, "6": 5, "7": 6,
+    }
+    match = re.search(r"(?:这周|本周|下周|周|星期|礼拜)([一二三四五六日天1234567])", text)
+    if not match:
+        return None
+    matched_text = match.group(0)
+    target = weekday_map.get(match.group(1))
+    if target is None:
+        return None
+    current = now.weekday()
+    if "下周" in matched_text:
+        return (7 - current) + target
+    offset = (target - current) % 7
+    if offset == 0 and not any(cue in text for cue in ("今天", "今晚", "今早")):
+        offset = 7
+    return offset
+
+
+def _normalize_start_time_fallback(value: str, now: datetime | None = None) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    now = now or _local_now()
+
+    day_offset = None
+    if "后天" in text:
+        day_offset = 2
+    elif any(cue in text for cue in ("明天", "明晚", "明早", "明日")):
+        day_offset = 1
+    elif any(cue in text for cue in ("今天", "今晚", "今早", "今日")):
+        day_offset = 0
+    else:
+        day_offset = _weekday_offset(text, now)
+
+    hour = _period_default_hour(text)
+    if day_offset is None or hour is None:
+        return ""
+
+    resolved = now.replace(hour=hour, minute=0, second=0, microsecond=0) + timedelta(days=day_offset)
+    if resolved <= now:
+        resolved += timedelta(days=1)
+    return _format_local_time(resolved)
+
+
+def _valid_start_time(value: str) -> str:
+    text = str(value or "").strip()
+    if not text:
+        return ""
+    try:
+        return datetime.strptime(text, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M:%S")
+    except ValueError:
+        return ""
+
+
+async def _normalize_start_time_semantic(value: str, context: str = "") -> str:
+    parsed = _normalize_start_time(value)
+    if parsed:
+        return parsed
+
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    now = _local_now()
+    await _emit_event("agent_step", {
+        "phase": "time_normalization",
+        "title": "解析相对时间",
+        "detail": f"正在根据当前时间把“{text}”转换为可执行的开始时间",
+        "state": "running",
+    })
+
+    prompt = TIME_NORMALIZATION_PROMPT.format(
+        current_time=_format_local_time(now),
+        field_value=text,
+        context=str(context or "")[-1800:],
+    )
+    try:
+        result = await _get_router_llm().ainvoke([HumanMessage(content=prompt)])
+        data = _safe_json_loads(result.content)
+        llm_time = _valid_start_time(data.get("start_time") if isinstance(data, dict) else "")
+        if llm_time:
+            await _emit_event("agent_step", {
+                "phase": "time_normalization",
+                "title": "相对时间已解析",
+                "detail": f"{text} → {llm_time}",
+                "state": "completed",
+            })
+            return llm_time
+    except Exception as e:
+        logger.warning("Semantic time normalization failed: %s", e)
+
+    fallback = _normalize_start_time_fallback(text, now)
+    if fallback:
+        await _emit_event("agent_step", {
+            "phase": "time_normalization",
+            "title": "相对时间已解析",
+            "detail": f"{text} → {fallback}",
+            "state": "completed",
+        })
+        return fallback
+
+    await _emit_event("agent_step", {
+        "phase": "time_normalization",
+        "title": "相对时间仍需补充",
+        "detail": f"无法把“{text}”转换成明确开始时间",
+        "state": "failed",
+    })
     return ""
 
 
@@ -5106,13 +5274,14 @@ async def _execute_confirmed_order(user_info: dict, fields: dict, user_message: 
     gender_value = _field_value(fields, ("性别", "性别要求"))
     coords = _field_value(fields, ("地点坐标", "坐标"))
     note = _field_value(fields, ("备注", "说明"))
+    start_time = await _normalize_start_time_semantic(start_time_value, context_text)
 
     args = {
         "user_id": user_id,
         "activity_type": _normalize_activity_type(activity_value, context_text),
         "campus": _normalize_campus(campus_value, context_text),
         "location": location,
-        "start_time": _normalize_start_time(start_time_value),
+        "start_time": start_time,
         "gender_require": _normalize_gender_require(gender_value),
         "max_people": _extract_first_int(people_value),
         "note": note or (f"地点坐标：{coords}" if coords else ""),

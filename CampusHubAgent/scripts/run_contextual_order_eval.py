@@ -17,6 +17,7 @@ import asyncio
 import json
 import sys
 from dataclasses import dataclass
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -158,6 +159,20 @@ class FakeGenericManageRouter:
             "fields": [],
             "missing_fields": [],
             "reply": "",
+        }
+        return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
+
+
+class FakeTimeRouter:
+    def __init__(self, start_time: str):
+        self.start_time = start_time
+
+    async def ainvoke(self, _messages):
+        content = {
+            "start_time": self.start_time,
+            "needs_clarification": False,
+            "confidence": 0.92,
+            "reason": "按当前日期把明天下午解析为次日15点",
         }
         return type("FakeResult", (), {"content": json.dumps(content, ensure_ascii=False)})()
 
@@ -1011,6 +1026,61 @@ async def scenario_short_confirmation_executes_recent_draft_summary() -> EvalRes
     return EvalResult("short_confirmation_executes_recent_draft_summary", not failures, failures, actual)
 
 
+async def scenario_confirmed_order_resolves_broad_relative_time() -> EvalResult:
+    from app import agent as agent_module
+
+    expected_dt = (agent_module._local_now() + timedelta(days=1)).replace(hour=15, minute=0, second=0, microsecond=0)
+    expected_start_time = expected_dt.strftime("%Y-%m-%d %H:%M:%S")
+    captured_events: list[dict[str, Any]] = []
+
+    async def capture(event: dict):
+        captured_events.append(event)
+
+    original_router = agent_module._get_router_llm
+    original_create_order = agent_module.create_order
+    agent_module._get_router_llm = lambda: FakeTimeRouter(expected_start_time)
+    agent_module.create_order = FakeTool("✅ 约伴订单创建成功！[查看订单详情](/orders/91)")
+    token = agent_module._event_sink.set(capture)
+    try:
+        result = await agent_module.build_confirmed_execution_response(
+            DEFAULT_USER,
+            [],
+            (
+                "我确认按修改后的内容执行这个草稿：确认创建约伴活动\n"
+                "操作类型: order.create\n"
+                "活动类型: 桌游\n"
+                "地点: 泡芙桌游主机体验馆\n"
+                "地点坐标: 116.173790, 39.725208\n"
+                "校区: 北京理工大学良乡校区\n"
+                "参与人数: 3人\n"
+                "时间: 明天下午"
+            ),
+        )
+    finally:
+        agent_module._event_sink.reset(token)
+        agent_module._get_router_llm = original_router
+        agent_module.create_order = original_create_order
+
+    tool_calls = result.get("tool_calls") if result else []
+    args = (tool_calls or [{}])[0].get("args") or {}
+    actual = {
+        "reply": result.get("reply") if result else None,
+        "tool_calls": tool_calls,
+        "args": args,
+        "event_names": [item.get("event") for item in captured_events],
+    }
+    failures: list[str] = []
+    if not result:
+        failures.append("expected broad relative time confirmation to execute")
+    if args.get("start_time") != expected_start_time:
+        failures.append(f"expected start_time {expected_start_time}, got {args.get('start_time')!r}")
+    if not any((call or {}).get("name") == "create_order" for call in (tool_calls or [])):
+        failures.append("expected create_order tool call")
+    if "agent_step" not in actual["event_names"]:
+        failures.append("expected time normalization progress to stream as agent_step")
+    return EvalResult("confirmed_order_resolves_broad_relative_time", not failures, failures, actual)
+
+
 async def scenario_confirmed_memory_commit_returns_artifact() -> EvalResult:
     from app import agent as agent_module
 
@@ -1092,6 +1162,7 @@ async def run_all() -> list[EvalResult]:
         scenario_confirmation_infers_manage_action_kind,
         scenario_confirmed_execution_returns_result_artifact,
         scenario_short_confirmation_executes_recent_draft_summary,
+        scenario_confirmed_order_resolves_broad_relative_time,
         scenario_confirmed_memory_commit_returns_artifact,
     ]
     return [await scenario() for scenario in scenarios]
